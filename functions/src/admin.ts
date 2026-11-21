@@ -1,5 +1,5 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import * as admin from 'firebase-admin';
+import admin from 'firebase-admin';
 import { TicketStatus } from '@solvesphere/shared';
 
 // Permitted status transitions in ticket lifecycle

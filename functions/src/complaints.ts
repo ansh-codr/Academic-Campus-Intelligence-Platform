@@ -1,5 +1,5 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import * as admin from 'firebase-admin';
+import admin from 'firebase-admin';
 import { CreateTicketSchema, TicketStatus } from '@solvesphere/shared';
 
 // Mapping for default department routing

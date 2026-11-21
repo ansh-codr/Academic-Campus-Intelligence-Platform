@@ -137,68 +137,68 @@ export function App() {
       <AuthProvider>
         <BrowserRouter>
           <React.Suspense fallback={<div role="status" className="min-h-[50vh] grid place-items-center text-sm font-semibold text-slate-500 dark:text-slate-400">Loading your workspace…</div>}>
-          <Routes>
-            {/* Public Layout */}
-            <Route element={<PublicLayout />}>
-              <Route path="/" element={<LandingPage />} />
-              <Route path="/auth/login" element={<StudentLoginPage />} />
-              <Route path="/auth/register" element={<StudentRegisterPage />} />
-              <Route path="/auth/forgot-password" element={<ForgotPasswordPage />} />
-              <Route path="/auth/admin-login" element={<AdminLoginPage />} />
-              <Route path="*" element={<NotFoundPage />} />
-            </Route>
+            <Routes>
+              {/* Public Layout */}
+              <Route element={<PublicLayout />}>
+                <Route path="/" element={<LandingPage />} />
+                <Route path="/auth/login" element={<StudentLoginPage />} />
+                <Route path="/auth/register" element={<StudentRegisterPage />} />
+                <Route path="/auth/forgot-password" element={<ForgotPasswordPage />} />
+                <Route path="/auth/admin-login" element={<AdminLoginPage />} />
+                <Route path="*" element={<NotFoundPage />} />
+              </Route>
 
-            {/* Protected Student Portal Layout */}
-            <Route
-              path="/portal"
-              element={
-                <RequireAuth>
-                  <StudentPortalLayout />
-                </RequireAuth>
-              }
-            >
-              <Route index element={<Navigate to="/portal/overview" replace />} />
-              <Route path="overview" element={<StudentOverviewPage />} />
-              <Route path="academic" element={<AcademicDashboardPage />} />
-              <Route path="subjects" element={<MySubjectsPage />} />
-              <Route path="timeline" element={<TopicTimelinePage />} />
-              <Route path="resources" element={<StudyResourcesPage />} />
-              <Route path="studymate" element={<StudyMateAiPage />} />
-              <Route path="practice" element={<PracticeQuizzesPage />} />
-              <Route path="campus" element={<CampusDashboardPage />} />
-              <Route path="report" element={<ReportIssuePage />} />
-              <Route path="tickets" element={<MyTicketsPage />} />
-              <Route path="speak-freely" element={<SpeakFreelyPage />} />
-              <Route path="clubs" element={<CampusClubsPage />} />
-              <Route path="profile" element={<ProfilePage />} />
-              <Route path="settings" element={<SettingsPage />} />
-            </Route>
+              {/* Protected Student Portal Layout */}
+              <Route
+                path="/portal"
+                element={
+                  <RequireAuth>
+                    <StudentPortalLayout />
+                  </RequireAuth>
+                }
+              >
+                <Route index element={<Navigate to="/portal/overview" replace />} />
+                <Route path="overview" element={<StudentOverviewPage />} />
+                <Route path="academic" element={<AcademicDashboardPage />} />
+                <Route path="subjects" element={<MySubjectsPage />} />
+                <Route path="timeline" element={<TopicTimelinePage />} />
+                <Route path="resources" element={<StudyResourcesPage />} />
+                <Route path="studymate" element={<StudyMateAiPage />} />
+                <Route path="practice" element={<PracticeQuizzesPage />} />
+                <Route path="campus" element={<CampusDashboardPage />} />
+                <Route path="report" element={<ReportIssuePage />} />
+                <Route path="tickets" element={<MyTicketsPage />} />
+                <Route path="speak-freely" element={<SpeakFreelyPage />} />
+                <Route path="clubs" element={<CampusClubsPage />} />
+                <Route path="profile" element={<ProfilePage />} />
+                <Route path="settings" element={<SettingsPage />} />
+              </Route>
 
-            {/* Protected Admin Portal Layout (Admin Custom Claim required) */}
-            <Route
-              path="/admin"
-              element={
-                <RequireAdmin>
-                  <AdminPortalLayout />
-                </RequireAdmin>
-              }
-            >
-              <Route index element={<Navigate to="/admin/dashboard" replace />} />
-              <Route path="dashboard" element={<AdminDashboardPage />} />
-              <Route path="students" element={<AdminDashboardPage />} />
-              <Route path="subjects" element={<AdminAcademicManagementPage />} />
-              <Route path="topic-updates" element={<AdminAcademicManagementPage />} />
-              <Route path="resources" element={<AdminAcademicManagementPage />} />
-              <Route path="complaints" element={<AdminComplaintsClustersPage />} />
-              <Route path="clusters" element={<AdminComplaintsClustersPage />} />
-              <Route path="assignments" element={<AdminComplaintsClustersPage />} />
-              <Route path="departments" element={<AdminDashboardPage />} />
-              <Route path="anonymous-reports" element={<AdminComplaintsClustersPage />} />
-              <Route path="clubs" element={<AdminDashboardPage />} />
-              <Route path="analytics" element={<AdminDashboardPage />} />
-              <Route path="settings" element={<AdminDashboardPage />} />
-            </Route>
-          </Routes>
+              {/* Protected Admin Portal Layout (Admin Custom Claim required) */}
+              <Route
+                path="/admin"
+                element={
+                  <RequireAdmin>
+                    <AdminPortalLayout />
+                  </RequireAdmin>
+                }
+              >
+                <Route index element={<Navigate to="/admin/dashboard" replace />} />
+                <Route path="dashboard" element={<AdminDashboardPage />} />
+                <Route path="students" element={<AdminDashboardPage />} />
+                <Route path="subjects" element={<AdminAcademicManagementPage />} />
+                <Route path="topic-updates" element={<AdminAcademicManagementPage />} />
+                <Route path="resources" element={<AdminAcademicManagementPage />} />
+                <Route path="complaints" element={<AdminComplaintsClustersPage />} />
+                <Route path="clusters" element={<AdminComplaintsClustersPage />} />
+                <Route path="assignments" element={<AdminComplaintsClustersPage />} />
+                <Route path="departments" element={<AdminDashboardPage />} />
+                <Route path="anonymous-reports" element={<AdminComplaintsClustersPage />} />
+                <Route path="clubs" element={<AdminDashboardPage />} />
+                <Route path="analytics" element={<AdminDashboardPage />} />
+                <Route path="settings" element={<AdminDashboardPage />} />
+              </Route>
+            </Routes>
           </React.Suspense>
         </BrowserRouter>
       </AuthProvider>

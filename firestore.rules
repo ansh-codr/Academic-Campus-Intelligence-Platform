@@ -15,6 +15,18 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.token.role == 'ADMIN';
     }
 
+    // Students can only update non-privileged profile fields.
+    // Registered student ID, account ID, role, email, and authorization claims are immutable.
+    function isAllowedProfileUpdate() {
+      let affected = request.resource.data.diff(resource.data).affectedKeys();
+      return affected.hasOnly(['displayName', 'fullName', 'phoneNumber', 'photoURL', 'avatarUrl', 'bio', 'department', 'semester', 'updatedAt'])
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.email == resource.data.email
+        && (!('studentId' in resource.data) || request.resource.data.studentId == resource.data.studentId)
+        && !('customClaims' in request.resource.data);
+    }
+
     // Default deny
     match /{document=**} {
       allow read, write: if false;
@@ -26,11 +38,8 @@ service cloud.firestore {
       allow read: if isOwner(userId) || isAdmin();
       // User can create their profile on registration with STUDENT role
       allow create: if isOwner(userId) && request.resource.data.role == 'STUDENT';
-      // User can update non-privileged fields (bio, phone, department, semester)
-      // Cannot alter role or id
-      allow update: if isOwner(userId) 
-        && request.resource.data.role == resource.data.role
-        && request.resource.data.id == resource.data.id;
+      // User can update non-privileged fields only; cannot alter registered student ID, role, id, or email
+      allow update: if isOwner(userId) && isAllowedProfileUpdate();
       // Admins have full access
       allow update, delete: if isAdmin();
     }
@@ -49,13 +58,11 @@ service cloud.firestore {
       // (or performed via Cloud Functions Admin SDK)
       allow update, delete: if isAdmin();
 
-      // Subcollection: timeline events
+      // Subcollection: timeline events (official lifecycle state transitions, written strictly by Admin SDK / Cloud Functions)
       match /timeline/{eventId} {
         allow read: if (isAuthenticated() && get(/databases/$(database)/documents/complaints/$(complaintId)).data.submittedById == request.auth.uid) || isAdmin();
-        allow create: if isAuthenticated() && (
-          get(/databases/$(database)/documents/complaints/$(complaintId)).data.submittedById == request.auth.uid || isAdmin()
-        );
-        allow update, delete: if isAdmin();
+        // Restrict forged ticket lifecycle events: direct client creation/update is blocked
+        allow write: if isAdmin();
       }
     }
 
@@ -87,12 +94,45 @@ service cloud.firestore {
     match /quizzes/{quizId} {
       allow read: if isAuthenticated();
       allow write: if isAdmin();
+
+      // Protected Question Bank (prevents pre-submission answer leakage)
+      match /questions/{questionId} {
+        allow read, write: if isAdmin();
+      }
     }
 
-    // Quiz Attempts
+    // Quiz Attempts (Official Audited Records - writes strictly restricted to trusted Admin/Cloud Functions SDK)
     match /quizAttempts/{attemptId} {
-      allow read, create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if isAdmin();
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    // Student Study Progress (Personal Topic Checklist)
+    match /studentStudyProgress/{progressId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create, update: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // StudyMate Conversations & Messages (Student Chat Isolation)
+    match /studyMateConversations/{conversationId} {
+      allow read, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid;
+
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && (
+          get(/databases/$(database)/documents/studyMateConversations/$(conversationId)).data.userId == request.auth.uid || isAdmin()
+        );
+        // Restrict forged chat messages: Messages are written strictly by trusted Cloud Functions Admin SDK.
+        allow write: if isAdmin();
+      }
+    }
+
+    // AI Usage Quotas & Rate Limiting (Managed only by Cloud Functions)
+    match /aiUsage/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if isAdmin();
     }
 
     // Enrollments

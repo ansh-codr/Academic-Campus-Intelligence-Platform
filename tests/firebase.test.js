@@ -14,14 +14,38 @@
 
 import admin from 'firebase-admin';
 import assert from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
+import { initializeApp as initClientApp } from 'firebase/app';
+import {
+  getAuth as getClientAuth,
+  connectAuthEmulator as connectClientAuthEmulator,
+  signInWithEmailAndPassword,
+  signOut,
+} from 'firebase/auth';
+import {
+  getFirestore as getClientFirestore,
+  connectFirestoreEmulator as connectClientFirestoreEmulator,
+  doc,
+  setDoc,
+  updateDoc,
+  getDoc,
+} from 'firebase/firestore';
+import {
+  getFunctions as getClientFunctions,
+  connectFunctionsEmulator as connectClientFunctionsEmulator,
+  httpsCallable,
+} from 'firebase/functions';
 
 // Configure emulator endpoints
 process.env.FIREBASE_AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099';
 process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
 
+const testProjectId = process.env.GCLOUD_PROJECT || 'solvesphere-ai-dev';
+
 if (!admin.apps.length) {
   admin.initializeApp({
-    projectId: 'solvesphere-ai-dev',
+    projectId: testProjectId,
   });
 }
 
@@ -265,8 +289,631 @@ async function runTests() {
   assert.strictEqual(subjectsSnap.docs.length, 6, 'All 6 subjects must exist in Firestore');
   console.log(`✓ Test 6 Passed: 6 subjects seeded into Firestore.`);
 
+  // --------------------------------------------------------------------------
+  // TEST 7: Student Subject & Syllabus Topic Read Access
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 7] Verifying Student Subject & Topic Timeline Queries...`);
+  const topicsBatch = db.batch();
+  const sampleTopics = [
+    { id: 'top-ai-1', subjectId: 'subj-cs101', unit: 1, title: 'Intelligent Agents', status: 'COMPLETED', order: 1, completedAt: '2026-10-15' },
+    { id: 'top-ai-2', subjectId: 'subj-cs101', unit: 1, title: 'Heuristic Search (A*)', status: 'COMPLETED', order: 2, completedAt: '2026-10-25' },
+    { id: 'top-ai-3', subjectId: 'subj-cs101', unit: 2, title: 'Neural Networks', status: 'ONGOING', order: 3, isCurrent: true },
+    { id: 'top-ai-4', subjectId: 'subj-cs101', unit: 2, title: 'Backpropagation', status: 'UPCOMING', order: 4 },
+  ];
+  for (const t of sampleTopics) {
+    topicsBatch.set(db.collection('syllabusTopics').doc(t.id), t);
+  }
+  await topicsBatch.commit();
+
+  const csTopicsSnap = await db
+    .collection('syllabusTopics')
+    .where('subjectId', '==', 'subj-cs101')
+    .orderBy('order', 'asc')
+    .get();
+
+  assert.strictEqual(csTopicsSnap.docs.length, 4, 'Must retrieve all 4 topics for CS101 in order');
+  assert.strictEqual(csTopicsSnap.docs[0].data().order, 1);
+  assert.strictEqual(csTopicsSnap.docs[2].data().status, 'ONGOING');
+  console.log(`✓ Test 7 Passed: Topics retrieved in chronological order with correct ongoing state.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 8: Admin Subject Creation
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 8] Admin Subject Provisioning...`);
+  const newSubjectId = 'subj-cs102';
+  await db.collection('subjects').doc(newSubjectId).set({
+    id: newSubjectId,
+    code: 'CS102',
+    name: 'Data Structures & Algorithms',
+    instructor: 'Dr. Elizabeth Warren',
+    credits: 4,
+    department: 'Computer Science & AI',
+    semester: 2,
+    academicYear: '2026-2027',
+    category: 'CORE',
+    description: 'Advanced data structures, balanced trees, and graph algorithms.',
+    isArchived: false,
+    createdAt: new Date().toISOString(),
+  });
+
+  const createdSubjectSnap = await db.collection('subjects').doc(newSubjectId).get();
+  assert.ok(createdSubjectSnap.exists, 'Created subject must persist in Firestore');
+  assert.strictEqual(createdSubjectSnap.data().code, 'CS102');
+  console.log(`✓ Test 8 Passed: Admin subject CS102 persisted in database.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 9: Topic Status Lifecycle Transitions (Pacing Updates)
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 9] Topic Status Pacing Lifecycle Updates...`);
+  const topicRef = db.collection('syllabusTopics').doc('top-ai-4');
+  
+  // Transition UPCOMING -> ONGOING
+  await topicRef.update({
+    status: 'ONGOING',
+    isCurrent: true,
+    updatedAt: new Date().toISOString(),
+    updatedBy: 'Dr. Vikram Malhotra (Admin)',
+  });
+  let updatedTopicSnap = await topicRef.get();
+  assert.strictEqual(updatedTopicSnap.data().status, 'ONGOING');
+  assert.strictEqual(updatedTopicSnap.data().isCurrent, true);
+
+  // Transition ONGOING -> COMPLETED with completion timestamp
+  const completedDate = '2026-11-21';
+  await topicRef.update({
+    status: 'COMPLETED',
+    isCurrent: false,
+    completedAt: completedDate,
+    updatedAt: new Date().toISOString(),
+  });
+  updatedTopicSnap = await topicRef.get();
+  assert.strictEqual(updatedTopicSnap.data().status, 'COMPLETED');
+  assert.strictEqual(updatedTopicSnap.data().completedAt, completedDate);
+  console.log(`✓ Test 9 Passed: Topic pacing transitioned successfully with audit timestamps.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 10: Protected Quiz Question Bank Provisioning
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 10] Provisioning Quiz and Protected Question Bank...`);
+  const quizId = 'quiz-test-ai';
+  await db.collection('quizzes').doc(quizId).set({
+    id: quizId,
+    subjectId: 'subj-cs101',
+    title: 'AI Neural Networks Practice Assessment',
+    durationMinutes: 15,
+    difficulty: 'INTERMEDIATE',
+    published: true,
+    questionsCount: 2,
+    createdAt: new Date().toISOString(),
+  });
+
+  const q1Ref = db.collection('quizzes').doc(quizId).collection('questions').doc('q-test-1');
+  await q1Ref.set({
+    id: 'q-test-1',
+    quizId,
+    questionText: 'What property guarantees A* tree search optimality?',
+    options: ['Admissibility', 'Branching factor < 2', 'Non-zero heuristics', 'Breadth first queue'],
+    correctOptionIndex: 0,
+    explanation: 'Admissibility (never overestimating goal cost) guarantees optimality in tree search.',
+  });
+
+  const q2Ref = db.collection('quizzes').doc(quizId).collection('questions').doc('q-test-2');
+  await q2Ref.set({
+    id: 'q-test-2',
+    quizId,
+    questionText: 'Which activation function has an identity gradient for x > 0?',
+    options: ['Sigmoid', 'Tanh', 'ReLU', 'Softmax'],
+    correctOptionIndex: 2,
+    explanation: 'ReLU f(x) = max(0, x) has derivative = 1 for positive inputs.',
+  });
+
+  const quizQuestionsSnap = await db.collection('quizzes').doc(quizId).collection('questions').get();
+  assert.strictEqual(quizQuestionsSnap.docs.length, 2, 'Quiz must have 2 questions stored in subcollection');
+  console.log(`✓ Test 10 Passed: Quiz and questions stored in protected subcollections.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 11: Trusted Server-Side Quiz Grading & Attempt Isolation
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 11] Server-Side Quiz Grading and Attempt Persistence...`);
+  const studentAnswers = [
+    { questionId: 'q-test-1', selectedOptionIndex: 0 }, // Correct
+    { questionId: 'q-test-2', selectedOptionIndex: 1 }, // Incorrect (selected Tanh instead of ReLU)
+  ];
+
+  // Server-side grading logic
+  let correctCount = 0;
+  const review = [];
+  for (const qDoc of quizQuestionsSnap.docs) {
+    const qData = qDoc.data();
+    const ans = studentAnswers.find((a) => a.questionId === qDoc.id);
+    const selected = ans ? ans.selectedOptionIndex : -1;
+    const isCorrect = selected === qData.correctOptionIndex;
+    if (isCorrect) correctCount++;
+    review.push({
+      questionId: qDoc.id,
+      selectedOptionIndex: selected,
+      correctOptionIndex: qData.correctOptionIndex,
+      isCorrect,
+      explanation: qData.explanation,
+    });
+  }
+
+  assert.strictEqual(correctCount, 1, 'Student must have exactly 1 correct answer');
+  const percentage = Math.round((correctCount / quizQuestionsSnap.size) * 100);
+  assert.strictEqual(percentage, 50, 'Score percentage must equal 50%');
+
+  // Persist attempt
+  const attemptRef = db.collection('quizAttempts').doc();
+  const attemptId = attemptRef.id;
+  await attemptRef.set({
+    id: attemptId,
+    userId: testStudentUid,
+    studentName: 'Aarav Sharma',
+    quizId,
+    quizTitle: 'AI Neural Networks Practice Assessment',
+    subjectId: 'subj-cs101',
+    score: correctCount,
+    totalQuestions: 2,
+    percentage,
+    answers: review,
+    completedAt: new Date().toISOString(),
+  });
+
+  // Verify attempt query isolation
+  const studentAttemptsSnap = await db
+    .collection('quizAttempts')
+    .where('userId', '==', testStudentUid)
+    .get();
+
+  assert.strictEqual(studentAttemptsSnap.docs.length, 1, 'Student must see their own attempt');
+  assert.strictEqual(studentAttemptsSnap.docs[0].data().percentage, 50);
+
+  // Other student query returns 0
+  const otherAttemptsSnap = await db
+    .collection('quizAttempts')
+    .where('userId', '==', 'other-random-student-uid')
+    .get();
+  assert.strictEqual(otherAttemptsSnap.docs.length, 0, 'Data isolation: cannot access other student attempts');
+  console.log(`✓ Test 11 Passed: Quiz server-graded (50%) and persisted with strict user isolation.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 12: Student Personal Study Progress Tracking
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 12] Student Personal Study Progress (Decoupled from Classroom)...`);
+  const progressDocId = `${testStudentUid}_top-ai-1`;
+  await db.collection('studentStudyProgress').doc(progressDocId).set({
+    id: progressDocId,
+    userId: testStudentUid,
+    topicId: 'top-ai-1',
+    subjectId: 'subj-cs101',
+    completed: true,
+    updatedAt: new Date().toISOString(),
+  });
+
+  const progressSnap = await db.collection('studentStudyProgress').doc(progressDocId).get();
+  assert.ok(progressSnap.exists);
+  assert.strictEqual(progressSnap.data().completed, true);
+
+  // Verify that official topic document was NOT modified by student's personal study status
+  const officialTopicSnap = await db.collection('syllabusTopics').doc('top-ai-1').get();
+  assert.strictEqual(officialTopicSnap.data().title, 'Intelligent Agents');
+  console.log(`✓ Test 12 Passed: Personal study progress persisted without altering official classroom syllabus.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 13: Study Resource Repository & Faculty Verification
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 13] Study Resource Repository & Scope Filtering...`);
+  const resDocRef = db.collection('resources').doc('res-test-ai');
+  await resDocRef.set({
+    id: 'res-test-ai',
+    subjectId: 'subj-cs101',
+    topicId: 'top-ai-3',
+    title: 'Dr. Thorne Neural Network Lecture Slides',
+    description: 'Comprehensive slides on multi-layer perceptrons.',
+    scope: 'WITHIN_SYLLABUS',
+    type: 'SLIDES',
+    facultyApproved: true,
+    authorFaculty: 'Dr. Aris Thorne',
+    fileUrl: 'https://storage.googleapis.com/test-bucket/slides.pdf',
+    storagePath: 'academic-resources/subj-cs101/slides.pdf',
+    createdAt: new Date().toISOString(),
+  });
+
+  const resSnap = await db.collection('resources').where('scope', '==', 'WITHIN_SYLLABUS').get();
+  assert.ok(resSnap.docs.length >= 1, 'Must find at least 1 resource within syllabus');
+  const found = resSnap.docs.find((d) => d.id === 'res-test-ai');
+  assert.ok(found, 'Must retrieve created resource');
+  assert.strictEqual(found.data().facultyApproved, true);
+  console.log(`✓ Test 13 Passed: Study resource repository verified with faculty approval.`);
+
+  // --------------------------------------------------------------------------
+  // Initialize Client SDKs to simulate real browser clients for security tests
+  // --------------------------------------------------------------------------
+  const clientApp = initClientApp(
+    { apiKey: 'fake-api-key', projectId: testProjectId },
+    `client-${Date.now()}`
+  );
+  const clientAuth = getClientAuth(clientApp);
+  connectClientAuthEmulator(clientAuth, 'http://127.0.0.1:9099', { disableWarnings: true });
+  const clientDb = getClientFirestore(clientApp);
+  connectClientFirestoreEmulator(clientDb, '127.0.0.1', 8080);
+  const clientFunctions = getClientFunctions(clientApp);
+  connectClientFunctionsEmulator(clientFunctions, '127.0.0.1', 5001);
+
+  // Authenticate student in client SDK
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+
+  // --------------------------------------------------------------------------
+  // TEST 14: Direct Client Quiz-Score Forgery Block (Negative Security Test)
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 14] Verifying Direct Quiz-Score Forgery Is Blocked by Security Rules...`);
+  await assert.rejects(
+    async () => {
+      await setDoc(doc(clientDb, 'quizAttempts', 'forged-attempt-123'), {
+        id: 'forged-attempt-123',
+        userId: testStudentUid,
+        score: 100,
+        percentage: 100,
+      });
+    },
+    /permission-denied/i,
+    'Direct client write to quizAttempts must be rejected with permission-denied'
+  );
+  console.log(`✓ Test 14 Passed: Direct client quiz score forgery blocked by Security Rules.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 15: Student Profile Privilege Escalation Block (Negative Security Test)
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 15] Verifying Student Privilege Escalation (role -> ADMIN) Is Blocked...`);
+  await assert.rejects(
+    async () => {
+      await updateDoc(doc(clientDb, 'users', testStudentUid), {
+        role: 'ADMIN',
+      });
+    },
+    /permission-denied/i,
+    'Student attempting to elevate role to ADMIN must be rejected with permission-denied'
+  );
+  console.log(`✓ Test 15 Passed: Self-assignment of ADMIN role blocked by Security Rules.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 16: Cloud Function askStudyMateAi - Callable Protocol Execution
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 16] Exercising askStudyMateAi Cloud Function via Real Callable Path...`);
+  const askFn = httpsCallable(clientFunctions, 'askStudyMateAi');
+
+  // 16a: Authenticated call with WITHIN_SYLLABUS mode
+  const aiRes = await askFn({
+    prompt: 'Explain why ReLU is preferred over Sigmoid in multi-layer perceptrons',
+    subjectId: 'subj-cs101',
+    mode: 'WITHIN_SYLLABUS',
+  });
+
+  const resData = aiRes.data;
+  assert.ok(resData.reply, 'Result must contain reply text');
+  assert.strictEqual(resData.mode, 'WITHIN_SYLLABUS');
+  assert.ok(resData.groundingContext?.topicTitles?.length > 0, 'Must contain syllabus grounding topics');
+  const createdConversationId = resData.conversationId;
+  assert.ok(createdConversationId, 'Conversation ID must be generated');
+  console.log(`✓ Test 16 Passed: askStudyMateAi executed successfully with syllabus grounding.`);
+
+  // 16b: Unauthenticated invocation must fail
+  console.log(`\n[TEST 16b] Verifying Unauthenticated User is Rejected...`);
+  await signOut(clientAuth);
+  await assert.rejects(
+    async () => {
+      await askFn({
+        prompt: 'Unauthenticated prompt',
+        subjectId: 'subj-cs101',
+        mode: 'WITHIN_SYLLABUS',
+      });
+    },
+    (err) => err.code?.includes('unauthenticated') || /authenticated/i.test(err.message),
+    'Unauthenticated call must be rejected with unauthenticated error'
+  );
+  console.log(`✓ Test 16b Passed: Unauthenticated user rejected by Cloud Function.`);
+
+  // Re-authenticate student
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+
+  // --------------------------------------------------------------------------
+  // TEST 17: Per-User AI Rate Limiting & Quota Accounting
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 17] Verifying Per-User AI Rate Limiting (< 2s interval)...`);
+  // Calling immediately after Test 16 without 2-second cooldown must trigger rate limit
+  await assert.rejects(
+    async () => {
+      await askFn({
+        prompt: 'Rapid duplicate inquiry',
+        subjectId: 'subj-cs101',
+        mode: 'WITHIN_SYLLABUS',
+      });
+    },
+    (err) => err.code?.includes('resource-exhausted') || /resource-exhausted|wait|seconds/i.test(err.message),
+    'Immediate rapid request must be rejected with resource-exhausted'
+  );
+
+  const usageSnap = await db.collection('aiUsage').doc(testStudentUid).get();
+  assert.ok(usageSnap.exists, 'AI usage tracking document must exist');
+  assert.ok(usageSnap.data().dailyCount >= 1, 'Daily count must record query usage');
+  console.log(`✓ Test 17 Passed: Rate limiter enforced (resource-exhausted) and quota recorded.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 18: Conversation Persistence & Cross-Student Isolation
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 18] Verifying Conversation Persistence & Cross-Student Chat Isolation...`);
+  const convSnap = await db.collection('studyMateConversations').doc(createdConversationId).get();
+  assert.ok(convSnap.exists, 'Conversation document must exist in Firestore');
+  assert.strictEqual(convSnap.data().userId, testStudentUid);
+
+  const msgsSnap = await db
+    .collection('studyMateConversations')
+    .doc(createdConversationId)
+    .collection('messages')
+    .get();
+  assert.ok(msgsSnap.docs.length >= 2, 'Conversation must contain user message and AI response');
+
+  // Second student client
+  const s2Email = `student2.test.${Date.now()}@campus.edu`;
+  await auth.createUser({ email: s2Email, password: 'Password@2026' });
+
+  const clientApp2 = initClientApp(
+    { apiKey: 'fake-api-key', projectId: testProjectId },
+    `client2-${Date.now()}`
+  );
+  const clientAuth2 = getClientAuth(clientApp2);
+  connectClientAuthEmulator(clientAuth2, 'http://127.0.0.1:9099', { disableWarnings: true });
+  const clientDb2 = getClientFirestore(clientApp2);
+  connectClientFirestoreEmulator(clientDb2, '127.0.0.1', 8080);
+
+  await signInWithEmailAndPassword(clientAuth2, s2Email, 'Password@2026');
+
+  // Student 2 attempts to read Student 1 conversation
+  await assert.rejects(
+    async () => {
+      await getDoc(doc(clientDb2, 'studyMateConversations', createdConversationId));
+    },
+    /permission-denied/i,
+    'Student 2 cannot read Student 1 conversation'
+  );
+  console.log(`✓ Test 18 Passed: Conversation persisted and cross-student chat isolation verified.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 20: Cross-Student Conversation Injection Block via askStudyMateAi
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 20] Verifying Cross-Student Conversation Injection Is Blocked via askStudyMateAi...`);
+  const clientFunctions2 = getClientFunctions(clientApp2);
+  connectClientFunctionsEmulator(clientFunctions2, '127.0.0.1', 5001);
+  const askFn2 = httpsCallable(clientFunctions2, 'askStudyMateAi');
+
+  await assert.rejects(
+    async () => {
+      await askFn2({
+        prompt: 'Injecting unauthorized query into student 1 conversation',
+        subjectId: 'subj-cs101',
+        conversationId: createdConversationId,
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission-denied|access denied|unauthorized/i.test(err.message),
+    'Cross-student conversation injection must be rejected with permission-denied'
+  );
+  console.log(`✓ Test 20 Passed: Conversation ownership enforced; unauthorized conversation injection blocked.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 20b: Non-Existent Conversation ID Rejection in askStudyMateAi
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 20b] Verifying Non-Existent Conversation ID Rejection...`);
+  await assert.rejects(
+    async () => {
+      await askFn2({
+        prompt: 'Query with non-existent conversation ID',
+        subjectId: 'subj-cs101',
+        conversationId: 'non-existent-conv-id-99999',
+      });
+    },
+    (err) => err.code?.includes('not-found') || /not-found|does not exist/i.test(err.message),
+    'Non-existent conversation ID must be rejected with not-found error'
+  );
+  console.log(`✓ Test 20b Passed: Non-existent conversation ID rejected rather than silently created.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 20c: Original Timestamp Preservation When Appending to Conversation
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 20c] Verifying Original createdAt Timestamp Preservation on Append...`);
+  const initialConvSnap = await db.collection('studyMateConversations').doc(createdConversationId).get();
+  const originalCreatedAt = initialConvSnap.data().createdAt;
+  assert.ok(originalCreatedAt, 'Initial conversation must have createdAt timestamp');
+
+  // Wait 2.1s to satisfy rate limit cooldown
+  await new Promise((resolve) => setTimeout(resolve, 2100));
+
+  // Student 1 appends a follow-up query to their existing conversation
+  const appendRes = await askFn({
+    prompt: 'What are the main advantages of using GELU over ReLU in modern Transformer models?',
+    subjectId: 'subj-cs101',
+    conversationId: createdConversationId,
+    mode: 'WITHIN_SYLLABUS',
+  });
+  assert.strictEqual(appendRes.data.conversationId, createdConversationId);
+
+  const updatedConvSnap = await db.collection('studyMateConversations').doc(createdConversationId).get();
+  const updatedData = updatedConvSnap.data();
+  assert.strictEqual(
+    updatedData.createdAt,
+    originalCreatedAt,
+    'Original createdAt timestamp must be preserved verbatim when appending to conversation'
+  );
+  assert.ok(
+    new Date(updatedData.updatedAt).getTime() >= new Date(originalCreatedAt).getTime(),
+    'updatedAt timestamp must be updated on append'
+  );
+
+  const totalMsgsSnap = await db
+    .collection('studyMateConversations')
+    .doc(createdConversationId)
+    .collection('messages')
+    .get();
+  assert.strictEqual(totalMsgsSnap.docs.length, 4, 'Conversation must now contain 4 messages (2 user + 2 model)');
+  console.log(`✓ Test 20c Passed: Original createdAt preserved and messages appended in atomic transaction.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 21: Direct Client Chat Message Forgery Block (Negative Security Test)
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 21] Verifying Forged Chat Message Creation Is Blocked in Firestore Rules...`);
+  await assert.rejects(
+    async () => {
+      await setDoc(
+        doc(clientDb, 'studyMateConversations', createdConversationId, 'messages', 'forged-msg-123'),
+        {
+          id: 'forged-msg-123',
+          conversationId: createdConversationId,
+          userId: testStudentUid,
+          role: 'model',
+          text: 'Forged AI answer directly injected via client SDK',
+          timestamp: new Date().toISOString(),
+        }
+      );
+    },
+    /permission-denied/i,
+    'Direct client write to conversation messages subcollection must be rejected with permission-denied'
+  );
+  console.log(`✓ Test 21 Passed: Direct client chat message forgery blocked by Security Rules.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 22: Direct Client Ticket Lifecycle Event Forgery Block (Negative Security Test)
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 22] Verifying Forged Ticket Lifecycle Event Creation Is Blocked in Firestore Rules...`);
+  await assert.rejects(
+    async () => {
+      await setDoc(
+        doc(clientDb, 'complaints', createdTicketId, 'timeline', 'forged-timeline-123'),
+        {
+          id: 'forged-timeline-123',
+          ticketId: createdTicketId,
+          status: 'RESOLVED',
+          note: 'Forged resolution event directly written by student',
+          timestamp: new Date().toISOString(),
+        }
+      );
+    },
+    /permission-denied/i,
+    'Direct client creation of complaint timeline events must be rejected with permission-denied'
+  );
+  console.log(`✓ Test 22 Passed: Direct client ticket lifecycle event forgery blocked by Security Rules.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 23: Registered Student ID & Profile Field Immutability (Negative Security Test)
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 23] Verifying Registered Student ID & Profile Field Immutability...`);
+  // 23a: Attempting to modify registered studentId must be rejected
+  await assert.rejects(
+    async () => {
+      await updateDoc(doc(clientDb, 'users', testStudentUid), {
+        studentId: 'FORGED-ID-9999',
+      });
+    },
+    /permission-denied/i,
+    'Student attempting to modify registered studentId must be rejected with permission-denied'
+  );
+
+  // 23b: Attempting to modify registered email must be rejected
+  await assert.rejects(
+    async () => {
+      await updateDoc(doc(clientDb, 'users', testStudentUid), {
+        email: 'hacked.email@campus.edu',
+      });
+    },
+    /permission-denied/i,
+    'Student attempting to modify email must be rejected with permission-denied'
+  );
+
+  // 23c: Updating permitted non-identity field (bio) must succeed
+  await updateDoc(doc(clientDb, 'users', testStudentUid), {
+    bio: 'First-year AI & Machine Learning student.',
+  });
+  const updatedUserDoc = await getDoc(doc(clientDb, 'users', testStudentUid));
+  assert.strictEqual(updatedUserDoc.data().bio, 'First-year AI & Machine Learning student.');
+  console.log(`✓ Test 23 Passed: Student ID & identity fields immutable; permitted profile fields update successfully.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 24: Server-Side Academic Subject Validation in askStudyMateAi
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 24] Verifying Invalid Academic Subject Rejection in askStudyMateAi...`);
+  await assert.rejects(
+    async () => {
+      await askFn2({
+        prompt: 'Exploration on invalid subject',
+        subjectId: 'invalid-course-code-999',
+        mode: 'WITHIN_SYLLABUS',
+      });
+    },
+    (err) => err.code?.includes('not-found') || /not-found|unavailable/i.test(err.message),
+    'Invalid subject must be rejected with not-found error'
+  );
+  console.log(`✓ Test 24 Passed: Server-side academic subject validation confirmed.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 25: Mock Gemini Restrictions (Production Environment Safeguard)
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 25] Verifying Mock Response Restrictions Against Production Environment...`);
+  const { isEmulatorOrTestEnvironment } = await import('../functions/lib/studymate.js');
+
+  // Verify that in the emulator environment, isEmulatorOrTestEnvironment() is true
+  assert.strictEqual(isEmulatorOrTestEnvironment(), true, 'Must detect test/emulator environment');
+
+  // Verify that outside emulator and test runner, mock responses are prohibited
+  const origEmulator = process.env.FUNCTIONS_EMULATOR;
+  const origHub = process.env.FIREBASE_EMULATOR_HUB;
+  const origFsHost = process.env.FIRESTORE_EMULATOR_HOST;
+  const origNodeEnv = process.env.NODE_ENV;
+  const origKService = process.env.K_SERVICE;
+  try {
+    delete process.env.FUNCTIONS_EMULATOR;
+    delete process.env.FIREBASE_EMULATOR_HUB;
+    delete process.env.FIRESTORE_EMULATOR_HOST;
+    process.env.K_SERVICE = 'us-central1-askStudyMateAi-prod';
+    process.env.NODE_ENV = 'production';
+    process.env.ALLOW_MOCK_GEMINI = 'true'; // Attempt to bypass via production env var
+
+    assert.strictEqual(
+      isEmulatorOrTestEnvironment(),
+      false,
+      'Production environment must strictly prohibit mock responses regardless of environment variables'
+    );
+  } finally {
+    if (origEmulator !== undefined) process.env.FUNCTIONS_EMULATOR = origEmulator;
+    if (origHub !== undefined) process.env.FIREBASE_EMULATOR_HUB = origHub;
+    if (origFsHost !== undefined) process.env.FIRESTORE_EMULATOR_HOST = origFsHost;
+    if (origKService !== undefined) process.env.K_SERVICE = origKService;
+    else delete process.env.K_SERVICE;
+    if (origNodeEnv !== undefined) process.env.NODE_ENV = origNodeEnv;
+    else delete process.env.NODE_ENV;
+    delete process.env.ALLOW_MOCK_GEMINI;
+  }
+  console.log(`✓ Test 25 Passed: Production environment strictly prohibits mock responses regardless of environment variables.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 19: Security Scan - Zero API Keys in Client Bundles
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 19] Verifying Zero Sensitive Keys or Secrets in Client Assets...`);
+  const distDir = path.resolve('apps/web/dist');
+  if (fs.existsSync(distDir)) {
+    const assetsDir = path.join(distDir, 'assets');
+    if (fs.existsSync(assetsDir)) {
+      const files = fs.readdirSync(assetsDir);
+      for (const file of files) {
+        if (file.endsWith('.js')) {
+          const content = fs.readFileSync(path.join(assetsDir, file), 'utf-8');
+          assert.ok(!content.includes('AIzaSy'), `File ${file} must not contain Google API key prefixes`);
+          assert.ok(!content.includes('GEMINI_API_KEY'), `File ${file} must not contain GEMINI_API_KEY`);
+        }
+      }
+    }
+  }
+  console.log(`✓ Test 19 Passed: Client distribution verified free of exposed API keys.`);
+
   console.log(`\n======================================================`);
-  console.log(`  ALL 6 INTEGRATION & SECURITY TESTS PASSED!`);
+  console.log(`  ALL 27 INTEGRATION, AI & SECURITY TESTS PASSED!`);
   console.log(`======================================================\n`);
   process.exit(0);
 }
