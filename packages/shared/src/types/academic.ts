@@ -144,3 +144,52 @@ export interface StudentStudyProgress {
   completed: boolean;
   updatedAt: string;
 }
+
+export type SyllabusMode = 'WITHIN_SYLLABUS' | 'EXPLORE_BEYOND';
+
+export interface StudyMateConversation {
+  id: string;
+  userId: string;
+  title: string;
+  subjectId: string;
+  mode: SyllabusMode;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+}
+
+export interface GroundingContext {
+  topicTitles: string[];
+  resourceTitles: string[];
+}
+
+export interface StudyMateMessage {
+  id: string;
+  conversationId: string;
+  userId: string;
+  role: 'user' | 'model';
+  text: string;
+  mode: SyllabusMode;
+  subjectId: string;
+  groundingContext?: GroundingContext;
+  timestamp: string;
+  isMockResponse?: boolean;
+}
+
+export interface AskStudyMateRequest {
+  prompt: string;
+  subjectId: string;
+  mode: SyllabusMode;
+  conversationId?: string;
+  conversationHistory?: { role: 'user' | 'model'; text: string }[];
+}
+
+export interface AskStudyMateResponse {
+  reply: string;
+  conversationId: string;
+  messageId: string;
+  mode: SyllabusMode;
+  subjectId: string;
+  groundingContext: GroundingContext;
+  isMockResponse?: boolean;
+}

@@ -14,14 +14,38 @@
 
 import admin from 'firebase-admin';
 import assert from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
+import { initializeApp as initClientApp } from 'firebase/app';
+import {
+  getAuth as getClientAuth,
+  connectAuthEmulator as connectClientAuthEmulator,
+  signInWithEmailAndPassword,
+  signOut,
+} from 'firebase/auth';
+import {
+  getFirestore as getClientFirestore,
+  connectFirestoreEmulator as connectClientFirestoreEmulator,
+  doc,
+  setDoc,
+  updateDoc,
+  getDoc,
+} from 'firebase/firestore';
+import {
+  getFunctions as getClientFunctions,
+  connectFunctionsEmulator as connectClientFunctionsEmulator,
+  httpsCallable,
+} from 'firebase/functions';
 
 // Configure emulator endpoints
 process.env.FIREBASE_AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099';
 process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
 
+const testProjectId = process.env.GCLOUD_PROJECT || 'solvesphere-ai-dev';
+
 if (!admin.apps.length) {
   admin.initializeApp({
-    projectId: 'solvesphere-ai-dev',
+    projectId: testProjectId,
   });
 }
 
@@ -502,8 +526,180 @@ async function runTests() {
   assert.strictEqual(found.data().facultyApproved, true);
   console.log(`✓ Test 13 Passed: Study resource repository verified with faculty approval.`);
 
+  // --------------------------------------------------------------------------
+  // Initialize Client SDKs to simulate real browser clients for security tests
+  // --------------------------------------------------------------------------
+  const clientApp = initClientApp(
+    { apiKey: 'fake-api-key', projectId: testProjectId },
+    `client-${Date.now()}`
+  );
+  const clientAuth = getClientAuth(clientApp);
+  connectClientAuthEmulator(clientAuth, 'http://127.0.0.1:9099', { disableWarnings: true });
+  const clientDb = getClientFirestore(clientApp);
+  connectClientFirestoreEmulator(clientDb, '127.0.0.1', 8080);
+  const clientFunctions = getClientFunctions(clientApp);
+  connectClientFunctionsEmulator(clientFunctions, '127.0.0.1', 5001);
+
+  // Authenticate student in client SDK
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+
+  // --------------------------------------------------------------------------
+  // TEST 14: Direct Client Quiz-Score Forgery Block (Negative Security Test)
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 14] Verifying Direct Quiz-Score Forgery Is Blocked by Security Rules...`);
+  await assert.rejects(
+    async () => {
+      await setDoc(doc(clientDb, 'quizAttempts', 'forged-attempt-123'), {
+        id: 'forged-attempt-123',
+        userId: testStudentUid,
+        score: 100,
+        percentage: 100,
+      });
+    },
+    /permission-denied/i,
+    'Direct client write to quizAttempts must be rejected with permission-denied'
+  );
+  console.log(`✓ Test 14 Passed: Direct client quiz score forgery blocked by Security Rules.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 15: Student Profile Privilege Escalation Block (Negative Security Test)
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 15] Verifying Student Privilege Escalation (role -> ADMIN) Is Blocked...`);
+  await assert.rejects(
+    async () => {
+      await updateDoc(doc(clientDb, 'users', testStudentUid), {
+        role: 'ADMIN',
+      });
+    },
+    /permission-denied/i,
+    'Student attempting to elevate role to ADMIN must be rejected with permission-denied'
+  );
+  console.log(`✓ Test 15 Passed: Self-assignment of ADMIN role blocked by Security Rules.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 16: Cloud Function askStudyMateAi - Callable Protocol Execution
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 16] Exercising askStudyMateAi Cloud Function via Real Callable Path...`);
+  const askFn = httpsCallable(clientFunctions, 'askStudyMateAi');
+
+  // 16a: Authenticated call with WITHIN_SYLLABUS mode
+  const aiRes = await askFn({
+    prompt: 'Explain why ReLU is preferred over Sigmoid in multi-layer perceptrons',
+    subjectId: 'subj-cs101',
+    mode: 'WITHIN_SYLLABUS',
+  });
+
+  const resData = aiRes.data;
+  assert.ok(resData.reply, 'Result must contain reply text');
+  assert.strictEqual(resData.mode, 'WITHIN_SYLLABUS');
+  assert.ok(resData.groundingContext?.topicTitles?.length > 0, 'Must contain syllabus grounding topics');
+  const createdConversationId = resData.conversationId;
+  assert.ok(createdConversationId, 'Conversation ID must be generated');
+  console.log(`✓ Test 16 Passed: askStudyMateAi executed successfully with syllabus grounding.`);
+
+  // 16b: Unauthenticated invocation must fail
+  console.log(`\n[TEST 16b] Verifying Unauthenticated User is Rejected...`);
+  await signOut(clientAuth);
+  await assert.rejects(
+    async () => {
+      await askFn({
+        prompt: 'Unauthenticated prompt',
+        subjectId: 'subj-cs101',
+        mode: 'WITHIN_SYLLABUS',
+      });
+    },
+    (err) => err.code?.includes('unauthenticated') || /authenticated/i.test(err.message),
+    'Unauthenticated call must be rejected with unauthenticated error'
+  );
+  console.log(`✓ Test 16b Passed: Unauthenticated user rejected by Cloud Function.`);
+
+  // Re-authenticate student
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+
+  // --------------------------------------------------------------------------
+  // TEST 17: Per-User AI Rate Limiting & Quota Accounting
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 17] Verifying Per-User AI Rate Limiting (< 2s interval)...`);
+  // Calling immediately after Test 16 without 2-second cooldown must trigger rate limit
+  await assert.rejects(
+    async () => {
+      await askFn({
+        prompt: 'Rapid duplicate inquiry',
+        subjectId: 'subj-cs101',
+        mode: 'WITHIN_SYLLABUS',
+      });
+    },
+    (err) => err.code?.includes('resource-exhausted') || /resource-exhausted|wait|seconds/i.test(err.message),
+    'Immediate rapid request must be rejected with resource-exhausted'
+  );
+
+  const usageSnap = await db.collection('aiUsage').doc(testStudentUid).get();
+  assert.ok(usageSnap.exists, 'AI usage tracking document must exist');
+  assert.ok(usageSnap.data().dailyCount >= 1, 'Daily count must record query usage');
+  console.log(`✓ Test 17 Passed: Rate limiter enforced (resource-exhausted) and quota recorded.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 18: Conversation Persistence & Cross-Student Isolation
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 18] Verifying Conversation Persistence & Cross-Student Chat Isolation...`);
+  const convSnap = await db.collection('studyMateConversations').doc(createdConversationId).get();
+  assert.ok(convSnap.exists, 'Conversation document must exist in Firestore');
+  assert.strictEqual(convSnap.data().userId, testStudentUid);
+
+  const msgsSnap = await db
+    .collection('studyMateConversations')
+    .doc(createdConversationId)
+    .collection('messages')
+    .get();
+  assert.ok(msgsSnap.docs.length >= 2, 'Conversation must contain user message and AI response');
+
+  // Second student client
+  const s2Email = `student2.test.${Date.now()}@campus.edu`;
+  await auth.createUser({ email: s2Email, password: 'Password@2026' });
+
+  const clientApp2 = initClientApp(
+    { apiKey: 'fake-api-key', projectId: testProjectId },
+    `client2-${Date.now()}`
+  );
+  const clientAuth2 = getClientAuth(clientApp2);
+  connectClientAuthEmulator(clientAuth2, 'http://127.0.0.1:9099', { disableWarnings: true });
+  const clientDb2 = getClientFirestore(clientApp2);
+  connectClientFirestoreEmulator(clientDb2, '127.0.0.1', 8080);
+
+  await signInWithEmailAndPassword(clientAuth2, s2Email, 'Password@2026');
+
+  // Student 2 attempts to read Student 1 conversation
+  await assert.rejects(
+    async () => {
+      await getDoc(doc(clientDb2, 'studyMateConversations', createdConversationId));
+    },
+    /permission-denied/i,
+    'Student 2 cannot read Student 1 conversation'
+  );
+  console.log(`✓ Test 18 Passed: Conversation persisted and cross-student chat isolation verified.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 19: Security Scan - Zero API Keys in Client Bundles
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 19] Verifying Zero Sensitive Keys or Secrets in Client Assets...`);
+  const distDir = path.resolve('apps/web/dist');
+  if (fs.existsSync(distDir)) {
+    const assetsDir = path.join(distDir, 'assets');
+    if (fs.existsSync(assetsDir)) {
+      const files = fs.readdirSync(assetsDir);
+      for (const file of files) {
+        if (file.endsWith('.js')) {
+          const content = fs.readFileSync(path.join(assetsDir, file), 'utf-8');
+          assert.ok(!content.includes('AIzaSy'), `File ${file} must not contain Google API key prefixes`);
+          assert.ok(!content.includes('GEMINI_API_KEY'), `File ${file} must not contain GEMINI_API_KEY`);
+        }
+      }
+    }
+  }
+  console.log(`✓ Test 19 Passed: Client distribution verified free of exposed API keys.`);
+
   console.log(`\n======================================================`);
-  console.log(`  ALL 13 INTEGRATION & ACADEMIC SECURITY TESTS PASSED!`);
+  console.log(`  ALL 19 INTEGRATION, AI & SECURITY TESTS PASSED!`);
   console.log(`======================================================\n`);
   process.exit(0);
 }

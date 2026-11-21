@@ -94,11 +94,10 @@ service cloud.firestore {
       }
     }
 
-    // Quiz Attempts
+    // Quiz Attempts (Official Audited Records - writes strictly restricted to trusted Admin/Cloud Functions SDK)
     match /quizAttempts/{attemptId} {
       allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if isAdmin();
+      allow write: if isAdmin();
     }
 
     // Student Study Progress (Personal Topic Checklist)
@@ -106,6 +105,30 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
       allow create, update: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
       allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // StudyMate Conversations & Messages (Student Chat Isolation)
+    match /studyMateConversations/{conversationId} {
+      allow read, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid;
+
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && (
+          get(/databases/$(database)/documents/studyMateConversations/$(conversationId)).data.userId == request.auth.uid || isAdmin()
+        );
+        allow create: if isAuthenticated() && (
+          get(/databases/$(database)/documents/studyMateConversations/$(conversationId)).data.userId == request.auth.uid
+          && request.resource.data.userId == request.auth.uid
+        );
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    // AI Usage Quotas & Rate Limiting (Managed only by Cloud Functions)
+    match /aiUsage/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if isAdmin();
     }
 
     // Enrollments
