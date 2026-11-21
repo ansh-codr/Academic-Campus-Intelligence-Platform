@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useId } from 'react';
 import { cn } from '@/lib/utils';
 
 export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
@@ -10,7 +10,8 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
 
 export const Input = React.forwardRef<HTMLInputElement, InputProps>(
   ({ className, label, error, helperText, icon, id, ...props }, ref) => {
-    const inputId = id || props.name || Math.random().toString(36).substring(2, 9);
+    const generatedId = useId();
+    const inputId = id || props.name || generatedId;
 
     return (
       <div className="w-full space-y-1.5">
@@ -29,7 +30,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
             id={inputId}
             ref={ref}
             className={cn(
-              'w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue dark:focus:border-brand-cyan transition-all',
+              'w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-brand-blue/10 focus:border-brand-blue dark:focus:border-brand-cyan transition-all',
               icon && 'pl-10',
               error && 'border-rose-500 focus:ring-rose-500/20 focus:border-rose-500',
               className
@@ -56,7 +57,8 @@ export interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextArea
 
 export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
   ({ className, label, error, helperText, id, rows = 3, ...props }, ref) => {
-    const inputId = id || props.name || Math.random().toString(36).substring(2, 9);
+    const generatedId = useId();
+    const inputId = id || props.name || generatedId;
 
     return (
       <div className="w-full space-y-1.5">
@@ -70,7 +72,7 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
           ref={ref}
           rows={rows}
           className={cn(
-            'w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 p-3.5 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue dark:focus:border-brand-cyan transition-all',
+            'w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 p-3.5 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-brand-blue/10 focus:border-brand-blue dark:focus:border-brand-cyan transition-all',
             error && 'border-rose-500 focus:ring-rose-500/20 focus:border-rose-500',
             className
           )}
@@ -95,7 +97,8 @@ export interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElemen
 
 export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
   ({ className, label, error, options, id, ...props }, ref) => {
-    const inputId = id || props.name || Math.random().toString(36).substring(2, 9);
+    const generatedId = useId();
+    const inputId = id || props.name || generatedId;
 
     return (
       <div className="w-full space-y-1.5">
@@ -108,7 +111,7 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
           id={inputId}
           ref={ref}
           className={cn(
-            'w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue dark:focus:border-brand-cyan transition-all',
+            'w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-4 focus:ring-brand-blue/10 focus:border-brand-blue dark:focus:border-brand-cyan transition-all',
             error && 'border-rose-500',
             className
           )}
