@@ -24,6 +24,8 @@ export const ReportIssuePage: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submissionSuccess, setSubmissionSuccess] = useState<any | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [uploadProgress, setUploadProgress] = useState<string | null>(null);
 
   const {
     register,
@@ -43,18 +45,55 @@ export const ReportIssuePage: React.FC = () => {
     },
   });
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const filesArray = Array.from(e.target.files);
+      const validFiles = filesArray.filter((file) => {
+        if (file.size > 10 * 1024 * 1024) {
+          alert(`File ${file.name} exceeds 10MB limit and will be skipped.`);
+          return false;
+        }
+        return true;
+      });
+      setSelectedFiles((prev) => [...prev, ...validFiles]);
+    }
+  };
+
+  const removeFile = (index: number) => {
+    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
   const onSubmit = async (data: CreateTicketInput) => {
     setIsSubmitting(true);
     setSubmitError(null);
+    setUploadProgress(null);
     try {
-      const result = await CampusService.createTicket(data);
+      const uploadedUrls: string[] = [];
+      if (selectedFiles.length > 0) {
+        setUploadProgress('Uploading attachments to secure storage...');
+        for (let i = 0; i < selectedFiles.length; i++) {
+          const file = selectedFiles[i];
+          const url = await CampusService.uploadAttachment(file);
+          uploadedUrls.push(url);
+        }
+      }
+
+      setUploadProgress('Submitting complaint to Firestore...');
+      const payload: CreateTicketInput = {
+        ...data,
+        attachmentUrls: uploadedUrls.length > 0 ? uploadedUrls : undefined,
+      };
+
+      const result = await CampusService.createTicket(payload);
       setSubmissionSuccess(result);
+      setSelectedFiles([]);
       reset();
     } catch (err: any) {
       console.error('Error submitting complaint to Firestore:', err);
       setSubmitError(err.message || 'Failed to submit complaint. Please try again.');
     } finally {
       setIsSubmitting(false);
+      setUploadProgress(null);
     }
   };
 
@@ -201,9 +240,61 @@ export const ReportIssuePage: React.FC = () => {
             {...register('description')}
           />
 
-          <div className="p-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/30 text-xs text-slate-600 dark:text-slate-400 flex items-start gap-3">
-            <Paperclip className="h-4 w-4 mt-0.5 shrink-0" />
-            <span>Photo attachments are not yet supported for ticket submissions. Include relevant details in the description.</span>
+          {/* Attachments Section */}
+          <div className="p-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/30 space-y-3">
+            <div className="flex items-center justify-between">
+              <label htmlFor="attachment-input" className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer">
+                <Paperclip className="h-4 w-4 text-brand-blue" />
+                <span>Add Photos / Attachments (Optional, max 10MB each)</span>
+              </label>
+              <input
+                id="attachment-input"
+                type="file"
+                multiple
+                accept="image/*,application/pdf"
+                onChange={handleFileChange}
+                className="hidden"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => document.getElementById('attachment-input')?.click()}
+                className="text-xs"
+              >
+                Choose Files
+              </Button>
+            </div>
+
+            {selectedFiles.length > 0 && (
+              <div className="space-y-1.5 pt-2">
+                {selectedFiles.map((file, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs"
+                  >
+                    <div className="flex items-center gap-2 truncate">
+                      <Paperclip className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span className="font-medium text-slate-800 dark:text-slate-200 truncate">{file.name}</span>
+                      <span className="text-[10px] text-slate-400">({(file.size / 1024).toFixed(1)} KB)</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeFile(idx)}
+                      className="text-rose-500 hover:text-rose-700 font-bold ml-2 text-xs"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {uploadProgress && (
+              <p className="text-xs text-brand-blue dark:text-brand-cyan animate-pulse font-medium">
+                {uploadProgress}
+              </p>
+            )}
           </div>
           {/* Submit Action */}
           <div className="pt-2 flex items-center justify-between">

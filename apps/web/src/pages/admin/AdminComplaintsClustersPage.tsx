@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AdminService } from '@/services/adminService';
 import { CampusService } from '@/services/campusService';
-import { IssueCluster, CampusTicket, TicketStatus } from '@solvesphere/shared';
+import { IssueCluster, CampusTicket, TicketStatus, CampusDepartment } from '@solvesphere/shared';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -25,6 +25,7 @@ import { formatDate } from '@/lib/utils';
 export const AdminComplaintsClustersPage: React.FC = () => {
   const [clusters, setClusters] = useState<IssueCluster[]>([]);
   const [tickets, setTickets] = useState<CampusTicket[]>([]);
+  const [departments, setDepartments] = useState<CampusDepartment[]>([]);
   const [selectedCluster, setSelectedCluster] = useState<IssueCluster | null>(null);
   const [selectedTicketForUpdate, setSelectedTicketForUpdate] = useState<CampusTicket | null>(null);
   const [newStatus, setNewStatus] = useState<TicketStatus>('IN_PROGRESS');
@@ -34,11 +35,20 @@ export const AdminComplaintsClustersPage: React.FC = () => {
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
   useEffect(() => {
-    AdminService.getClusters().then(setClusters);
-    const unsubscribe = CampusService.subscribeTickets((liveTickets) => {
-      setTickets(liveTickets);
+    const unsubClusters = CampusService.subscribeClusters(setClusters);
+    const unsubTickets = CampusService.subscribeTickets(setTickets);
+    const unsubDepts = CampusService.subscribeDepartments((depts) => {
+      setDepartments(depts.filter((d) => d.isActive));
+      if (depts.length > 0 && !newDepartment) {
+        setNewDepartment(depts[0].name);
+      }
     });
-    return () => unsubscribe();
+
+    return () => {
+      unsubClusters();
+      unsubTickets();
+      unsubDepts();
+    };
   }, []);
 
   const handleUpdateStatus = async () => {
@@ -66,9 +76,11 @@ export const AdminComplaintsClustersPage: React.FC = () => {
     setIsUpdating(true);
     setActionSuccess(null);
     try {
+      const selectedDeptObj = departments.find((d) => d.name === newDepartment);
       await AdminService.assignTicketDepartment(
         selectedTicketForUpdate.id,
         newDepartment,
+        selectedDeptObj?.id,
         `Assigned to ${newDepartment} by central administrator.`
       );
       setActionSuccess(`Ticket ${selectedTicketForUpdate.referenceNumber} assigned to ${newDepartment}.`);
@@ -296,12 +308,22 @@ export const AdminComplaintsClustersPage: React.FC = () => {
                   onChange={(e) => setNewDepartment(e.target.value)}
                   className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-brand-cyan"
                 >
-                  <option value="HVAC & Climate Control">HVAC &amp; Climate Control</option>
-                  <option value="IT & Campus Network Operations">IT &amp; Campus Network Operations</option>
-                  <option value="Electrical Maintenance">Electrical Maintenance</option>
-                  <option value="Public Health & Plumbing">Public Health &amp; Plumbing</option>
-                  <option value="Campus Estate & General Infrastructure">Campus Estate &amp; General Infrastructure</option>
-                  <option value="Hostel Administration Office">Hostel Administration Office</option>
+                  {departments.length > 0 ? (
+                    departments.map((dept) => (
+                      <option key={dept.id} value={dept.name}>
+                        {dept.name}
+                      </option>
+                    ))
+                  ) : (
+                    <>
+                      <option value="HVAC & Climate Control">HVAC &amp; Climate Control</option>
+                      <option value="IT & Campus Network Operations">IT &amp; Campus Network Operations</option>
+                      <option value="Electrical Maintenance">Electrical Maintenance</option>
+                      <option value="Public Health & Plumbing">Public Health &amp; Plumbing</option>
+                      <option value="Campus Estate & General Infrastructure">Campus Estate &amp; General Infrastructure</option>
+                      <option value="Hostel Administration Office">Hostel Administration Office</option>
+                    </>
+                  )}
                 </select>
                 <Button
                   size="sm"
@@ -348,9 +370,16 @@ export const AdminComplaintsClustersPage: React.FC = () => {
             <Button
               variant="gradient"
               size="sm"
-              onClick={() => {
-                alert(`Master work order dispatched for "${selectedCluster?.title}". Duplicate tickets linked.`);
-                setSelectedCluster(null);
+              onClick={async () => {
+                if (selectedCluster) {
+                  try {
+                    await AdminService.reviewCluster(selectedCluster.id, 'resolve', 'Master work order dispatched by admin.');
+                    setActionSuccess(`Master work order dispatched for "${selectedCluster.title}". Duplicate tickets grouped.`);
+                  } catch (err: any) {
+                    console.error('Error reviewing cluster:', err);
+                  }
+                  setSelectedCluster(null);
+                }
               }}
             >
               Confirm Dispatch

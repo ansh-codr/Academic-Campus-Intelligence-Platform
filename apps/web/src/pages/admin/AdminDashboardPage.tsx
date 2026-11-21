@@ -222,7 +222,7 @@ export const AdminDashboardPage: React.FC = () => {
                   <td className="py-3 text-slate-400">{cluster.affectedArea}</td>
                   <td className="py-3 font-mono font-bold text-amber-400">{cluster.ticketCount} reports</td>
                   <td className="py-3 font-mono text-emerald-400">
-                    {Math.round(cluster.confidenceScore * 100)}%
+                    {cluster.confidenceScore != null ? `${Math.round(cluster.confidenceScore * 100)}%` : 'Suggested'}
                   </td>
                   <td className="py-3 text-right">
                     <Button size="sm" variant="outline" className="text-xs text-amber-400 border-slate-700 bg-slate-900">

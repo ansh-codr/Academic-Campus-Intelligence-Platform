@@ -3,6 +3,7 @@ import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuthDemo';
 import { ThemeToggle } from '@/components/common/ThemeToggle';
 import { Badge } from '@/components/ui/Badge';
+import { NotificationDropdown } from '@/components/notifications/NotificationDropdown';
 import {
   LayoutDashboard,
   GraduationCap,
@@ -245,45 +246,8 @@ export const StudentPortalLayout: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Notifications Dropdown */}
-            <div className="relative">
-              <button
-                aria-label="Show sample notifications" aria-expanded={showNotifications} onClick={() => setShowNotifications(!showNotifications)}
-                className="relative p-2 rounded-xl text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-              >
-                <Bell className="w-4 h-4" />
-                
-              </button>
-
-              {showNotifications && (
-                <div className="absolute right-0 mt-2 w-[min(20rem,calc(100vw-2rem))] rounded-2xl bg-white dark:bg-brand-surfaceDark border border-slate-200 dark:border-slate-800 shadow-xl p-4 space-y-3 z-50">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
-                      Example Notifications
-                    </h4>
-                    <span className="text-[10px] text-brand-blue">Illustrative only</span>
-                  </div>
-                  <div className="space-y-2 text-xs">
-                    <div className="p-2.5 rounded-xl bg-blue-50/60 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/40">
-                      <p className="font-semibold text-slate-900 dark:text-slate-100">
-                        Topic Timeline Updated
-                      </p>
-                      <p className="text-slate-500 text-[11px]">
-                        CS101: &ldquo;Neural Networks&rdquo; marked ongoing by Dr. Thorne.
-                      </p>
-                    </div>
-                    <div className="p-2.5 rounded-xl bg-amber-50/60 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900/40">
-                      <p className="font-semibold text-slate-900 dark:text-slate-100">
-                        Maintenance Ticket Update
-                      </p>
-                      <p className="text-slate-500 text-[11px]">
-                        CMP-2026-0841 status changed to In Progress (HVAC).
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
+            {/* Live Notifications Dropdown */}
+            <NotificationDropdown />
 
             <ThemeToggle variant="outline" />
 

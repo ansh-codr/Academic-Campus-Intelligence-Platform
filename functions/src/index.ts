@@ -1,6 +1,12 @@
 import admin from 'firebase-admin';
-import { createComplaint } from './complaints.js';
-import { updateTicketStatus, assignTicketDepartment } from './admin.js';
+import { createComplaint, reopenTicket } from './complaints.js';
+import {
+  updateTicketStatus,
+  assignTicketDepartment,
+  adminManageDepartment,
+  adminManageClub,
+  adminReviewCluster,
+} from './admin.js';
 import {
   getQuizQuestions,
   submitQuiz,
@@ -18,8 +24,12 @@ if (!admin.apps.length) {
 
 export {
   createComplaint,
+  reopenTicket,
   updateTicketStatus,
   assignTicketDepartment,
+  adminManageDepartment,
+  adminManageClub,
+  adminReviewCluster,
   getQuizQuestions,
   submitQuiz,
   adminSaveQuiz,

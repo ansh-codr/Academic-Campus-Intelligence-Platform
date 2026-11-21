@@ -19,15 +19,18 @@ service firebase.storage {
       allow read, write: if false;
     }
 
-    // Ticket Complaint Attachments
+    // Ticket Complaint Attachments (Strict owner isolation; legacy unvalidated complaint paths removed)
     match /attachments/{userId}/{ticketId}/{fileName} {
-      // Must be authenticated, file owner or admin
+      // Authorized ticket owner or administrator only
       allow read: if isOwner(userId) || isAdmin();
       
-      // Upload rules: owner only, size < 10MB, restricted image/pdf MIME types
-      allow write: if isOwner(userId)
+      // Upload rules: owner only, size < 10MB, strictly restricted image/pdf MIME types
+      allow create, update: if isOwner(userId)
         && request.resource.size < 10 * 1024 * 1024
         && request.resource.contentType.matches('image/(jpeg|png|webp)|application/pdf');
+
+      // Deletion rules: authorized owner or administrator only
+      allow delete: if isOwner(userId) || isAdmin();
     }
 
     // Official Academic Resources (read-only for students, upload for admin)
