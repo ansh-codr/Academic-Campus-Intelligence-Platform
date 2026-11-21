@@ -150,18 +150,7 @@ export const AdminPortalLayout: React.FC = () => {
                   >
                     <Icon className={cn('w-4 h-4 shrink-0', isActive ? 'text-amber-300' : '')} />
                     {!collapsed && <span className="truncate">{item.label}</span>}
-                    {!collapsed && 'badge' in item && item.badge && (
-                      <span
-                        className={cn(
-                          'ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-md',
-                          isActive
-                            ? 'bg-slate-950/20 text-slate-950'
-                            : 'bg-slate-800 text-slate-300'
-                        )}
-                      >
-                        {'badge' in item && item.badge}
-                      </span>
-                    )}
+
                   </Link>
                 );
               })}
