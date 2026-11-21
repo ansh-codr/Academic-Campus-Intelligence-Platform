@@ -90,11 +90,13 @@ export interface IssueCluster {
   room?: string;
   ticketCount: number;
   ticketIds: string[];
-  confidenceScore: number;
-  status: 'ACTIVE_INCIDENT' | 'RESOLVING' | 'MERGED' | 'DISMISSED';
+  clusteringMethod?: 'RULE_BASED_LOCATION_PROXIMITY';
+  verifiedByAdmin?: boolean;
+  status: 'SUGGESTED_INCIDENT' | 'ACTIVE_INCIDENT' | 'RESOLVING' | 'MERGED' | 'DISMISSED';
   suggestedAction: string;
   createdAt: string;
   updatedAt?: string;
+  confidenceScore?: number;
 }
 
 export interface CampusClub {

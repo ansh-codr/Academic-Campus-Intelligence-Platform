@@ -205,7 +205,9 @@ export const CampusDashboardPage: React.FC = () => {
                     {cluster.ticketCount} Related Reports Grouped
                   </Badge>
                   <span className="text-xs font-mono font-bold text-purple-700 dark:text-purple-300">
-                    Confidence: {Math.round(cluster.confidenceScore * 100)}%
+                    {cluster.confidenceScore != null
+                      ? `Confidence: ${Math.round(cluster.confidenceScore * 100)}%`
+                      : (cluster.status === 'SUGGESTED_INCIDENT' ? 'Suggested Incident' : 'Rule-Based Cluster')}
                   </span>
                 </div>
 

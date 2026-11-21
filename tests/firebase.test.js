@@ -907,7 +907,62 @@ async function runTests() {
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 26] Creating Complaint with Attachments & In-App Notification...`);
   await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+
+  // Negative test 26a: Direct student creation of complaints in Firestore must be blocked
+  await assert.rejects(
+    async () => {
+      await setDoc(doc(clientDb, 'complaints', 'direct-forged-complaint'), {
+        id: 'direct-forged-complaint',
+        referenceNumber: 'SS-2026-9999',
+        title: 'Forged Ticket direct to Firestore',
+        category: 'AC_HVAC',
+        status: 'SUBMITTED',
+        submittedById: testStudentUid,
+      });
+    },
+    /permission-denied/i,
+    'Direct client write to complaints collection must be rejected by Firestore Security Rules'
+  );
+
   const createComplaintCallable = httpsCallable(clientFunctions, 'createComplaint');
+  const validAttachmentUrl = `https://firebasestorage.googleapis.com/v0/b/${testProjectId}.appspot.com/o/attachments%2F${testStudentUid}%2Ftkt-sample%2Fleak1.jpg?alt=media`;
+
+  // Negative test 26b: Providing an attachment URL belonging to another student must be rejected
+  await assert.rejects(
+    async () => {
+      await createComplaintCallable({
+        title: 'Library 2nd Floor Split AC Unit Leak',
+        category: 'AC_HVAC',
+        building: 'Central Library',
+        floor: '2nd Floor',
+        room: 'Silent Zone 202',
+        description: 'Severe water leak above desks in silent study room.',
+        priority: 'HIGH',
+        attachmentUrls: [`https://firebasestorage.googleapis.com/v0/b/${testProjectId}.appspot.com/o/attachments%2Fother-student-uid%2Ftkt-sample%2Fstolen.jpg?alt=media`],
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /verification failed|workspace/i.test(err.message),
+    'Attachment URL belonging to another user must be rejected'
+  );
+
+  // Negative test 26c: Arbitrary external host attachment URL must be rejected
+  await assert.rejects(
+    async () => {
+      await createComplaintCallable({
+        title: 'Library 2nd Floor Split AC Unit Leak',
+        category: 'AC_HVAC',
+        building: 'Central Library',
+        floor: '2nd Floor',
+        room: 'Silent Zone 202',
+        description: 'Severe water leak above desks in silent study room.',
+        priority: 'HIGH',
+        attachmentUrls: ['https://malicious-external-site.com/payload.png'],
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /host/i.test(err.message),
+    'Arbitrary external host attachment must be rejected'
+  );
+
   const complaintPayload = {
     title: 'Library 2nd Floor Split AC Unit Leak',
     category: 'AC_HVAC',
@@ -916,7 +971,7 @@ async function runTests() {
     room: 'Silent Zone 202',
     description: 'Severe water leak above desks in silent study room.',
     priority: 'HIGH',
-    attachmentUrls: ['https://storage.googleapis.com/test-bucket/leak1.jpg'],
+    attachmentUrls: [validAttachmentUrl],
   };
   const compRes = await createComplaintCallable(complaintPayload);
   assert.ok(compRes.data?.success, 'createComplaint must return success: true');
@@ -925,7 +980,7 @@ async function runTests() {
   assert.match(createdCompData?.referenceNumber, /^SS-2026-\d{4}$/, 'Complaint must have atomic SS-2026-XXXX sequence');
   assert.strictEqual(createdCompData?.status, 'SUBMITTED', 'Initial status must be SUBMITTED');
   assert.strictEqual(createdCompData?.assignedDepartment, 'HVAC & Climate Control', 'Should route to HVAC department');
-  assert.deepStrictEqual(createdCompData?.attachmentUrls, ['https://storage.googleapis.com/test-bucket/leak1.jpg']);
+  assert.deepStrictEqual(createdCompData?.attachmentUrls, [validAttachmentUrl]);
 
   // Verify in Firestore
   const compDocSnap = await db.collection('complaints').doc(createdCompData.id).get();
@@ -941,12 +996,12 @@ async function runTests() {
   const notifData = notifsSnap.docs[0].data();
   assert.strictEqual(notifData.type, 'SUBMITTED');
   assert.strictEqual(notifData.read, false);
-  console.log(`✓ Test 26 Passed: Complaint created with atomic ref ${createdCompData.referenceNumber}, attachment, and in-app notification.`);
+  console.log(`✓ Test 26 Passed: Direct client creation blocked; callable enforced ownership, reference sequence, and attachment verification.`);
 
   // --------------------------------------------------------------------------
-  // TEST 27: Deterministic Duplicate Issue Grouping
+  // TEST 27: Deterministic Duplicate Issue Grouping & Admin Confirmation
   // --------------------------------------------------------------------------
-  console.log(`\n[TEST 27] Verifying Deterministic Duplicate Issue Grouping...`);
+  console.log(`\n[TEST 27] Verifying Deterministic Duplicate Issue Grouping & Admin Confirmation...`);
   // Submit a second complaint with identical category and location within 48h
   const duplicateCompPayload = {
     title: 'AC Drip on Silent Zone 202 Carpet',
@@ -962,7 +1017,7 @@ async function runTests() {
   const comp2Data = compRes2.data?.data;
   assert.ok(comp2Data?.clusterId, 'Duplicate ticket must be assigned a clusterId');
 
-  // Verify cluster in Firestore
+  // Verify cluster in Firestore: must be created as unreviewed rule-based suggestion without invented scores
   const clusterSnap = await db.collection('issueClusters').doc(comp2Data.clusterId).get();
   assert.ok(clusterSnap.exists, 'Issue cluster document must exist in Firestore');
   const clusterData = clusterSnap.data();
@@ -972,19 +1027,31 @@ async function runTests() {
   assert.strictEqual(clusterData.ticketCount, 2, 'Cluster ticketCount must be 2');
   assert.ok(clusterData.ticketIds.includes(createdCompData.id), 'Cluster must include first ticket ID');
   assert.ok(clusterData.ticketIds.includes(comp2Data.id), 'Cluster must include second ticket ID');
-  assert.strictEqual(clusterData.status, 'ACTIVE_INCIDENT');
+  assert.strictEqual(clusterData.status, 'SUGGESTED_INCIDENT', 'Must be categorized as unconfirmed suggestion initially');
+  assert.strictEqual(clusterData.verifiedByAdmin, false, 'Must not claim admin verification without review');
+  assert.strictEqual(clusterData.clusteringMethod, 'RULE_BASED_LOCATION_PROXIMITY');
+  assert.strictEqual(clusterData.confidenceScore, undefined, 'Must not invent artificial confidence scores');
 
-  // Verify first ticket was also updated with clusterId
-  const firstTicketRefetched = await db.collection('complaints').doc(createdCompData.id).get();
-  assert.strictEqual(firstTicketRefetched.data().clusterId, comp2Data.clusterId);
-  console.log(`✓ Test 27 Passed: Deterministic grouping linked 2 complaints into cluster ${comp2Data.clusterId}.`);
-
-  // --------------------------------------------------------------------------
-  // TEST 28: Ticket Status Transitions & Department Assignment
-  // --------------------------------------------------------------------------
-  console.log(`\n[TEST 28] Testing Admin Status Transitions & Department Assignment...`);
-  // Sign in as Admin in client SDK
+  // Administrator confirms and verifies the cluster as an active shared incident
   await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+  const reviewClusterCallable = httpsCallable(clientFunctions, 'adminReviewCluster');
+  const reviewRes = await reviewClusterCallable({
+    clusterId: comp2Data.clusterId,
+    action: 'verify',
+    note: 'Admin verified shared HVAC leak affecting Room 202 zone.',
+  });
+  assert.ok(reviewRes.data?.success);
+  assert.strictEqual(reviewRes.data?.status, 'ACTIVE_INCIDENT');
+
+  const verifiedClusterSnap = await db.collection('issueClusters').doc(comp2Data.clusterId).get();
+  assert.strictEqual(verifiedClusterSnap.data().status, 'ACTIVE_INCIDENT');
+  assert.strictEqual(verifiedClusterSnap.data().verifiedByAdmin, true);
+  console.log(`✓ Test 27 Passed: Deterministic grouping created unreviewed suggestion; admin verification transitioned to verified incident.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 28: Ticket Status Transitions & Department Assignment Validation
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 28] Testing Admin Status Transitions & Department Assignment Validation...`);
   const updateStatusCallable = httpsCallable(clientFunctions, 'updateTicketStatus');
   const assignDeptCallable = httpsCallable(clientFunctions, 'assignTicketDepartment');
 
@@ -1004,7 +1071,19 @@ async function runTests() {
   });
   assert.ok(statusRes2.data?.success);
 
-  // Assign department callable
+  // Negative test 28a: Assigning a non-existent department must be rejected
+  await assert.rejects(
+    async () => {
+      await assignDeptCallable({
+        ticketId: createdCompData.id,
+        departmentName: 'Non-Existent Fake Department',
+      });
+    },
+    (err) => err.code?.includes('not-found') || /does not exist|not registered/i.test(err.message),
+    'Assigning non-existent department must be rejected'
+  );
+
+  // Valid department assignment
   const assignRes = await assignDeptCallable({
     ticketId: createdCompData.id,
     departmentName: 'HVAC & Climate Control',
@@ -1047,7 +1126,7 @@ async function runTests() {
     .where('type', '==', 'RESOLVED')
     .get();
   assert.ok(!resolvedNotifSnap.empty, 'RESOLVED notification must be dispatched to student');
-  console.log(`✓ Test 28 Passed: Status lifecycle transitions and department assignment verified.`);
+  console.log(`✓ Test 28 Passed: Status lifecycle transitions and department assignment validation verified.`);
 
   // --------------------------------------------------------------------------
   // TEST 29: Student Reopen Ticket Workflow
@@ -1117,9 +1196,9 @@ async function runTests() {
   console.log(`✓ Test 29 Passed: Ticket reopening workflow, timeline event, and authorization verified.`);
 
   // --------------------------------------------------------------------------
-  // TEST 30: Notifications Isolation & Security Rules
+  // TEST 30: Notifications Isolation, Idempotency & Ticket Event Privacy
   // --------------------------------------------------------------------------
-  console.log(`\n[TEST 30] Verifying In-App Notifications Isolation & Rules...`);
+  console.log(`\n[TEST 30] Verifying Notifications Isolation, Idempotency & Event Privacy...`);
   // Student 2 attempts to read Student 1's notification -> rejected
   const notifId = notifsSnap.docs[0].id;
   await assert.rejects(
@@ -1128,6 +1207,21 @@ async function runTests() {
     },
     /permission-denied/i,
     'Student 2 must not be able to read Student 1 notification'
+  );
+
+  // Negative test: Unrelated student cannot read another student's top-level ticketEvents
+  await db.collection('ticketEvents').doc('event-test-audit-1').set({
+    id: 'event-test-audit-1',
+    ticketId: createdCompData.id,
+    submittedById: testStudentUid,
+    status: 'SUBMITTED',
+  });
+  await assert.rejects(
+    async () => {
+      await getDoc(doc(clientDb, 'ticketEvents', 'event-test-audit-1'));
+    },
+    /permission-denied/i,
+    'Student 2 must not be able to read Student 1 ticketEvent audit log'
   );
 
   // Switch back to Student 1
@@ -1143,7 +1237,7 @@ async function runTests() {
   const updatedNotif = await getDoc(doc(clientDb, 'notifications', notifId));
   assert.strictEqual(updatedNotif.data().read, true);
 
-  // Student 1 attempts to forge new notification directly -> rejected (written strictly by Admin SDK/Cloud Functions)
+  // Student 1 attempts to forge new notification directly -> rejected
   await assert.rejects(
     async () => {
       await setDoc(doc(clientDb, 'notifications', 'forged-notif-1'), {
@@ -1156,12 +1250,35 @@ async function runTests() {
     /permission-denied/i,
     'Direct client notification creation must be rejected'
   );
-  console.log(`✓ Test 30 Passed: Notification read isolation, update of read status, and forge rejection verified.`);
+
+  // Test Notification Idempotency: duplicate send calls must not generate multiple notifications
+  const beforeIdempotentCount = (await db.collection('notifications')
+    .where('userId', '==', testStudentUid)
+    .where('type', '==', 'SUBMITTED')
+    .get()).docs.length;
+
+  const { sendInAppNotification } = await import('../functions/lib/notifications.js');
+  await sendInAppNotification(db, {
+    userId: testStudentUid,
+    ticketId: createdCompData.id,
+    referenceNumber: createdCompData.referenceNumber,
+    type: 'SUBMITTED',
+    title: 'Duplicate Submission Alert',
+    message: 'Test message for retry idempotency.',
+    idempotencyKey: `${createdCompData.id}_SUBMITTED`,
+  });
+
+  const afterIdempotentCount = (await db.collection('notifications')
+    .where('userId', '==', testStudentUid)
+    .where('type', '==', 'SUBMITTED')
+    .get()).docs.length;
+  assert.strictEqual(afterIdempotentCount, beforeIdempotentCount, 'Notification idempotency must prevent duplicate documents on retry');
+  console.log(`✓ Test 30 Passed: Notification read isolation, ticket event privacy, and notification idempotency verified.`);
 
   // --------------------------------------------------------------------------
-  // TEST 31: Campus Department Management & Admin Authorization
+  // TEST 31: Campus Department Management & Safe Administrative Updates
   // --------------------------------------------------------------------------
-  console.log(`\n[TEST 31] Verifying Department Management & Admin Authorization...`);
+  console.log(`\n[TEST 31] Verifying Department Management & Safe Admin Updates...`);
   // Switch to Admin
   await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
   const manageDeptCallable = httpsCallable(clientFunctions, 'adminManageDepartment');
@@ -1181,6 +1298,24 @@ async function runTests() {
   const createdDept = createDeptRes.data?.department;
   assert.ok(createdDept?.id);
 
+  // Safe update: updating permitted fields works, but tampering with ID or counters is rejected/ignored
+  const updateDeptRes = await manageDeptCallable({
+    action: 'update',
+    departmentId: createdDept.id,
+    data: {
+      name: 'Robotics & Automation Maintenance Wing',
+      id: 'FORGED_ID_OVERWRITE',
+      activeTicketsCount: 9999,
+      unwhitelistedExploitField: 'malicious',
+    },
+  });
+  assert.ok(updateDeptRes.data?.success);
+  const refetchedDeptDoc = await db.collection('departments').doc(createdDept.id).get();
+  assert.strictEqual(refetchedDeptDoc.data().id, createdDept.id, 'Department ID must be immutable');
+  assert.strictEqual(refetchedDeptDoc.data().activeTicketsCount, 0, 'Internal counters must not be modified by data spread');
+  assert.strictEqual(refetchedDeptDoc.data().unwhitelistedExploitField, undefined, 'Unwhitelisted fields must not be persisted');
+  assert.strictEqual(refetchedDeptDoc.data().name, 'Robotics & Automation Maintenance Wing', 'Permitted field should update');
+
   // Admin toggles active status
   const toggleRes = await manageDeptCallable({
     action: 'toggleActive',
@@ -1188,6 +1323,18 @@ async function runTests() {
   });
   assert.ok(toggleRes.data?.success);
   assert.strictEqual(toggleRes.data?.isActive, false);
+
+  // Negative test: Assigning this now-disabled department to a ticket must fail
+  await assert.rejects(
+    async () => {
+      await assignDeptCallable({
+        ticketId: createdCompData.id,
+        departmentId: createdDept.id,
+      });
+    },
+    (err) => err.code?.includes('failed-precondition') || /disabled|inactive/i.test(err.message),
+    'Assigning a disabled department must be rejected with failed-precondition'
+  );
 
   // Switch to Student -> direct write to departments collection is rejected
   await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
@@ -1201,12 +1348,12 @@ async function runTests() {
     /permission-denied/i,
     'Student direct write to departments collection must be rejected'
   );
-  console.log(`✓ Test 31 Passed: Department CRUD by Admin and rejection of unauthorized client writes verified.`);
+  console.log(`✓ Test 31 Passed: Department field allowlist enforced, disabled department assignment rejected, client write blocked.`);
 
   // --------------------------------------------------------------------------
-  // TEST 32: Campus Clubs Management & Access Control
+  // TEST 32: Campus Clubs Management & Safe Admin Allowlist
   // --------------------------------------------------------------------------
-  console.log(`\n[TEST 32] Verifying Campus Clubs Management & Rules...`);
+  console.log(`\n[TEST 32] Verifying Campus Clubs Management & Safe Field Allowlist...`);
   // Admin creates club
   await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
   const manageClubCallable = httpsCallable(clientFunctions, 'adminManageClub');
@@ -1226,6 +1373,21 @@ async function runTests() {
   assert.ok(createClubRes.data?.success);
   const createdClub = createClubRes.data?.club;
   assert.ok(createdClub?.id);
+
+  // Safe update: attempt to alter internal ID or inject random fields is stripped
+  await manageClubCallable({
+    action: 'update',
+    clubId: createdClub.id,
+    data: {
+      description: 'Updated drone software research group.',
+      id: 'FORGED_CLUB_ID',
+      injectedField: 'hack',
+    },
+  });
+  const refetchedClubSnap = await db.collection('campusClubs').doc(createdClub.id).get();
+  assert.strictEqual(refetchedClubSnap.data().id, createdClub.id, 'Club ID must remain immutable');
+  assert.strictEqual(refetchedClubSnap.data().description, 'Updated drone software research group.');
+  assert.strictEqual(refetchedClubSnap.data().injectedField, undefined, 'Unwhitelisted fields must be rejected');
 
   // Admin archives club
   const archiveClubRes = await manageClubCallable({
@@ -1250,12 +1412,12 @@ async function runTests() {
     /permission-denied/i,
     'Student cannot update campusClubs directly'
   );
-  console.log(`✓ Test 32 Passed: Campus Club administration and read-only student access verified.`);
+  console.log(`✓ Test 32 Passed: Campus Club safe allowlist updates verified and student direct writes blocked.`);
 
   // --------------------------------------------------------------------------
-  // TEST 33: Cloud Storage Attachment Security Rules
+  // TEST 33: Cloud Storage Attachment Security Rules & Tenant Isolation
   // --------------------------------------------------------------------------
-  console.log(`\n[TEST 33] Verifying Cloud Storage Attachment Security Rules...`);
+  console.log(`\n[TEST 33] Verifying Cloud Storage Security Rules & Tenant Isolation...`);
   const clientStorage = getClientStorage(clientApp, `gs://${testProjectId}.appspot.com`);
   connectClientStorageEmulator(clientStorage, '127.0.0.1', 9199);
 
@@ -1265,7 +1427,7 @@ async function runTests() {
   const sampleImageData = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]); // PNG magic bytes
   await uploadBytes(validAttachmentRef, sampleImageData, { contentType: 'image/png' });
 
-  // Negative test: Student 1 attempts to upload disallowed executable / script file
+  // Negative test 33a: Student 1 attempts to upload disallowed executable / script file -> rejected
   const invalidAttachmentRef = storageRef(clientStorage, `attachments/${testStudentUid}/tkt-sample/script.sh`);
   await assert.rejects(
     async () => {
@@ -1275,7 +1437,7 @@ async function runTests() {
     'Uploading disallowed MIME type must be rejected by Storage rules'
   );
 
-  // Negative test: Student 2 attempts to upload to Student 1's path
+  // Negative test 33b: Student 2 attempts to upload to Student 1's path -> rejected
   await signInWithEmailAndPassword(clientAuth, student2Email, 'Password@2026');
   const forbiddenUploadRef = storageRef(clientStorage, `attachments/${testStudentUid}/tkt-sample/hacked.png`);
   await assert.rejects(
@@ -1285,28 +1447,74 @@ async function runTests() {
     /unauthorized|permission-denied|storage/i,
     'Student 2 cannot upload to Student 1 attachment path'
   );
-  console.log(`✓ Test 33 Passed: Storage rules enforce owner upload, MIME-type checks, and tenant isolation.`);
+
+  // Negative test 33c: Student 2 attempts to read Student 1's attachment -> rejected
+  const { getBytes, deleteObject } = await import('firebase/storage');
+  await assert.rejects(
+    async () => {
+      await getBytes(validAttachmentRef);
+    },
+    /unauthorized|permission-denied|storage/i,
+    'Student 2 cannot read Student 1 private attachment'
+  );
+
+  // Negative test 33d: Student 2 attempts to delete Student 1's attachment -> rejected
+  await assert.rejects(
+    async () => {
+      await deleteObject(validAttachmentRef);
+    },
+    /unauthorized|permission-denied|storage/i,
+    'Student 2 cannot delete Student 1 private attachment'
+  );
+
+  // Negative test 33e: Legacy /complaints/{ticketId}/{fileName} unvalidated path is blocked
+  const legacyPathRef = storageRef(clientStorage, `complaints/tkt-sample/legacy.png`);
+  await assert.rejects(
+    async () => {
+      await uploadBytes(legacyPathRef, sampleImageData, { contentType: 'image/png' });
+    },
+    /unauthorized|permission-denied|storage/i,
+    'Legacy unvalidated complaints path must be rejected by default deny'
+  );
+  console.log(`✓ Test 33 Passed: Storage rules strictly enforce tenant isolation across two student accounts and block legacy paths.`);
 
   // --------------------------------------------------------------------------
-  // TEST 34: Speak Freely Sensitive Report Submission & Access Control
+  // TEST 34: Speak Freely Direct Submission Denial & Strict Access Control
   // --------------------------------------------------------------------------
-  console.log(`\n[TEST 34] Verifying Speak Freely Submission & Strict Access Control...`);
+  console.log(`\n[TEST 34] Verifying Speak Freely Submission Denial & Strict Access Control...`);
   await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
   const anonReportId = `anon-test-${Date.now()}`;
   const anonDocRef = doc(clientDb, 'anonymousReports', anonReportId);
 
-  // Student can create anonymous report
-  await setDoc(anonDocRef, {
+  // Direct client write to anonymousReports must be REJECTED by Firestore Security Rules
+  await assert.rejects(
+    async () => {
+      await setDoc(anonDocRef, {
+        id: anonReportId,
+        trackingCode: 'ANON-XYZ123',
+        category: 'Student Welfare & Hostel Concerns',
+        description: 'Hostel 3 hot water geyser has been non-functional for 4 days.',
+        submittedAt: new Date().toISOString(),
+        status: 'RECEIVED',
+        privacyLevel: 'ANONYMOUS_UNVERIFIED_DEMO',
+      });
+    },
+    /permission-denied/i,
+    'Direct client write to anonymousReports must be rejected by Security Rules'
+  );
+
+  // Seed sample report via Admin SDK for read permissions verification
+  await db.collection('anonymousReports').doc(anonReportId).set({
     id: anonReportId,
     trackingCode: 'ANON-XYZ123',
     category: 'Student Welfare & Hostel Concerns',
-    description: 'Hostel 3 hot water geyser has been non-functional for 4 days.',
+    description: 'Hostel 3 hot water geyser non-functional.',
     submittedAt: new Date().toISOString(),
     status: 'RECEIVED',
     privacyLevel: 'ANONYMOUS_UNVERIFIED_DEMO',
   });
 
-  // Student CANNOT read anonymousReports collection (strict privacy - only admin can inspect)
+  // Student CANNOT read anonymousReports collection (strict privacy)
   await assert.rejects(
     async () => {
       await getDoc(anonDocRef);
@@ -1320,7 +1528,7 @@ async function runTests() {
   const adminReadAnonSnap = await getDoc(anonDocRef);
   assert.ok(adminReadAnonSnap.exists, 'Admin must be able to read anonymous report');
   assert.strictEqual(adminReadAnonSnap.data().trackingCode, 'ANON-XYZ123');
-  console.log(`✓ Test 34 Passed: Speak Freely submission created with privacyLevel demo, read blocked for students, accessible to admin.`);
+  console.log(`✓ Test 34 Passed: Direct client writes to Speak Freely blocked; read restricted exclusively to admin.`);
 
   // --------------------------------------------------------------------------
   // TEST 19: Security Scan - Zero API Keys in Client Bundles

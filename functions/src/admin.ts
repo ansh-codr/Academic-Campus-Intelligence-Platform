@@ -74,10 +74,11 @@ export const updateTicketStatus = onCall({ cors: true }, async (request) => {
         ...(snap.data() || {}),
         status: newStatus,
         updatedAt: now,
+        eventId: eventRef.id,
       };
     });
 
-    // Send In-App Notification to ticket owner
+    // Send In-App Notification to ticket owner (Idempotent)
     if (updated?.submittedById) {
       const notifType = newStatus === 'RESOLVED' ? 'RESOLVED' : 'STATUS_CHANGED';
       const refNum = updated.referenceNumber || ticketId;
@@ -90,6 +91,7 @@ export const updateTicketStatus = onCall({ cors: true }, async (request) => {
         message: note
           ? `Ticket ${refNum}: ${note}`
           : `Your ticket ${refNum} has been updated to ${newStatus}.`,
+        idempotencyKey: `${ticketId}_STATUS_${newStatus}`,
       });
     }
 
@@ -106,6 +108,8 @@ export const updateTicketStatus = onCall({ cors: true }, async (request) => {
 
 /**
  * Callable Cloud Function: assignTicketDepartment (Admin only)
+ * Validates that the department exists and is active.
+ * Prefers stable department IDs over unverified names.
  */
 export const assignTicketDepartment = onCall({ cors: true }, async (request) => {
   if (!request.auth) {
@@ -117,11 +121,55 @@ export const assignTicketDepartment = onCall({ cors: true }, async (request) => 
   }
 
   const { ticketId, departmentName, departmentId, note } = request.data || {};
-  if (!ticketId || !departmentName) {
-    throw new HttpsError('invalid-argument', 'ticketId and departmentName are required.');
+  if (!ticketId) {
+    throw new HttpsError('invalid-argument', 'ticketId is required.');
+  }
+  if (!departmentId && !departmentName) {
+    throw new HttpsError('invalid-argument', 'departmentId or departmentName is required.');
   }
 
   const db = admin.firestore();
+
+  // Validate that the department exists and is active
+  let targetDeptId = departmentId;
+  let targetDeptName = departmentName;
+
+  if (targetDeptId) {
+    const deptSnap = await db.collection('departments').doc(targetDeptId).get();
+    if (!deptSnap.exists) {
+      throw new HttpsError('not-found', `Department ID "${targetDeptId}" not found.`);
+    }
+    const deptData = deptSnap.data();
+    if (deptData?.isActive === false) {
+      throw new HttpsError('failed-precondition', `Department "${deptData.name}" is currently disabled/inactive.`);
+    }
+    targetDeptName = deptData?.name || departmentName;
+  } else {
+    const deptQuery = await db.collection('departments').where('name', '==', departmentName).limit(1).get();
+    if (!deptQuery.empty) {
+      const deptDoc = deptQuery.docs[0];
+      const deptData = deptDoc.data();
+      if (deptData?.isActive === false) {
+        throw new HttpsError('failed-precondition', `Department "${deptData.name}" is currently disabled/inactive.`);
+      }
+      targetDeptId = deptDoc.id;
+      targetDeptName = deptData.name;
+    } else {
+      const allowedCategories = [
+        'HVAC & Climate Control',
+        'IT & Campus Network Operations',
+        'Electrical Maintenance',
+        'Public Health & Plumbing',
+        'Campus Estate & General Infrastructure',
+        'Housekeeping & Sanitation',
+        'Hostel Administration Office',
+      ];
+      if (!allowedCategories.includes(departmentName)) {
+        throw new HttpsError('not-found', `Department "${departmentName}" does not exist.`);
+      }
+    }
+  }
+
   const ticketRef = db.collection('complaints').doc(ticketId);
   const now = new Date().toISOString();
   const adminName = request.auth.token.name || request.auth.token.email || 'Administrator';
@@ -146,13 +194,13 @@ export const assignTicketDepartment = onCall({ cors: true }, async (request) => 
         : currentStatus;
 
       const updatePayload: Record<string, any> = {
-        assignedDepartment: departmentName,
+        assignedDepartment: targetDeptName,
         status: newStatus,
         updatedAt: now,
       };
 
-      if (departmentId) {
-        updatePayload.assignedDepartmentId = departmentId;
+      if (targetDeptId) {
+        updatePayload.assignedDepartmentId = targetDeptId;
       }
 
       transaction.update(ticketRef, updatePayload);
@@ -162,26 +210,28 @@ export const assignTicketDepartment = onCall({ cors: true }, async (request) => 
         id: eventRef.id,
         ticketId,
         status: newStatus,
-        note: note || `Assigned to department: ${departmentName}`,
+        note: note || `Assigned to department: ${targetDeptName}`,
         updatedBy: adminName,
         timestamp: now,
       });
     });
 
     if (ownerId) {
+      const safeDeptKey = String(targetDeptName).replace(/[^a-zA-Z0-9]/g, '_');
       await sendInAppNotification(db, {
         userId: ownerId,
         ticketId,
         referenceNumber: refNum,
         type: 'ASSIGNED',
         title: 'Ticket Assigned to Department',
-        message: `Your ticket ${refNum} has been assigned to ${departmentName}.`,
+        message: `Your ticket ${refNum} has been assigned to ${targetDeptName}.`,
+        idempotencyKey: `${ticketId}_ASSIGNED_${safeDeptKey}`,
       });
     }
 
     return {
       success: true,
-      message: `Assigned ticket ${ticketId} to ${departmentName}`,
+      message: `Assigned ticket ${ticketId} to ${targetDeptName}`,
     };
   } catch (err: any) {
     if (err instanceof HttpsError) throw err;
@@ -191,7 +241,8 @@ export const assignTicketDepartment = onCall({ cors: true }, async (request) => 
 
 /**
  * Callable Cloud Function: adminManageDepartment (Admin only)
- * Creates, updates, or toggles active status for campus departments
+ * Creates, updates, or toggles active status with strict field allowlist validation.
+ * Prevents unauthorized modification of IDs, timestamps, or counters.
  */
 export const adminManageDepartment = onCall({ cors: true }, async (request) => {
   if (!request.auth) {
@@ -217,13 +268,13 @@ export const adminManageDepartment = onCall({ cors: true }, async (request) => {
       const deptRef = departmentId ? db.collection('departments').doc(departmentId) : db.collection('departments').doc();
       const newDept = {
         id: deptRef.id,
-        name: data.name,
-        code: data.code,
+        name: String(data.name).trim(),
+        code: String(data.code).trim().toUpperCase(),
         category: data.category || 'GENERAL_INFRASTRUCTURE',
-        contactEmail: data.contactEmail || '',
-        headName: data.headName || '',
+        contactEmail: data.contactEmail ? String(data.contactEmail).trim() : '',
+        headName: data.headName ? String(data.headName).trim() : '',
         activeTicketsCount: 0,
-        isActive: data.isActive !== undefined ? data.isActive : true,
+        isActive: data.isActive !== undefined ? Boolean(data.isActive) : true,
         createdAt: now,
         updatedAt: now,
       };
@@ -250,10 +301,16 @@ export const adminManageDepartment = onCall({ cors: true }, async (request) => {
     }
 
     if (action === 'update') {
-      await deptRef.update({
-        ...data,
-        updatedAt: now,
-      });
+      // Explicit allowlist: only permitted fields can be updated
+      const allowedUpdates: Record<string, any> = { updatedAt: now };
+      if (typeof data?.name === 'string' && data.name.trim()) allowedUpdates.name = data.name.trim();
+      if (typeof data?.code === 'string' && data.code.trim()) allowedUpdates.code = data.code.trim().toUpperCase();
+      if (typeof data?.category === 'string') allowedUpdates.category = data.category;
+      if (typeof data?.contactEmail === 'string') allowedUpdates.contactEmail = data.contactEmail.trim();
+      if (typeof data?.headName === 'string') allowedUpdates.headName = data.headName.trim();
+      if (typeof data?.isActive === 'boolean') allowedUpdates.isActive = data.isActive;
+
+      await deptRef.update(allowedUpdates);
       const updatedSnap = await deptRef.get();
       return { success: true, department: updatedSnap.data() };
     }
@@ -265,7 +322,8 @@ export const adminManageDepartment = onCall({ cors: true }, async (request) => {
 
 /**
  * Callable Cloud Function: adminManageClub (Admin only)
- * Creates, updates, or archives campus clubs
+ * Creates, updates, or archives campus clubs with strict field allowlist validation.
+ * Prevents unauthorized modification of IDs, timestamps, or system metadata.
  */
 export const adminManageClub = onCall({ cors: true }, async (request) => {
   if (!request.auth) {
@@ -291,15 +349,15 @@ export const adminManageClub = onCall({ cors: true }, async (request) => {
       const clubRef = clubId ? db.collection('campusClubs').doc(clubId) : db.collection('campusClubs').doc();
       const newClub = {
         id: clubRef.id,
-        name: data.name,
+        name: String(data.name).trim(),
         category: data.category,
-        leadName: data.leadName || '',
-        description: data.description || '',
-        memberCount: data.memberCount || 0,
-        meetingSchedule: data.meetingSchedule || '',
-        bannerGradient: data.bannerGradient || 'from-indigo-600 to-purple-600',
-        tags: Array.isArray(data.tags) ? data.tags : [],
-        recentActivities: Array.isArray(data.recentActivities) ? data.recentActivities : [],
+        leadName: data.leadName ? String(data.leadName).trim() : '',
+        description: data.description ? String(data.description).trim() : '',
+        memberCount: typeof data.memberCount === 'number' ? data.memberCount : 0,
+        meetingSchedule: data.meetingSchedule ? String(data.meetingSchedule).trim() : '',
+        bannerGradient: data.bannerGradient ? String(data.bannerGradient).trim() : 'from-indigo-600 to-purple-600',
+        tags: Array.isArray(data.tags) ? data.tags.map((t: any) => String(t).trim()) : [],
+        recentActivities: Array.isArray(data.recentActivities) ? data.recentActivities.map((a: any) => String(a).trim()) : [],
         isArchived: false,
         createdAt: now,
         updatedAt: now,
@@ -326,10 +384,21 @@ export const adminManageClub = onCall({ cors: true }, async (request) => {
     }
 
     if (action === 'update') {
-      await clubRef.update({
-        ...data,
-        updatedAt: now,
-      });
+      // Explicit allowlist: only permitted fields can be updated
+      const allowedUpdates: Record<string, any> = { updatedAt: now };
+      if (typeof data?.name === 'string' && data.name.trim()) allowedUpdates.name = data.name.trim();
+      if (typeof data?.category === 'string') allowedUpdates.category = data.category;
+      if (typeof data?.leadName === 'string') allowedUpdates.leadName = data.leadName.trim();
+      if (typeof data?.description === 'string') allowedUpdates.description = data.description.trim();
+      if (typeof data?.meetingSchedule === 'string') allowedUpdates.meetingSchedule = data.meetingSchedule.trim();
+      if (typeof data?.bannerGradient === 'string') allowedUpdates.bannerGradient = data.bannerGradient.trim();
+      if (typeof data?.contactEmail === 'string') allowedUpdates.contactEmail = data.contactEmail.trim();
+      if (Array.isArray(data?.tags)) allowedUpdates.tags = data.tags.map((t: any) => String(t).trim());
+      if (Array.isArray(data?.recentActivities)) allowedUpdates.recentActivities = data.recentActivities.map((a: any) => String(a).trim());
+      if (typeof data?.memberCount === 'number') allowedUpdates.memberCount = data.memberCount;
+      if (typeof data?.isArchived === 'boolean') allowedUpdates.isArchived = data.isArchived;
+
+      await clubRef.update(allowedUpdates);
       const updatedSnap = await clubRef.get();
       return { success: true, club: updatedSnap.data() };
     }
@@ -341,7 +410,8 @@ export const adminManageClub = onCall({ cors: true }, async (request) => {
 
 /**
  * Callable Cloud Function: adminReviewCluster (Admin only)
- * Reviews, merges, resolves, or dismisses suggested issue clusters
+ * Reviews, verifies, merges, resolves, or dismisses suggested rule-based issue clusters.
+ * Enforces admin confirmation before converting a suggestion into an official active incident.
  */
 export const adminReviewCluster = onCall({ cors: true }, async (request) => {
   if (!request.auth) {
@@ -352,8 +422,8 @@ export const adminReviewCluster = onCall({ cors: true }, async (request) => {
   }
 
   const { clusterId, action, note } = request.data || {};
-  if (!clusterId || !action || !['merge', 'resolve', 'dismiss'].includes(action)) {
-    throw new HttpsError('invalid-argument', 'clusterId and valid action (merge, resolve, dismiss) are required.');
+  if (!clusterId || !action || !['verify', 'merge', 'resolve', 'dismiss'].includes(action)) {
+    throw new HttpsError('invalid-argument', 'clusterId and valid action (verify, merge, resolve, dismiss) are required.');
   }
 
   const db = admin.firestore();
@@ -367,12 +437,22 @@ export const adminReviewCluster = onCall({ cors: true }, async (request) => {
     }
 
     let newStatus: 'ACTIVE_INCIDENT' | 'RESOLVING' | 'MERGED' | 'DISMISSED';
-    if (action === 'merge') newStatus = 'MERGED';
-    else if (action === 'resolve') newStatus = 'RESOLVING';
-    else newStatus = 'DISMISSED';
+    let verifiedByAdmin = true;
+
+    if (action === 'verify') {
+      newStatus = 'ACTIVE_INCIDENT';
+    } else if (action === 'merge') {
+      newStatus = 'MERGED';
+    } else if (action === 'resolve') {
+      newStatus = 'RESOLVING';
+    } else {
+      newStatus = 'DISMISSED';
+      verifiedByAdmin = false;
+    }
 
     await clusterRef.update({
       status: newStatus,
+      verifiedByAdmin,
       updatedAt: now,
       ...(note ? { reviewNote: note } : {}),
     });

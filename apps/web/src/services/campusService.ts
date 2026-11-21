@@ -61,8 +61,9 @@ export const CampusService = {
   },
 
   /**
-   * Create a complaint using Cloud Function or atomic Firestore transaction.
-   * Generates atomic reference SS-2026-XXXX and records initial lifecycle event.
+   * Create a complaint exclusively using the authenticated Cloud Function callable.
+   * Direct client Firestore write fallback is strictly disabled to prevent
+   * client forgery of reference numbers, ownership, or status.
    */
   async createTicket(input: CreateTicketInput): Promise<{
     ticket: CampusTicket;
@@ -71,79 +72,15 @@ export const CampusService = {
     const user = auth.currentUser;
     if (!user) throw new Error('User must be logged in to submit a ticket.');
 
-    try {
-      // 1. Attempt Cloud Function callable (enforces server-side sequence & validation)
-      const createComplaintFn = httpsCallable<{ data: CreateTicketInput }, { success: boolean; data: CampusTicket }>(
-        functions,
-        'createComplaint'
-      );
-      const res = await createComplaintFn(input as any);
-      if (res.data?.success && res.data.data) {
-        return { ticket: res.data.data, isRemote: true };
-      }
-    } catch (cfError) {
-      console.warn('Cloud Function invocation notice, using direct Firestore transaction fallback:', cfError);
+    const createComplaintFn = httpsCallable<{ data: CreateTicketInput }, { success: boolean; data: CampusTicket }>(
+      functions,
+      'createComplaint'
+    );
+    const res = await createComplaintFn(input as any);
+    if (res.data?.success && res.data.data) {
+      return { ticket: res.data.data, isRemote: true };
     }
-
-    // 2. Direct Firestore Transaction Fallback (governed by Firestore Security Rules)
-    const now = new Date().toISOString();
-    const counterRef = doc(db, 'systemCounters', 'complaints');
-    const newDocRef = doc(collection(db, 'complaints'));
-    const ticketId = newDocRef.id;
-
-    const createdTicket = await runTransaction(db, async (transaction) => {
-      const counterSnap = await transaction.get(counterRef);
-      let nextSeq = 850;
-      if (counterSnap.exists()) {
-        nextSeq = (counterSnap.data()?.currentSequence || 850) + 1;
-      }
-      transaction.set(counterRef, { currentSequence: nextSeq }, { merge: true });
-
-      const refNum = `SS-2026-${String(nextSeq).padStart(4, '0')}`;
-      const submitterName = user.displayName || user.email || 'Student';
-
-      const ticketData: Record<string, any> = {
-        id: ticketId,
-        referenceNumber: refNum,
-        title: input.title,
-        category: input.category,
-        building: input.building,
-        floor: input.floor,
-        room: input.room,
-        description: input.description,
-        priority: input.priority || 'MEDIUM',
-        status: 'SUBMITTED',
-        assignedDepartment: getDepartmentForCategory(input.category),
-        submittedById: user.uid,
-        submittedBy: submitterName,
-        submittedAt: now,
-        updatedAt: now,
-      };
-
-      if (input.attachmentUrls && input.attachmentUrls.length > 0) {
-        ticketData.attachmentUrls = input.attachmentUrls;
-      }
-
-      transaction.set(newDocRef, ticketData);
-
-      const eventRef = doc(collection(newDocRef, 'timeline'));
-      const initialEvent: TicketEvent = {
-        id: eventRef.id,
-        ticketId,
-        status: 'SUBMITTED',
-        note: 'Issue submitted via SolveSphere Portal.',
-        updatedBy: submitterName,
-        timestamp: now,
-      };
-      transaction.set(eventRef, initialEvent);
-
-      return {
-        ...ticketData,
-        timeline: [initialEvent],
-      } as CampusTicket;
-    });
-
-    return { ticket: createdTicket, isRemote: true };
+    throw new Error('Failed to create ticket via authenticated service.');
   },
 
   /**
@@ -444,29 +381,15 @@ export const CampusService = {
 
   /**
    * Speak Freely (Sensitive concerns)
+   * Live client submissions are disabled for security compliance pending full cryptographic audit.
    */
   async submitSpeakFreely(
-    category: string,
-    description: string
+    _category: string,
+    _description: string
   ): Promise<AnonymousReport> {
-    const trackingCode = `ANON-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
-    const report: AnonymousReport = {
-      id: `anon-${Date.now()}`,
-      trackingCode,
-      category,
-      description,
-      submittedAt: new Date().toISOString(),
-      status: 'RECEIVED',
-      privacyLevel: 'ANONYMOUS_UNVERIFIED_DEMO',
-    };
-
-    try {
-      await setDoc(doc(db, 'anonymousReports', report.id), report);
-    } catch {
-      // ignore in demo
-    }
-
-    return report;
+    throw new Error(
+      'Live Speak Freely submissions are temporarily disabled pending zero-knowledge privacy architecture certification. Please submit urgent or standard issues through the authenticated Campus Issue Reporting portal.'
+    );
   },
 };
 

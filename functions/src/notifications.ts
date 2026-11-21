@@ -8,17 +8,29 @@ interface CreateNotificationParams {
   type: NotificationType;
   title: string;
   message: string;
+  idempotencyKey?: string;
 }
 
+/**
+ * Dispatches an in-app notification with idempotency protection.
+ * If a notification with the deterministic key already exists (e.g. upon function retries),
+ * the operation is safely skipped without generating duplicate alerts.
+ */
 export async function sendInAppNotification(
   db: admin.firestore.Firestore,
   params: CreateNotificationParams
 ): Promise<string> {
-  const notifRef = db.collection('notifications').doc();
+  const notifId = params.idempotencyKey || `${params.ticketId}_${params.type}`;
+  const notifRef = db.collection('notifications').doc(notifId);
   const now = new Date().toISOString();
 
+  const existing = await notifRef.get();
+  if (existing.exists) {
+    return notifId;
+  }
+
   await notifRef.set({
-    id: notifRef.id,
+    id: notifId,
     userId: params.userId,
     ticketId: params.ticketId,
     referenceNumber: params.referenceNumber,
@@ -29,5 +41,5 @@ export async function sendInAppNotification(
     createdAt: now,
   });
 
-  return notifRef.id;
+  return notifId;
 }

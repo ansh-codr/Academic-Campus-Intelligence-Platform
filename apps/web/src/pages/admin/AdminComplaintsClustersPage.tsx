@@ -76,9 +76,11 @@ export const AdminComplaintsClustersPage: React.FC = () => {
     setIsUpdating(true);
     setActionSuccess(null);
     try {
+      const selectedDeptObj = departments.find((d) => d.name === newDepartment);
       await AdminService.assignTicketDepartment(
         selectedTicketForUpdate.id,
         newDepartment,
+        selectedDeptObj?.id,
         `Assigned to ${newDepartment} by central administrator.`
       );
       setActionSuccess(`Ticket ${selectedTicketForUpdate.referenceNumber} assigned to ${newDepartment}.`);

@@ -24,10 +24,43 @@ export function getDepartmentForCategory(category: string): string {
 }
 
 /**
+ * Validates that an attachment URL belongs strictly to the authenticated student's storage workspace.
+ * Prevents arbitrary external links or cross-student attachment hijacking.
+ */
+function validateAttachmentUrl(urlStr: string, uid: string): void {
+  try {
+    const parsed = new URL(urlStr);
+    const isAllowedHost =
+      parsed.hostname.includes('firebasestorage.googleapis.com') ||
+      parsed.hostname.includes('storage.googleapis.com') ||
+      parsed.hostname === '127.0.0.1' ||
+      parsed.hostname === 'localhost';
+
+    if (!isAllowedHost) {
+      throw new HttpsError('permission-denied', `Disallowed attachment host: ${parsed.hostname}`);
+    }
+
+    const decodedPath = decodeURIComponent(parsed.pathname);
+    const expectedPrefix = `/attachments/${uid}/`;
+    const expectedEncodedPrefix = `attachments%2F${uid}%2F`;
+
+    if (!decodedPath.includes(expectedPrefix) && !parsed.pathname.includes(expectedEncodedPrefix)) {
+      throw new HttpsError(
+        'permission-denied',
+        'Attachment ownership verification failed. URLs must belong to the authenticated student workspace.'
+      );
+    }
+  } catch (err: any) {
+    if (err instanceof HttpsError) throw err;
+    throw new HttpsError('invalid-argument', `Invalid attachment URL format: ${urlStr}`);
+  }
+}
+
+/**
  * Callable Cloud Function: createComplaint
  * Securely creates a complaint with atomic sequence numbering (SS-2026-XXXX)
  * Enforces ownership from context.auth.uid
- * Supports optional attachment URLs, deterministic duplicate clustering, and in-app notifications
+ * Validates attachment ownership, implements rule-based heuristic clustering, and idempotent notification
  */
 export const createComplaint = onCall({ cors: true }, async (request) => {
   if (!request.auth) {
@@ -42,6 +75,13 @@ export const createComplaint = onCall({ cors: true }, async (request) => {
   const data = parseResult.data;
   const db = admin.firestore();
   const uid = request.auth.uid;
+
+  // Validate all attachment URLs belong to the authenticated student
+  if (data.attachmentUrls && data.attachmentUrls.length > 0) {
+    for (const url of data.attachmentUrls) {
+      validateAttachmentUrl(url, uid);
+    }
+  }
 
   // Retrieve user name / student ID from user profile or auth token
   let submitterName = request.auth.token.name || request.auth.token.email || 'Student';
@@ -114,7 +154,7 @@ export const createComplaint = onCall({ cors: true }, async (request) => {
     const complaintId = newComplaint.id;
     const refNum = newComplaint.referenceNumber;
 
-    // --- Deterministic Duplicate Issue Grouping ---
+    // --- Deterministic Duplicate Issue Grouping (Rule-based Suggestion) ---
     // Check for active complaints in the same building and room with same category in last 48 hours
     try {
       const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
@@ -134,7 +174,6 @@ export const createComplaint = onCall({ cors: true }, async (request) => {
       });
 
       if (matchingDocs.length > 0) {
-        // Check if any matching doc already belongs to a cluster
         const existingClusterDoc = matchingDocs.find((docSnap) => docSnap.data().clusterId);
         let targetClusterId: string;
 
@@ -147,28 +186,29 @@ export const createComplaint = onCall({ cors: true }, async (request) => {
             updatedAt: now,
           });
         } else {
-          // Create new cluster grouping
+          // Represent match as an unreviewed rule-based suggestion, requiring admin verification
           const clusterRef = db.collection('issueClusters').doc();
           targetClusterId = clusterRef.id;
           const allTicketIds = [complaintId, ...matchingDocs.map((d) => d.id)];
 
           await clusterRef.set({
             id: targetClusterId,
-            title: `${data.category.replace(/_/g, ' ')} Issue in ${data.building}`,
+            title: `Suggested Incident: ${data.category.replace(/_/g, ' ')} at ${data.building} (${data.room})`,
             category: data.category,
             affectedArea: `${data.building}, Room ${data.room}`,
             building: data.building,
             room: data.room,
             ticketCount: allTicketIds.length,
             ticketIds: allTicketIds,
-            confidenceScore: 0.95,
-            status: 'ACTIVE_INCIDENT',
-            suggestedAction: `Multiple complaints logged for ${data.category} in ${data.building} ${data.room}. Dispatch priority technician.`,
+            clusteringMethod: 'RULE_BASED_LOCATION_PROXIMITY',
+            verifiedByAdmin: false,
+            status: 'SUGGESTED_INCIDENT',
+            suggestedAction: `Heuristic rule matched identical category and room within 48 hours. Requires administrator confirmation to verify shared root cause.`,
             createdAt: now,
             updatedAt: now,
           });
 
-          // Link the cluster to earlier matching tickets
+          // Link the cluster suggestion to earlier matching tickets
           const batch = db.batch();
           for (const d of matchingDocs) {
             batch.update(d.ref, { clusterId: targetClusterId });
@@ -184,7 +224,7 @@ export const createComplaint = onCall({ cors: true }, async (request) => {
       console.warn('Issue grouping non-fatal warning:', groupingErr);
     }
 
-    // --- Dispatch In-App Notification ---
+    // --- Dispatch In-App Notification (Idempotent) ---
     try {
       await sendInAppNotification(db, {
         userId: uid,
@@ -193,6 +233,7 @@ export const createComplaint = onCall({ cors: true }, async (request) => {
         type: 'SUBMITTED',
         title: 'Ticket Submitted Successfully',
         message: `Your ticket ${refNum} has been received and assigned to ${newComplaint.assignedDepartment}.`,
+        idempotencyKey: `${complaintId}_SUBMITTED`,
       });
     } catch (notifErr) {
       console.warn('Notification send non-fatal warning:', notifErr);
@@ -281,6 +322,7 @@ export const reopenTicket = onCall({ cors: true }, async (request) => {
         ticket: { ...ticketData, status: 'REOPENED', updatedAt: now },
         referenceNumber: ticketData?.referenceNumber || ticketId,
         ownerId: ticketData?.submittedById,
+        eventId: eventRef.id,
       };
     });
 
@@ -292,6 +334,7 @@ export const reopenTicket = onCall({ cors: true }, async (request) => {
         type: 'REOPENED',
         title: 'Ticket Reopened',
         message: `Ticket ${result.referenceNumber} has been reopened: ${reason.trim()}`,
+        idempotencyKey: `${ticketId}_REOPENED_${result.eventId}`,
       });
     }
 
