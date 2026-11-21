@@ -32,18 +32,20 @@ export const MyTicketsPage: React.FC = () => {
   const [reopenReason, setReopenReason] = useState('');
   const [isReopening, setIsReopening] = useState(false);
   const [reopenMessage, setReopenMessage] = useState<string | null>(null);
+  const [reopenError, setReopenError] = useState<string | null>(null);
 
   const handleReopenTicket = async () => {
     if (!reopenModalTicket || reopenReason.trim().length < 5) return;
     setIsReopening(true);
     setReopenMessage(null);
+    setReopenError(null);
     try {
       await CampusService.reopenTicket(reopenModalTicket.id, reopenReason);
       setReopenMessage(`Ticket ${reopenModalTicket.referenceNumber} has been reopened successfully.`);
       setReopenModalTicket(null);
       setReopenReason('');
     } catch (err: any) {
-      alert(`Error reopening ticket: ${err.message}`);
+      setReopenError(err.message || 'Error reopening ticket. Ensure ticket is resolved or closed.');
     } finally {
       setIsReopening(false);
     }
@@ -389,18 +391,29 @@ export const MyTicketsPage: React.FC = () => {
       {/* Reopen Ticket Modal */}
       <Modal
         isOpen={!!reopenModalTicket}
-        onClose={() => setReopenModalTicket(null)}
+        onClose={() => {
+          setReopenModalTicket(null);
+          setReopenError(null);
+        }}
         title={`Reopen Ticket: ${reopenModalTicket?.referenceNumber || ''}`}
         description="Provide a justification why this issue requires renewed technician intervention."
         maxWidth="md"
       >
         <div className="space-y-4 text-xs sm:text-sm">
+          {reopenError && (
+            <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 text-xs">
+              <strong>Error:</strong> {reopenError}
+            </div>
+          )}
           <p className="text-slate-600 dark:text-slate-300">
             Please explain why this issue is not fully resolved or if the recurring problem reappeared:
           </p>
           <textarea
             value={reopenReason}
-            onChange={(e) => setReopenReason(e.target.value)}
+            onChange={(e) => {
+              setReopenReason(e.target.value);
+              if (reopenError) setReopenError(null);
+            }}
             placeholder="e.g. The leak resumed after 2 hours of heavy AC usage..."
             rows={4}
             className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-blue"
@@ -412,6 +425,7 @@ export const MyTicketsPage: React.FC = () => {
               onClick={() => {
                 setReopenModalTicket(null);
                 setReopenReason('');
+                setReopenError(null);
               }}
             >
               Cancel

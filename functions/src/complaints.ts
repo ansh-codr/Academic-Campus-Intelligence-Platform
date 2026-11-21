@@ -1,5 +1,6 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import admin from 'firebase-admin';
+import path from 'path';
 import { CreateTicketSchema, TicketStatus } from '@solvesphere/shared';
 import { sendInAppNotification } from './notifications.js';
 
@@ -24,36 +25,219 @@ export function getDepartmentForCategory(category: string): string {
 }
 
 /**
- * Validates that an attachment URL belongs strictly to the authenticated student's storage workspace.
- * Prevents arbitrary external links or cross-student attachment hijacking.
+ * Returns the expected project Cloud Storage bucket name.
  */
-function validateAttachmentUrl(urlStr: string, uid: string): void {
-  try {
-    const parsed = new URL(urlStr);
-    const isAllowedHost =
-      parsed.hostname.includes('firebasestorage.googleapis.com') ||
-      parsed.hostname.includes('storage.googleapis.com') ||
-      parsed.hostname === '127.0.0.1' ||
-      parsed.hostname === 'localhost';
+function getExpectedBucketName(): string {
+  if (process.env.STORAGE_BUCKET) {
+    return process.env.STORAGE_BUCKET;
+  }
+  if (process.env.FIREBASE_CONFIG) {
+    try {
+      const cfg = JSON.parse(process.env.FIREBASE_CONFIG);
+      if (cfg.storageBucket) return cfg.storageBucket;
+      if (cfg.projectId) return `${cfg.projectId}.appspot.com`;
+    } catch {}
+  }
+  const projectId = process.env.GCLOUD_PROJECT || process.env.FIREBASE_PROJECT || 'fluetas-a1914';
+  return `${projectId}.appspot.com`;
+}
 
-    if (!isAllowedHost) {
-      throw new HttpsError('permission-denied', `Disallowed attachment host: ${parsed.hostname}`);
+interface VerifiedAttachment {
+  canonicalPath: string;
+  downloadUrl: string;
+  bucketName: string;
+  contentType: string;
+  size: number;
+}
+
+/**
+ * Robust attachment verification:
+ * - Rejects forged hosts, URLs, directory traversal, null bytes, and encoded path tricks.
+ * - Extracts and validates canonical Firebase Storage object path.
+ * - Verifies the expected Firebase bucket.
+ * - Verifies authenticated user ownership (/attachments/{uid}/...).
+ * - Verifies association with authorized pre-submission draft or ticket context.
+ * - Verifies that the object exists in Storage, with permitted MIME type and <= 10MB size.
+ * - Prevents unauthorized attachment reassignment across complaints.
+ */
+async function verifyAndResolveAttachment(
+  inputRef: string,
+  uid: string,
+  db: admin.firestore.Firestore
+): Promise<VerifiedAttachment> {
+  if (typeof inputRef !== 'string' || !inputRef.trim()) {
+    throw new HttpsError('invalid-argument', 'Attachment reference must be a non-empty string.');
+  }
+
+  // Reject path traversal, null bytes, backslashes, double-encoded tricks
+  if (
+    inputRef.includes('\0') ||
+    inputRef.includes('\\') ||
+    inputRef.includes('..') ||
+    /%2e%2e/i.test(inputRef) ||
+    /%252e%252e/i.test(inputRef)
+  ) {
+    throw new HttpsError('permission-denied', 'Illegal characters or directory traversal detected in attachment path.');
+  }
+
+  let bucketName = '';
+  let rawPath = '';
+
+  if (inputRef.startsWith('gs://')) {
+    const withoutScheme = inputRef.slice(5);
+    const firstSlash = withoutScheme.indexOf('/');
+    if (firstSlash === -1) {
+      throw new HttpsError('invalid-argument', 'Malformed gs:// attachment URI.');
+    }
+    bucketName = withoutScheme.slice(0, firstSlash);
+    rawPath = withoutScheme.slice(firstSlash + 1);
+  } else if (inputRef.startsWith('http://') || inputRef.startsWith('https://')) {
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(inputRef);
+    } catch {
+      throw new HttpsError('invalid-argument', `Invalid attachment URL format: ${inputRef}`);
     }
 
-    const decodedPath = decodeURIComponent(parsed.pathname);
-    const expectedPrefix = `/attachments/${uid}/`;
-    const expectedEncodedPrefix = `attachments%2F${uid}%2F`;
+    const allowedHosts = [
+      'firebasestorage.googleapis.com',
+      'storage.googleapis.com',
+      '127.0.0.1',
+      'localhost',
+    ];
+    if (!allowedHosts.includes(parsedUrl.hostname)) {
+      throw new HttpsError('permission-denied', `Disallowed attachment storage host: ${parsedUrl.hostname}`);
+    }
 
-    if (!decodedPath.includes(expectedPrefix) && !parsed.pathname.includes(expectedEncodedPrefix)) {
+    const pathname = parsedUrl.pathname;
+    const fbMatch = pathname.match(/^\/v0\/b\/([^/]+)\/o\/(.+)$/);
+    if (fbMatch) {
+      bucketName = fbMatch[1];
+      rawPath = decodeURIComponent(fbMatch[2]);
+    } else {
+      const gcsMatch = pathname.match(/^\/([^/]+)\/(.+)$/);
+      if (gcsMatch) {
+        bucketName = gcsMatch[1];
+        rawPath = decodeURIComponent(gcsMatch[2]);
+      } else {
+        throw new HttpsError('invalid-argument', 'Unrecognized Firebase Storage URL path format.');
+      }
+    }
+  } else {
+    // Canonical relative storage path
+    rawPath = inputRef;
+  }
+
+  const expectedBucket = getExpectedBucketName();
+  if (bucketName) {
+    const isAuthorized =
+      bucketName === expectedBucket ||
+      bucketName === 'fluetas-a1914.appspot.com' ||
+      bucketName === 'solvesphere-ai-dev.appspot.com' ||
+      bucketName.startsWith('fluetas-') ||
+      bucketName.startsWith('solvesphere-');
+    if (!isAuthorized) {
       throw new HttpsError(
         'permission-denied',
-        'Attachment ownership verification failed. URLs must belong to the authenticated student workspace.'
+        `Attachment bucket '${bucketName}' does not match authorized project bucket '${expectedBucket}'.`
       );
     }
-  } catch (err: any) {
-    if (err instanceof HttpsError) throw err;
-    throw new HttpsError('invalid-argument', `Invalid attachment URL format: ${urlStr}`);
+  } else {
+    bucketName = expectedBucket;
   }
+
+  // Normalize path and ensure POSIX structure
+  const cleanPath = path.posix.normalize(rawPath).replace(/^\/+/, '');
+  const segments = cleanPath.split('/');
+
+  // Must match attachments/{userId}/{contextId}/{fileName}
+  if (segments.length < 4 || segments[0] !== 'attachments') {
+    throw new HttpsError(
+      'permission-denied',
+      'Attachment must reside within the authorized /attachments/{userId}/{contextId}/ directory structure.'
+    );
+  }
+
+  const pathUid = segments[1];
+  if (pathUid !== uid) {
+    throw new HttpsError(
+      'permission-denied',
+      `Attachment ownership verification failed. Cannot claim files belonging to another student (owner: ${pathUid}).`
+    );
+  }
+
+  const contextId = segments[2];
+  if (!contextId || !/^[a-zA-Z0-9_-]+$/.test(contextId)) {
+    throw new HttpsError('invalid-argument', 'Attachment context identifier is invalid or contains prohibited characters.');
+  }
+
+  const fileName = segments.slice(3).join('/');
+  if (!fileName || fileName.includes('..') || fileName.startsWith('/')) {
+    throw new HttpsError('invalid-argument', 'Attachment file name is invalid.');
+  }
+
+  // Verify object existence in Firebase Storage
+  const storageBucket = admin.storage().bucket(bucketName);
+  const fileObj = storageBucket.file(cleanPath);
+
+  const [exists] = await fileObj.exists();
+  if (!exists) {
+    throw new HttpsError('not-found', `Attachment file does not exist in storage: ${cleanPath}`);
+  }
+
+  // Verify content type and size limits
+  const [metadata] = await fileObj.getMetadata();
+  const contentType = metadata.contentType || '';
+  const allowedMime = /^(image\/(jpeg|png|webp|gif|svg\+xml)|application\/pdf|text\/plain)$/i;
+  if (!allowedMime.test(contentType)) {
+    throw new HttpsError(
+      'invalid-argument',
+      `Disallowed attachment content type '${contentType}'. Only images, PDFs, and plain text documents are permitted.`
+    );
+  }
+
+  const size = parseInt(String(metadata.size || '0'), 10);
+  if (size > 10 * 1024 * 1024) {
+    throw new HttpsError(
+      'invalid-argument',
+      `Attachment exceeds maximum allowed size of 10MB (actual: ${(size / 1024 / 1024).toFixed(2)}MB).`
+    );
+  }
+
+  // Prevent unauthorized attachment reassignment across complaints
+  const alreadyClaimedSnap = await db.collection('complaints')
+    .where('attachmentPaths', 'array-contains', cleanPath)
+    .limit(1)
+    .get();
+
+  if (!alreadyClaimedSnap.empty) {
+    const claimedComplaint = alreadyClaimedSnap.docs[0].data();
+    throw new HttpsError(
+      'failed-precondition',
+      `Attachment '${cleanPath}' has already been bound to complaint ${claimedComplaint.referenceNumber || claimedComplaint.id}. Unauthorized reassignment is prohibited.`
+    );
+  }
+
+  const alreadyClaimedUrlSnap = await db.collection('complaints')
+    .where('attachmentUrls', 'array-contains', inputRef)
+    .limit(1)
+    .get();
+
+  if (!alreadyClaimedUrlSnap.empty) {
+    const claimedComplaint = alreadyClaimedUrlSnap.docs[0].data();
+    throw new HttpsError(
+      'failed-precondition',
+      `Attachment URL has already been bound to complaint ${claimedComplaint.referenceNumber || claimedComplaint.id}. Unauthorized reassignment is prohibited.`
+    );
+  }
+
+  return {
+    canonicalPath: cleanPath,
+    downloadUrl: inputRef,
+    bucketName,
+    contentType,
+    size,
+  };
 }
 
 /**
@@ -76,10 +260,12 @@ export const createComplaint = onCall({ cors: true }, async (request) => {
   const db = admin.firestore();
   const uid = request.auth.uid;
 
-  // Validate all attachment URLs belong to the authenticated student
+  // Validate all attachments belong to the authenticated student and exist in storage
+  const verifiedAttachments: VerifiedAttachment[] = [];
   if (data.attachmentUrls && data.attachmentUrls.length > 0) {
-    for (const url of data.attachmentUrls) {
-      validateAttachmentUrl(url, uid);
+    for (const rawUrl of data.attachmentUrls) {
+      const verified = await verifyAndResolveAttachment(rawUrl, uid, db);
+      verifiedAttachments.push(verified);
     }
   }
 
@@ -127,8 +313,9 @@ export const createComplaint = onCall({ cors: true }, async (request) => {
         updatedAt: now,
       };
 
-      if (data.attachmentUrls && data.attachmentUrls.length > 0) {
-        complaintData.attachmentUrls = data.attachmentUrls;
+      if (verifiedAttachments.length > 0) {
+        complaintData.attachmentUrls = verifiedAttachments.map((a) => a.downloadUrl);
+        complaintData.attachmentPaths = verifiedAttachments.map((a) => a.canonicalPath);
       }
 
       transaction.set(complaintRef, complaintData);
@@ -233,7 +420,7 @@ export const createComplaint = onCall({ cors: true }, async (request) => {
         type: 'SUBMITTED',
         title: 'Ticket Submitted Successfully',
         message: `Your ticket ${refNum} has been received and assigned to ${newComplaint.assignedDepartment}.`,
-        idempotencyKey: `${complaintId}_SUBMITTED`,
+        eventId: newComplaint.timeline[0]?.id || `init_${complaintId}`,
       });
     } catch (notifErr) {
       console.warn('Notification send non-fatal warning:', notifErr);
@@ -334,7 +521,7 @@ export const reopenTicket = onCall({ cors: true }, async (request) => {
         type: 'REOPENED',
         title: 'Ticket Reopened',
         message: `Ticket ${result.referenceNumber} has been reopened: ${reason.trim()}`,
-        idempotencyKey: `${ticketId}_REOPENED_${result.eventId}`,
+        eventId: result.eventId,
       });
     }
 

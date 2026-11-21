@@ -73,6 +73,7 @@ export interface CampusTicket {
   assignedDepartment: string;
   assignedDepartmentId?: string;
   attachmentUrls?: string[];
+  attachmentPaths?: string[];
   submittedById?: string;
   submittedBy: string;
   submittedAt: string;

@@ -78,7 +78,7 @@ export const updateTicketStatus = onCall({ cors: true }, async (request) => {
       };
     });
 
-    // Send In-App Notification to ticket owner (Idempotent)
+    // Send In-App Notification to ticket owner (Idempotent per unique lifecycle event)
     if (updated?.submittedById) {
       const notifType = newStatus === 'RESOLVED' ? 'RESOLVED' : 'STATUS_CHANGED';
       const refNum = updated.referenceNumber || ticketId;
@@ -91,7 +91,7 @@ export const updateTicketStatus = onCall({ cors: true }, async (request) => {
         message: note
           ? `Ticket ${refNum}: ${note}`
           : `Your ticket ${refNum} has been updated to ${newStatus}.`,
-        idempotencyKey: `${ticketId}_STATUS_${newStatus}`,
+        eventId: updated.eventId,
       });
     }
 
@@ -178,6 +178,8 @@ export const assignTicketDepartment = onCall({ cors: true }, async (request) => 
     let ownerId = '';
     let refNum = '';
 
+    let assignmentEventId = '';
+
     await db.runTransaction(async (transaction) => {
       const snap = await transaction.get(ticketRef);
       if (!snap.exists) {
@@ -206,6 +208,7 @@ export const assignTicketDepartment = onCall({ cors: true }, async (request) => 
       transaction.update(ticketRef, updatePayload);
 
       const eventRef = ticketRef.collection('timeline').doc();
+      assignmentEventId = eventRef.id;
       transaction.set(eventRef, {
         id: eventRef.id,
         ticketId,
@@ -217,7 +220,6 @@ export const assignTicketDepartment = onCall({ cors: true }, async (request) => 
     });
 
     if (ownerId) {
-      const safeDeptKey = String(targetDeptName).replace(/[^a-zA-Z0-9]/g, '_');
       await sendInAppNotification(db, {
         userId: ownerId,
         ticketId,
@@ -225,7 +227,7 @@ export const assignTicketDepartment = onCall({ cors: true }, async (request) => 
         type: 'ASSIGNED',
         title: 'Ticket Assigned to Department',
         message: `Your ticket ${refNum} has been assigned to ${targetDeptName}.`,
-        idempotencyKey: `${ticketId}_ASSIGNED_${safeDeptKey}`,
+        eventId: assignmentEventId,
       });
     }
 

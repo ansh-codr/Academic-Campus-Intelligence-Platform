@@ -84,39 +84,24 @@ export const CampusService = {
   },
 
   /**
-   * Reopen a resolved or closed ticket
+   * Reopen a resolved or closed ticket exclusively via the trusted callable Cloud Function.
+   * Direct client Firestore write fallback is strictly removed to prevent students
+   * from bypassing status-transition authorization checks.
    */
   async reopenTicket(ticketId: string, reason: string): Promise<void> {
+    const reopenFn = httpsCallable<{ ticketId: string; reason: string }, any>(
+      functions,
+      'reopenTicket'
+    );
     try {
-      const reopenFn = httpsCallable<{ ticketId: string; reason: string }, any>(
-        functions,
-        'reopenTicket'
-      );
-      await reopenFn({ ticketId, reason });
-      return;
-    } catch (cfErr) {
-      console.warn('reopenTicket Cloud Function fallback to direct Firestore:', cfErr);
+      const res = await reopenFn({ ticketId, reason });
+      if (res.data && res.data.success === false) {
+        throw new Error(res.data.message || 'Failed to reopen ticket.');
+      }
+    } catch (cfErr: any) {
+      console.error('reopenTicket Cloud Function error:', cfErr);
+      throw new Error(cfErr.message || 'Failed to reopen ticket. Please try again.');
     }
-
-    const ticketRef = doc(db, 'complaints', ticketId);
-    const now = new Date().toISOString();
-    const user = auth.currentUser;
-    const submitterName = user?.displayName || user?.email || 'Student';
-
-    await updateDoc(ticketRef, {
-      status: 'REOPENED',
-      updatedAt: now,
-    });
-
-    const eventRef = doc(collection(ticketRef, 'timeline'));
-    await setDoc(eventRef, {
-      id: eventRef.id,
-      ticketId,
-      status: 'REOPENED',
-      note: `Ticket reopened: ${reason}`,
-      updatedBy: submitterName,
-      timestamp: now,
-    });
   },
 
   /**

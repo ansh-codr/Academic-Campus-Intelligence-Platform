@@ -46,12 +46,14 @@ import {
 // Configure emulator endpoints
 process.env.FIREBASE_AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099';
 process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
+process.env.FIREBASE_STORAGE_EMULATOR_HOST = process.env.FIREBASE_STORAGE_EMULATOR_HOST || '127.0.0.1:9199';
 
-const testProjectId = process.env.GCLOUD_PROJECT || 'solvesphere-ai-dev';
+const testProjectId = process.env.GCLOUD_PROJECT || 'fluetas-a1914';
 
 if (!admin.apps.length) {
   admin.initializeApp({
     projectId: testProjectId,
+    storageBucket: `${testProjectId}.appspot.com`,
   });
 }
 
@@ -549,6 +551,8 @@ async function runTests() {
   connectClientFirestoreEmulator(clientDb, '127.0.0.1', 8080);
   const clientFunctions = getClientFunctions(clientApp);
   connectClientFunctionsEmulator(clientFunctions, '127.0.0.1', 5001);
+  const clientStorage = getClientStorage(clientApp, `gs://${testProjectId}.appspot.com`);
+  connectClientStorageEmulator(clientStorage, '127.0.0.1', 9199);
 
   // Authenticate student in client SDK
   await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
@@ -925,7 +929,33 @@ async function runTests() {
   );
 
   const createComplaintCallable = httpsCallable(clientFunctions, 'createComplaint');
+
+  // Pre-upload valid test attachment leak1.jpg to Student 1's authorized storage path
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  const validAttachmentStorageRef = storageRef(clientStorage, `attachments/${testStudentUid}/tkt-sample/leak1.jpg`);
+  await uploadBytes(validAttachmentStorageRef, new Uint8Array([255, 216, 255, 224, 0, 16, 74, 70, 73, 70]), {
+    contentType: 'image/jpeg',
+  });
+
   const validAttachmentUrl = `https://firebasestorage.googleapis.com/v0/b/${testProjectId}.appspot.com/o/attachments%2F${testStudentUid}%2Ftkt-sample%2Fleak1.jpg?alt=media`;
+
+  // Negative test 26a: Non-existent object in storage must be rejected
+  await assert.rejects(
+    async () => {
+      await createComplaintCallable({
+        title: 'Library 2nd Floor Split AC Unit Leak',
+        category: 'AC_HVAC',
+        building: 'Central Library',
+        floor: '2nd Floor',
+        room: 'Silent Zone 202',
+        description: 'Severe water leak above desks in silent study room.',
+        priority: 'HIGH',
+        attachmentUrls: [`https://firebasestorage.googleapis.com/v0/b/${testProjectId}.appspot.com/o/attachments%2F${testStudentUid}%2Ftkt-sample%2Fnonexistent_ghost.jpg?alt=media`],
+      });
+    },
+    (err) => err.code?.includes('not-found') || /not exist in storage/i.test(err.message),
+    'Non-existent storage attachment must be rejected with not-found'
+  );
 
   // Negative test 26b: Providing an attachment URL belonging to another student must be rejected
   await assert.rejects(
@@ -941,7 +971,7 @@ async function runTests() {
         attachmentUrls: [`https://firebasestorage.googleapis.com/v0/b/${testProjectId}.appspot.com/o/attachments%2Fother-student-uid%2Ftkt-sample%2Fstolen.jpg?alt=media`],
       });
     },
-    (err) => err.code?.includes('permission-denied') || /verification failed|workspace/i.test(err.message),
+    (err) => err.code?.includes('permission-denied') || /verification failed|workspace|another student/i.test(err.message),
     'Attachment URL belonging to another user must be rejected'
   );
 
@@ -963,6 +993,67 @@ async function runTests() {
     'Arbitrary external host attachment must be rejected'
   );
 
+  // Negative test 26d: Directory traversal or encoded path tricks must be rejected
+  await assert.rejects(
+    async () => {
+      await createComplaintCallable({
+        title: 'Library 2nd Floor Split AC Unit Leak',
+        category: 'AC_HVAC',
+        building: 'Central Library',
+        floor: '2nd Floor',
+        room: 'Silent Zone 202',
+        description: 'Severe water leak above desks in silent study room.',
+        priority: 'HIGH',
+        attachmentUrls: [`attachments/${testStudentUid}/../victim/photo.png`],
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /traversal|illegal/i.test(err.message),
+    'Directory traversal tricks in attachment path must be rejected'
+  );
+
+  // Negative test 26e: Forged bucket in URL must be rejected
+  await assert.rejects(
+    async () => {
+      await createComplaintCallable({
+        title: 'Library 2nd Floor Split AC Unit Leak',
+        category: 'AC_HVAC',
+        building: 'Central Library',
+        floor: '2nd Floor',
+        room: 'Silent Zone 202',
+        description: 'Severe water leak above desks in silent study room.',
+        priority: 'HIGH',
+        attachmentUrls: [`https://firebasestorage.googleapis.com/v0/b/evil-forged-bucket.appspot.com/o/attachments%2F${testStudentUid}%2Ftkt-sample%2Fleak1.jpg?alt=media`],
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /bucket/i.test(err.message),
+    'Forged bucket in attachment URL must be rejected'
+  );
+
+  // Negative test 26f: Disallowed MIME type saved in storage must be rejected
+  await admin.storage().bucket(`${testProjectId}.appspot.com`).file(`attachments/${testStudentUid}/tkt-sample/script.js`).save(Buffer.from('alert(1)'), {
+    resumable: false,
+    contentType: 'text/javascript',
+    metadata: {
+      contentType: 'text/javascript',
+    },
+  });
+  await assert.rejects(
+    async () => {
+      await createComplaintCallable({
+        title: 'Library 2nd Floor Split AC Unit Leak',
+        category: 'AC_HVAC',
+        building: 'Central Library',
+        floor: '2nd Floor',
+        room: 'Silent Zone 202',
+        description: 'Severe water leak above desks in silent study room.',
+        priority: 'HIGH',
+        attachmentUrls: [`https://firebasestorage.googleapis.com/v0/b/${testProjectId}.appspot.com/o/attachments%2F${testStudentUid}%2Ftkt-sample%2Fscript.js?alt=media`],
+      });
+    },
+    (err) => err.code?.includes('invalid-argument') || /content type/i.test(err.message),
+    'Disallowed MIME type must be rejected by Cloud Functions'
+  );
+
   const complaintPayload = {
     title: 'Library 2nd Floor Split AC Unit Leak',
     category: 'AC_HVAC',
@@ -981,6 +1072,25 @@ async function runTests() {
   assert.strictEqual(createdCompData?.status, 'SUBMITTED', 'Initial status must be SUBMITTED');
   assert.strictEqual(createdCompData?.assignedDepartment, 'HVAC & Climate Control', 'Should route to HVAC department');
   assert.deepStrictEqual(createdCompData?.attachmentUrls, [validAttachmentUrl]);
+  assert.deepStrictEqual(createdCompData?.attachmentPaths, [`attachments/${testStudentUid}/tkt-sample/leak1.jpg`]);
+
+  // Negative test 26g: Unauthorized attachment reassignment (trying to claim already bound attachment)
+  await assert.rejects(
+    async () => {
+      await createComplaintCallable({
+        title: 'Attempted Hijack of Existing Attachment',
+        category: 'AC_HVAC',
+        building: 'Central Library',
+        floor: '2nd Floor',
+        room: 'Silent Zone 202',
+        description: 'Attempting to reassign already claimed attachment.',
+        priority: 'MEDIUM',
+        attachmentUrls: [validAttachmentUrl],
+      });
+    },
+    (err) => err.code?.includes('failed-precondition') || /already been bound/i.test(err.message),
+    'Reassigning an already bound attachment must be rejected with failed-precondition'
+  );
 
   // Verify in Firestore
   const compDocSnap = await db.collection('complaints').doc(createdCompData.id).get();
@@ -1193,6 +1303,17 @@ async function runTests() {
     (err) => err.code?.includes('permission-denied') || /permission/i.test(err.message),
     'Student 2 cannot reopen Student 1 ticket'
   );
+
+  // Negative test: ordinary student cannot bypass Cloud Function to directly update complaint status in Firestore
+  await assert.rejects(
+    async () => {
+      await updateDoc(doc(clientDb, 'complaints', createdCompData.id), {
+        status: 'REOPENED',
+      });
+    },
+    /permission-denied/i,
+    'Direct student update to complaints collection must be blocked by Firestore rules'
+  );
   console.log(`✓ Test 29 Passed: Ticket reopening workflow, timeline event, and authorization verified.`);
 
   // --------------------------------------------------------------------------
@@ -1254,10 +1375,13 @@ async function runTests() {
   // Test Notification Idempotency: duplicate send calls must not generate multiple notifications
   const beforeIdempotentCount = (await db.collection('notifications')
     .where('userId', '==', testStudentUid)
-    .where('type', '==', 'SUBMITTED')
+    .where('ticketId', '==', createdCompData.id)
     .get()).docs.length;
 
   const { sendInAppNotification } = await import('../functions/lib/notifications.js');
+  const initialTimelineEventId = createdCompData.timeline[0]?.id || `init_${createdCompData.id}`;
+
+  // 1. Same event retried -> returns existing notifId without creating duplicate
   await sendInAppNotification(db, {
     userId: testStudentUid,
     ticketId: createdCompData.id,
@@ -1265,14 +1389,70 @@ async function runTests() {
     type: 'SUBMITTED',
     title: 'Duplicate Submission Alert',
     message: 'Test message for retry idempotency.',
-    idempotencyKey: `${createdCompData.id}_SUBMITTED`,
+    eventId: initialTimelineEventId,
   });
 
-  const afterIdempotentCount = (await db.collection('notifications')
+  const afterRetryCount = (await db.collection('notifications')
     .where('userId', '==', testStudentUid)
-    .where('type', '==', 'SUBMITTED')
+    .where('ticketId', '==', createdCompData.id)
     .get()).docs.length;
-  assert.strictEqual(afterIdempotentCount, beforeIdempotentCount, 'Notification idempotency must prevent duplicate documents on retry');
+  assert.strictEqual(afterRetryCount, beforeIdempotentCount, 'Notification idempotency must prevent duplicate documents on event retry');
+
+  // 2. Concurrent duplicate dispatches for same event must atomically produce exactly 1 notification
+  const concurrentEventId = `evt_concurrent_${Date.now()}`;
+  await Promise.all([
+    sendInAppNotification(db, {
+      userId: testStudentUid,
+      ticketId: createdCompData.id,
+      referenceNumber: createdCompData.referenceNumber,
+      type: 'STATUS_CHANGED',
+      title: 'Concurrent Alert 1',
+      message: 'Concurrent dispatch 1',
+      eventId: concurrentEventId,
+    }),
+    sendInAppNotification(db, {
+      userId: testStudentUid,
+      ticketId: createdCompData.id,
+      referenceNumber: createdCompData.referenceNumber,
+      type: 'STATUS_CHANGED',
+      title: 'Concurrent Alert 2',
+      message: 'Concurrent dispatch 2',
+      eventId: concurrentEventId,
+    }),
+  ]);
+  const concurrentDocs = await db.collection('notifications')
+    .where('userId', '==', testStudentUid)
+    .where('eventId', '==', concurrentEventId)
+    .get();
+  assert.strictEqual(concurrentDocs.docs.length, 1, 'Concurrent dispatches for same event must atomically create exactly 1 notification');
+
+  // 3. Two different status changes on the same ticket must create separate notifications
+  const eventId1 = `evt_status_change_1_${Date.now()}`;
+  const eventId2 = `evt_status_change_2_${Date.now()}`;
+  await sendInAppNotification(db, {
+    userId: testStudentUid,
+    ticketId: createdCompData.id,
+    referenceNumber: createdCompData.referenceNumber,
+    type: 'STATUS_CHANGED',
+    title: 'Status: UNDER_REVIEW',
+    message: 'Under review by technician.',
+    eventId: eventId1,
+  });
+  await sendInAppNotification(db, {
+    userId: testStudentUid,
+    ticketId: createdCompData.id,
+    referenceNumber: createdCompData.referenceNumber,
+    type: 'STATUS_CHANGED',
+    title: 'Status: IN_PROGRESS',
+    message: 'Technician on site.',
+    eventId: eventId2,
+  });
+
+  const docEvt1 = await db.collection('notifications').doc(`notif_${createdCompData.id}_${eventId1}`).get();
+  const docEvt2 = await db.collection('notifications').doc(`notif_${createdCompData.id}_${eventId2}`).get();
+  assert.ok(docEvt1.exists, 'First status change notification must exist');
+  assert.ok(docEvt2.exists, 'Second status change notification must exist');
+  assert.notStrictEqual(docEvt1.id, docEvt2.id, 'Different status changes on same ticket must have separate notifications');
   console.log(`✓ Test 30 Passed: Notification read isolation, ticket event privacy, and notification idempotency verified.`);
 
   // --------------------------------------------------------------------------
@@ -1418,8 +1598,6 @@ async function runTests() {
   // TEST 33: Cloud Storage Attachment Security Rules & Tenant Isolation
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 33] Verifying Cloud Storage Security Rules & Tenant Isolation...`);
-  const clientStorage = getClientStorage(clientApp, `gs://${testProjectId}.appspot.com`);
-  connectClientStorageEmulator(clientStorage, '127.0.0.1', 9199);
 
   // Student 1 uploads valid image to their own attachment path -> allowed
   await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
