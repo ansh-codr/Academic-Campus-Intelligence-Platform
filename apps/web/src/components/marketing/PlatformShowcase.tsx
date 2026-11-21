@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Activity, ArrowUpRight, BookOpen, Bot, Check, CheckCircle2, CircleDot, Clock3, GraduationCap, Layers3, MessageCircle, ShieldCheck, Sparkles, Ticket, TrendingUp, Wifi } from 'lucide-react';
+import { Activity, ArrowUpRight, BookOpen, Bot, Check, CheckCircle2, CircleDot, Clock3, GraduationCap, Layers, MessageCircle, ShieldCheck, Sparkles, Ticket, TrendingUp, Wifi } from 'lucide-react';
 
 type Preview='academic'|'campus';
 const demos = {
@@ -29,7 +29,7 @@ export const PlatformShowcase:React.FC=()=>{
       <div className="grid grid-cols-[60px_1fr] sm:grid-cols-[78px_1fr] min-h-[395px]">
         <div className="flex flex-col items-center gap-4 border-r border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-[#0d1627] py-5">
           <span className="h-9 w-9 rounded-xl bg-gradient-to-br from-blue-600 to-cyan-500 text-white grid place-items-center"><Sparkles size={17}/></span>
-          <div className="h-9 w-9 rounded-xl bg-blue-50 dark:bg-blue-500/15 text-blue-600 dark:text-cyan-300 grid place-items-center"><Layers3 size={17}/></div>
+          <div className="h-9 w-9 rounded-xl bg-blue-50 dark:bg-blue-500/15 text-blue-600 dark:text-cyan-300 grid place-items-center"><Layers size={17}/></div>
           <div className="h-9 w-9 rounded-xl text-slate-400 grid place-items-center"><BookOpen size={17}/></div>
           <div className="h-9 w-9 rounded-xl text-slate-400 grid place-items-center"><MessageCircle size={17}/></div>
           <div className="mt-auto h-8 w-8 rounded-full bg-gradient-to-tr from-indigo-400 to-cyan-400 text-white text-xs font-bold grid place-items-center">S</div>

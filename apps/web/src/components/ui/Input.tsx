@@ -29,6 +29,8 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
           <input
             id={inputId}
             ref={ref}
+            aria-invalid={!!error || undefined}
+            aria-describedby={error ? inputId + '-error' : helperText ? inputId + '-help' : undefined}
             className={cn(
               'w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-brand-blue/10 focus:border-brand-blue dark:focus:border-brand-cyan transition-all',
               icon && 'pl-10',
@@ -39,9 +41,9 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
           />
         </div>
         {error ? (
-          <p className="text-xs text-rose-500 font-medium">{error}</p>
+          <p id={inputId + "-error"} role="alert" className="text-xs text-rose-500 font-medium">{error}</p>
         ) : helperText ? (
-          <p className="text-xs text-slate-500 dark:text-slate-400">{helperText}</p>
+          <p id={inputId + "-help"} className="text-xs text-slate-500 dark:text-slate-400">{helperText}</p>
         ) : null}
       </div>
     );
@@ -71,6 +73,8 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
           id={inputId}
           ref={ref}
           rows={rows}
+          aria-invalid={!!error || undefined}
+          aria-describedby={error ? inputId + '-error' : helperText ? inputId + '-help' : undefined}
           className={cn(
             'w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 p-3.5 text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-brand-blue/10 focus:border-brand-blue dark:focus:border-brand-cyan transition-all',
             error && 'border-rose-500 focus:ring-rose-500/20 focus:border-rose-500',
@@ -79,7 +83,7 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
           {...props}
         />
         {error ? (
-          <p className="text-xs text-rose-500 font-medium">{error}</p>
+          <p id={inputId + "-error"} role="alert" className="text-xs text-rose-500 font-medium">{error}</p>
         ) : helperText ? (
           <p className="text-xs text-slate-500 dark:text-slate-400">{helperText}</p>
         ) : null}
@@ -110,6 +114,8 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
         <select
           id={inputId}
           ref={ref}
+          aria-invalid={!!error || undefined}
+          aria-describedby={error ? inputId + '-error' : undefined}
           className={cn(
             'w-full rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-4 focus:ring-brand-blue/10 focus:border-brand-blue dark:focus:border-brand-cyan transition-all',
             error && 'border-rose-500',

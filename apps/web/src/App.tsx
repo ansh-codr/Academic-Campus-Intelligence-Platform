@@ -9,34 +9,34 @@ import { StudentPortalLayout } from '@/layouts/StudentPortalLayout';
 import { AdminPortalLayout } from '@/layouts/AdminPortalLayout';
 
 // Public & Landing
-import { LandingPage } from '@/pages/landing/LandingPage';
+const LandingPage = React.lazy(() => import('@/pages/landing/LandingPage').then((module) => ({ default: module.LandingPage })));
 
 // Auth Pages
-import { StudentLoginPage } from '@/pages/auth/StudentLoginPage';
-import { StudentRegisterPage } from '@/pages/auth/StudentRegisterPage';
-import { ForgotPasswordPage } from '@/pages/auth/ForgotPasswordPage';
-import { AdminLoginPage } from '@/pages/auth/AdminLoginPage';
+const StudentLoginPage = React.lazy(() => import('@/pages/auth/StudentLoginPage').then((module) => ({ default: module.StudentLoginPage })));
+const StudentRegisterPage = React.lazy(() => import('@/pages/auth/StudentRegisterPage').then((module) => ({ default: module.StudentRegisterPage })));
+const ForgotPasswordPage = React.lazy(() => import('@/pages/auth/ForgotPasswordPage').then((module) => ({ default: module.ForgotPasswordPage })));
+const AdminLoginPage = React.lazy(() => import('@/pages/auth/AdminLoginPage').then((module) => ({ default: module.AdminLoginPage })));
 
 // Student Portal Pages
-import { StudentOverviewPage } from '@/pages/student/StudentOverviewPage';
-import { AcademicDashboardPage } from '@/pages/student/AcademicDashboardPage';
-import { MySubjectsPage } from '@/pages/student/MySubjectsPage';
-import { TopicTimelinePage } from '@/pages/student/TopicTimelinePage';
-import { StudyResourcesPage } from '@/pages/student/StudyResourcesPage';
-import { StudyMateAiPage } from '@/pages/student/StudyMateAiPage';
-import { PracticeQuizzesPage } from '@/pages/student/PracticeQuizzesPage';
-import { CampusDashboardPage } from '@/pages/student/CampusDashboardPage';
-import { ReportIssuePage } from '@/pages/student/ReportIssuePage';
-import { MyTicketsPage } from '@/pages/student/MyTicketsPage';
-import { SpeakFreelyPage } from '@/pages/student/SpeakFreelyPage';
-import { CampusClubsPage } from '@/pages/student/CampusClubsPage';
-import { ProfilePage } from '@/pages/student/ProfilePage';
-import { SettingsPage } from '@/pages/student/SettingsPage';
+const StudentOverviewPage = React.lazy(() => import('@/pages/student/StudentOverviewPage').then((module) => ({ default: module.StudentOverviewPage })));
+const AcademicDashboardPage = React.lazy(() => import('@/pages/student/AcademicDashboardPage').then((module) => ({ default: module.AcademicDashboardPage })));
+const MySubjectsPage = React.lazy(() => import('@/pages/student/MySubjectsPage').then((module) => ({ default: module.MySubjectsPage })));
+const TopicTimelinePage = React.lazy(() => import('@/pages/student/TopicTimelinePage').then((module) => ({ default: module.TopicTimelinePage })));
+const StudyResourcesPage = React.lazy(() => import('@/pages/student/StudyResourcesPage').then((module) => ({ default: module.StudyResourcesPage })));
+const StudyMateAiPage = React.lazy(() => import('@/pages/student/StudyMateAiPage').then((module) => ({ default: module.StudyMateAiPage })));
+const PracticeQuizzesPage = React.lazy(() => import('@/pages/student/PracticeQuizzesPage').then((module) => ({ default: module.PracticeQuizzesPage })));
+const CampusDashboardPage = React.lazy(() => import('@/pages/student/CampusDashboardPage').then((module) => ({ default: module.CampusDashboardPage })));
+const ReportIssuePage = React.lazy(() => import('@/pages/student/ReportIssuePage').then((module) => ({ default: module.ReportIssuePage })));
+const MyTicketsPage = React.lazy(() => import('@/pages/student/MyTicketsPage').then((module) => ({ default: module.MyTicketsPage })));
+const SpeakFreelyPage = React.lazy(() => import('@/pages/student/SpeakFreelyPage').then((module) => ({ default: module.SpeakFreelyPage })));
+const CampusClubsPage = React.lazy(() => import('@/pages/student/CampusClubsPage').then((module) => ({ default: module.CampusClubsPage })));
+const ProfilePage = React.lazy(() => import('@/pages/student/ProfilePage').then((module) => ({ default: module.ProfilePage })));
+const SettingsPage = React.lazy(() => import('@/pages/student/SettingsPage').then((module) => ({ default: module.SettingsPage })));
 
 // Admin Portal Pages
-import { AdminDashboardPage } from '@/pages/admin/AdminDashboardPage';
-import { AdminAcademicManagementPage } from '@/pages/admin/AdminAcademicManagementPage';
-import { AdminComplaintsClustersPage } from '@/pages/admin/AdminComplaintsClustersPage';
+const AdminDashboardPage = React.lazy(() => import('@/pages/admin/AdminDashboardPage').then((module) => ({ default: module.AdminDashboardPage })));
+const AdminAcademicManagementPage = React.lazy(() => import('@/pages/admin/AdminAcademicManagementPage').then((module) => ({ default: module.AdminAcademicManagementPage })));
+const AdminComplaintsClustersPage = React.lazy(() => import('@/pages/admin/AdminComplaintsClustersPage').then((module) => ({ default: module.AdminComplaintsClustersPage })));
 import { ShieldAlert } from 'lucide-react';
 
 // Protected Route Guard: Requires Authenticated Student or Admin
@@ -136,6 +136,7 @@ export function App() {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <BrowserRouter>
+          <React.Suspense fallback={<div role="status" className="min-h-[50vh] grid place-items-center text-sm font-semibold text-slate-500 dark:text-slate-400">Loading your workspace…</div>}>
           <Routes>
             {/* Public Layout */}
             <Route element={<PublicLayout />}>
@@ -198,6 +199,7 @@ export function App() {
               <Route path="settings" element={<AdminDashboardPage />} />
             </Route>
           </Routes>
+          </React.Suspense>
         </BrowserRouter>
       </AuthProvider>
     </QueryClientProvider>

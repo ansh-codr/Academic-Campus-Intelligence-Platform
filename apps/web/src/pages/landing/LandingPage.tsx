@@ -47,8 +47,8 @@ export const LandingPage: React.FC = () => {
       a: 'The platform ships with structured syllabus models for CS101 Foundation in AI, Design Thinking, Digital Electronics, Digital Electronics Lab, Mathematics, and Business Communication.',
     },
     {
-      q: 'Is authentication and real AI inference fully live in Phase 1?',
-      a: 'Phase 1 delivers the full architectural foundation, typed service interfaces, PostgreSQL Prisma schema, health endpoints, and interactive high-fidelity frontend UI. Live session-based JWT authentication and production AI inference providers will be connected in Phase 2.',
+      q: 'What is currently available in SolveSphere AI?',
+      a: 'The platform includes Firebase sign-in and Firestore-backed academic and campus workflows, with sample data fallbacks. StudyMate currently demonstrates a conversational UI with example responses; live generative AI inference is not connected.',
     },
   ];
 
@@ -471,17 +471,17 @@ export const LandingPage: React.FC = () => {
               Ready for a Smarter First-Year University Experience?
             </h2>
             <p className="text-blue-100 text-sm sm:text-base leading-relaxed">
-              Explore the SolveSphere AI student and administrative portals with realistic curricula and live maintenance tickets.
+              Explore the SolveSphere AI student and administrative portals with illustrative curricula and campus ticket workflows.
             </p>
             <div className="pt-4 flex flex-wrap gap-4">
               <Link to="/portal/overview">
                 <Button variant="outline" size="lg" className="bg-white text-brand-blue hover:bg-slate-100 border-none">
-                  Launch Student Portal Demo
+                  Open Student Workspace
                 </Button>
               </Link>
-              <Link to="/admin/dashboard">
+              <Link to="/auth/admin-login">
                 <Button variant="ghost" size="lg" className="text-white hover:bg-white/20 border border-white/30">
-                  Staff Administrative Portal
+                  Staff Sign In
                 </Button>
               </Link>
             </div>
