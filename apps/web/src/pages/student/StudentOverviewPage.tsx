@@ -54,7 +54,7 @@ export const StudentOverviewPage: React.FC = () => {
   return (
     <div className="space-y-8 animate-in fade-in duration-300">
       {/* Personalized Welcome Banner */}
-      <div className="p-6 sm:p-8 rounded-3xl bg-gradient-to-r from-brand-blue via-indigo-600 to-brand-cyan text-white shadow-premium relative overflow-hidden">
+      <div className="p-6 sm:p-9 rounded-[28px] bg-gradient-to-br from-[#172e6e] via-brand-blue to-[#037f99] text-white shadow-premium relative overflow-hidden">
         <div className="relative z-10 max-w-2xl space-y-3">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 text-white text-xs font-semibold backdrop-blur-sm">
             <Sparkles className="w-3.5 h-3.5" />
@@ -64,7 +64,7 @@ export const StudentOverviewPage: React.FC = () => {
             Welcome back, {user?.fullName || 'Aarav'}!
           </h1>
           <p className="text-blue-100 text-xs sm:text-sm leading-relaxed">
-            Here is your daily pulse across your 6 enrolled subjects and active campus maintenance requests.
+            Your academic and campus updates, brought together in one focused workspace.
           </p>
 
           {/* Quick Actions Bar */}
@@ -95,7 +95,7 @@ export const StudentOverviewPage: React.FC = () => {
       <div className="flex items-center gap-2 p-3 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 text-xs text-brand-blue dark:text-blue-300">
         <Info className="w-4 h-4 shrink-0" />
         <span>
-          <strong>Phase 1 Full-Stack Notice:</strong> Displaying centralized curriculum fixtures and verified maintenance tickets. All data is illustrative for portal evaluation.
+          <strong>Phase 1 Full-Stack Notice:</strong> Information may include sample records when remote data is unavailable; verify critical details with your institution.
         </span>
       </div>
 
@@ -107,8 +107,8 @@ export const StudentOverviewPage: React.FC = () => {
             <span>ENROLLED SUBJECTS</span>
             <GraduationCap className="w-4 h-4 text-brand-blue" />
           </div>
-          <p className="text-2xl font-extrabold text-slate-900 dark:text-white">6 Subjects</p>
-          <p className="text-xs text-slate-500">19 Total Academic Credits</p>
+          <p className="text-2xl font-extrabold text-slate-900 dark:text-white">{isLoading ? "—" : subjects.length} Subjects</p>
+          <p className="text-xs text-slate-500">Subjects in your learning workspace</p>
         </Card>
 
         {/* KPI 2 */}
@@ -117,8 +117,8 @@ export const StudentOverviewPage: React.FC = () => {
             <span>AVG SYLLABUS COVERAGE</span>
             <span className="w-2 h-2 rounded-full bg-emerald-500" />
           </div>
-          <p className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-400">57.2%</p>
-          <p className="text-xs text-slate-500">49 of 90 Topics Completed</p>
+          <p className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-400">{isLoading ? "—" : subjects.length ? (subjects.reduce((sum, s) => sum + s.progressPercentage, 0) / subjects.length).toFixed(1) : "0"}%</p>
+          <p className="text-xs text-slate-500">Average across available subjects</p>
         </Card>
 
         {/* KPI 3 */}
@@ -128,17 +128,17 @@ export const StudentOverviewPage: React.FC = () => {
             <Building className="w-4 h-4 text-brand-cyan" />
           </div>
           <p className="text-2xl font-extrabold text-brand-cyan">{activeTickets.length}</p>
-          <p className="text-xs text-slate-500">1 In Progress &bull; 1 Under Review</p>
+          <p className="text-xs text-slate-500">Unresolved items in your ticket queue</p>
         </Card>
 
         {/* KPI 4 */}
         <Card className="p-5 space-y-2">
           <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
-            <span>UPCOMING MIDTERM EXAM</span>
+            <span>ONGOING TOPICS</span>
             <Calendar className="w-4 h-4 text-amber-500" />
           </div>
-          <p className="text-2xl font-extrabold text-amber-600 dark:text-amber-400">In 14 Days</p>
-          <p className="text-xs text-slate-500">CS101, EC103, MA101 Focus</p>
+          <p className="text-2xl font-extrabold text-amber-600 dark:text-amber-400">{isLoading ? "—" : ongoingTopics.length}</p>
+          <p className="text-xs text-slate-500">See your current syllabus timeline</p>
         </Card>
       </div>
 
@@ -164,6 +164,7 @@ export const StudentOverviewPage: React.FC = () => {
           </div>
 
           <div className="space-y-3">
+            {!isLoading && ongoingTopics.length === 0 && <p className="p-5 text-sm text-slate-500 dark:text-slate-400 border border-dashed rounded-2xl">No ongoing topics currently available.</p>}
             {ongoingTopics.slice(0, 3).map((topic) => (
               <div
                 key={topic.id}
@@ -206,7 +207,7 @@ export const StudentOverviewPage: React.FC = () => {
             <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center justify-between">
               <span>Semester Curriculum Progress</span>
               <Link to="/portal/academic" className="text-xs text-brand-blue font-semibold hover:underline">
-                All 6 Subjects
+                All Subjects
               </Link>
             </h3>
             <div className="space-y-3">
@@ -248,6 +249,7 @@ export const StudentOverviewPage: React.FC = () => {
           </div>
 
           <div className="space-y-3">
+            {!isLoading && tickets.length === 0 && <p className="p-5 text-sm text-slate-500 dark:text-slate-400 border border-dashed rounded-2xl">No campus tickets to display.</p>}
             {tickets.slice(0, 3).map((tkt) => (
               <div
                 key={tkt.id}

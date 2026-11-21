@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { PlatformShowcase } from '@/components/marketing/PlatformShowcase';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card';
@@ -26,7 +27,6 @@ import {
 } from 'lucide-react';
 
 export const LandingPage: React.FC = () => {
-  const [activePreviewTab, setActivePreviewTab] = useState<'academic' | 'campus'>('academic');
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(0);
 
   const faqs = [
@@ -47,223 +47,41 @@ export const LandingPage: React.FC = () => {
       a: 'The platform ships with structured syllabus models for CS101 Foundation in AI, Design Thinking, Digital Electronics, Digital Electronics Lab, Mathematics, and Business Communication.',
     },
     {
-      q: 'Is authentication and real AI inference fully live in Phase 1?',
-      a: 'Phase 1 delivers the full architectural foundation, typed service interfaces, PostgreSQL Prisma schema, health endpoints, and interactive high-fidelity frontend UI. Live session-based JWT authentication and production AI inference providers will be connected in Phase 2.',
+      q: 'What is currently available in SolveSphere AI?',
+      a: 'The platform includes Firebase sign-in and Firestore-backed academic and campus workflows, with sample data fallbacks. StudyMate currently demonstrates a conversational UI with example responses; live generative AI inference is not connected.',
     },
   ];
 
   return (
-    <div className="space-y-24 pb-20 overflow-hidden">
-      {/* Hero Section */}
-      <section className="relative pt-12 md:pt-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto text-center">
-        {/* Ambient Glow Effects */}
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[350px] bg-gradient-to-tr from-brand-blue/20 via-brand-cyan/20 to-purple-500/10 blur-[120px] rounded-full pointer-events-none -z-10" />
-
-        {/* Tag Pill */}
-        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-900/50 text-brand-blue dark:text-cyan-300 text-xs font-semibold shadow-sm mb-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
-          <Sparkles className="w-3.5 h-3.5" />
-          <span>Next-Generation University Intelligence &bull; Phase 1 Portal</span>
-        </div>
-
-        {/* Headline & Tagline */}
-        <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight text-brand-navy dark:text-white max-w-4xl mx-auto leading-[1.1]">
-          Your Problems. <br />
-          <span className="bg-gradient-to-r from-brand-blue via-indigo-600 to-brand-cyan bg-clip-text text-transparent">
-            Our Smart Solutions.
-          </span>
-        </h1>
-
-        {/* Supporting Text */}
-        <p className="mt-6 text-lg sm:text-xl text-slate-600 dark:text-slate-300 max-w-2xl mx-auto leading-relaxed">
-          One Platform for Smarter Learning and a Better Campus Experience. Unifying real-time academic topic tracking with intelligent campus maintenance ticketing.
-        </p>
-
-        {/* CTAs */}
-        <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4">
-          <Link to="/portal/overview">
-            <Button variant="gradient" size="lg" className="w-full sm:w-auto text-base px-8 py-3.5">
-              <span>Instant Demo Experience</span>
-              <ArrowRight className="w-4 h-4" />
-            </Button>
-          </Link>
-          <Link to="/auth/login">
-            <Button variant="outline" size="lg" className="w-full sm:w-auto text-base px-8 py-3.5">
-              <span>Student Login</span>
-            </Button>
-          </Link>
-        </div>
-
-        {/* Interactive Product Preview Shell */}
-        <div className="mt-14 max-w-5xl mx-auto">
-          <div className="rounded-3xl border border-slate-200/90 dark:border-slate-800 bg-white/90 dark:bg-brand-surfaceDark/90 backdrop-blur-xl shadow-2xl p-4 sm:p-6 text-left">
-            {/* Preview Switcher Tabs */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-5 border-b border-slate-100 dark:border-slate-800 gap-4">
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-rose-500 inline-block" />
-                <span className="w-3 h-3 rounded-full bg-amber-500 inline-block" />
-                <span className="w-3 h-3 rounded-full bg-emerald-500 inline-block" />
-                <span className="ml-2 text-xs font-mono text-slate-400">solvesphere.portal/preview</span>
-              </div>
-
-              <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-                <button
-                  onClick={() => setActivePreviewTab('academic')}
-                  className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                    activePreviewTab === 'academic'
-                      ? 'bg-white dark:bg-brand-cardDark text-brand-blue shadow-sm'
-                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-                  }`}
-                >
-                  <BookOpen className="w-3.5 h-3.5" />
-                  <span>Module A: Academic Intelligence</span>
-                </button>
-                <button
-                  onClick={() => setActivePreviewTab('campus')}
-                  className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                    activePreviewTab === 'campus'
-                      ? 'bg-white dark:bg-brand-cardDark text-brand-cyan shadow-sm'
-                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-                  }`}
-                >
-                  <Building2 className="w-3.5 h-3.5" />
-                  <span>Module B: Campus Maintenance</span>
-                </button>
-              </div>
+    <div className="overflow-hidden pb-24">
+      <section className="premium-stage surface-grid relative overflow-hidden px-4 sm:px-6 lg:px-8 pt-20 sm:pt-24 pb-20">
+        <div aria-hidden="true" className="pointer-events-none absolute top-0 left-1/4 h-[400px] w-[550px] rounded-full bg-blue-300/20 dark:bg-blue-500/10 blur-[100px]" />
+        <div className="relative mx-auto max-w-7xl grid lg:grid-cols-[.95fr_1.05fr] gap-12 lg:gap-10 items-center">
+          <div className="text-center lg:text-left">
+            <div className="stagger-enter inline-flex items-center gap-2 rounded-full border border-blue-200 bg-white/85 dark:bg-blue-950/50 dark:border-blue-700/50 px-3.5 py-2 text-[11px] sm:text-xs font-bold tracking-wide text-blue-700 dark:text-blue-200 shadow-sm">
+              <Sparkles className="w-3.5 h-3.5" />
+              One connected campus. A better everyday.
             </div>
-
-            {/* Tab Preview Content */}
-            <div className="pt-6">
-              {activePreviewTab === 'academic' ? (
-                <div className="space-y-6">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 rounded-2xl bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/40">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="blue" size="sm">CS101 &bull; Core Course</Badge>
-                        <span className="text-xs text-slate-500 font-medium">Instructor: Dr. Aris Thorne</span>
-                      </div>
-                      <h3 className="text-xl font-bold text-slate-900 dark:text-white mt-1">
-                        Foundation in AI (CS101)
-                      </h3>
-                      <p className="text-xs text-slate-600 dark:text-slate-400">
-                        Current Syllabus Coverage: 44% (8 of 18 Topics Completed)
-                      </p>
-                    </div>
-
-                    <Link to="/portal/academic">
-                      <Button variant="secondary" size="sm">
-                        Open Full Course View
-                      </Button>
-                    </Link>
-                  </div>
-
-                  {/* Topic Timeline Preview */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {/* Completed */}
-                    <div className="p-4 rounded-2xl border border-emerald-200/70 dark:border-emerald-900/40 bg-emerald-50/30 dark:bg-emerald-950/10 space-y-2">
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>Completed Topics (8)</span>
-                      </div>
-                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                        Uninformed &amp; Heuristic Search (A*, Greedy)
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        Lecture notes &amp; practice problem sheets verified by faculty.
-                      </p>
-                    </div>
-
-                    {/* Current Ongoing */}
-                    <div className="p-4 rounded-2xl border-2 border-brand-blue bg-blue-50/50 dark:bg-blue-950/30 space-y-2 relative shadow-glow-blue">
-                      <span className="absolute -top-2.5 right-4 px-2 py-0.5 rounded-full bg-brand-blue text-[10px] font-bold text-white uppercase tracking-wider">
-                        Live In Class
-                      </span>
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-brand-blue dark:text-cyan-300">
-                        <Flame className="w-4 h-4 animate-pulse text-amber-500" />
-                        <span>Currently Ongoing</span>
-                      </div>
-                      <p className="text-sm font-bold text-slate-900 dark:text-white">
-                        Neural Networks &amp; Activation Functions
-                      </p>
-                      <p className="text-xs text-slate-600 dark:text-slate-300">
-                        Unit 2 &bull; Multi-layer perceptrons, ReLU, Sigmoid formulas.
-                      </p>
-                    </div>
-
-                    {/* Upcoming */}
-                    <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30 space-y-2">
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-slate-500 dark:text-slate-400">
-                        <Clock className="w-4 h-4" />
-                        <span>Upcoming Topic</span>
-                      </div>
-                      <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
-                        Backpropagation &amp; Optimization
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        Scheduled for next Tuesday &bull; Pre-reading slides available.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-6">
-                  {/* Campus Maintenance Preview */}
-                  <div className="p-4 rounded-2xl bg-cyan-50/50 dark:bg-cyan-950/20 border border-cyan-100 dark:border-cyan-900/40 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="cyan" size="sm">CMP-2026-0841</Badge>
-                        <Badge variant="amber" size="sm">HIGH PRIORITY</Badge>
-                      </div>
-                      <h3 className="text-xl font-bold text-slate-900 dark:text-white mt-1">
-                        Lecture Hall 204 AC Unit Leaking Water &amp; Not Cooling
-                      </h3>
-                      <p className="text-xs text-slate-600 dark:text-slate-400">
-                        Location: Engineering Block A &bull; 2nd Floor &bull; Hall 204
-                      </p>
-                    </div>
-                    <Link to="/portal/tickets">
-                      <Button variant="secondary" size="sm">
-                        View Live Ticket
-                      </Button>
-                    </Link>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 text-xs">
-                    <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-                      <span className="text-slate-400 block font-semibold">TICKET STATUS</span>
-                      <span className="font-bold text-sm text-blue-600 dark:text-cyan-400 mt-1 inline-flex items-center gap-1">
-                        <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                        In Progress
-                      </span>
-                    </div>
-
-                    <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-                      <span className="text-slate-400 block font-semibold">ASSIGNED DEPARTMENT</span>
-                      <span className="font-bold text-sm text-slate-900 dark:text-white mt-1 block truncate">
-                        HVAC &amp; Climate Control
-                      </span>
-                    </div>
-
-                    <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-                      <span className="text-slate-400 block font-semibold">SEMANTIC CLUSTER</span>
-                      <span className="font-bold text-sm text-purple-600 dark:text-purple-400 mt-1 block">
-                        4 Related Reports
-                      </span>
-                    </div>
-
-                    <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-                      <span className="text-slate-400 block font-semibold">EXPECTED RESOLUTION</span>
-                      <span className="font-bold text-sm text-emerald-600 dark:text-emerald-400 mt-1 block">
-                        Today by 5:00 PM
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
+            <h1 className="stagger-enter mt-7 text-[clamp(2.9rem,5.3vw,5.6rem)] font-extrabold tracking-[-.075em] leading-[1.05] text-slate-950 dark:text-white">
+              Your Problems.<br /><span className="text-gradient">Our Smart<br className="hidden lg:block" /> Solutions.</span>
+            </h1>
+            <p className="stagger-enter mt-7 max-w-xl mx-auto lg:mx-0 text-base sm:text-lg leading-[1.85] text-slate-600 dark:text-slate-300">
+              One intelligent platform for smarter learning, seamless campus support, and a better student experience.
+            </p>
+            <div className="stagger-enter mt-8 flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
+              <Link to="/auth/register"><Button variant="gradient" size="lg" className="w-full sm:w-auto">Get Started Free <ArrowRight className="w-4 h-4"/></Button></Link>
+              <a href="#features" className="inline-flex"><Button variant="outline" size="lg" className="w-full sm:w-auto">Explore the Platform <Compass className="w-4 h-4"/></Button></a>
+            </div>
+            <div className="mt-9 flex flex-wrap gap-x-6 gap-y-3 justify-center lg:justify-start text-xs font-semibold text-slate-500 dark:text-slate-400">
+              <span className="inline-flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-500"/> Academic workflows</span>
+              <span className="inline-flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-500"/> Campus issue tracking</span>
+              <span className="inline-flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-500"/> Student-first design</span>
             </div>
           </div>
+          <PlatformShowcase/>
         </div>
       </section>
-
+      <div id="features" className="h-1 scroll-mt-24" aria-hidden="true" />
       {/* Feature Section 1: Module A - Academic Intelligence */}
       <section id="academic" className="px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
         <div className="text-center max-w-3xl mx-auto space-y-3">
@@ -653,17 +471,17 @@ export const LandingPage: React.FC = () => {
               Ready for a Smarter First-Year University Experience?
             </h2>
             <p className="text-blue-100 text-sm sm:text-base leading-relaxed">
-              Explore the SolveSphere AI student and administrative portals with realistic curricula and live maintenance tickets.
+              Explore the SolveSphere AI student and administrative portals with illustrative curricula and campus ticket workflows.
             </p>
             <div className="pt-4 flex flex-wrap gap-4">
               <Link to="/portal/overview">
                 <Button variant="outline" size="lg" className="bg-white text-brand-blue hover:bg-slate-100 border-none">
-                  Launch Student Portal Demo
+                  Open Student Workspace
                 </Button>
               </Link>
-              <Link to="/admin/dashboard">
+              <Link to="/auth/admin-login">
                 <Button variant="ghost" size="lg" className="text-white hover:bg-white/20 border border-white/30">
-                  Staff Administrative Portal
+                  Staff Sign In
                 </Button>
               </Link>
             </div>

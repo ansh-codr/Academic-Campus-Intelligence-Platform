@@ -32,7 +32,7 @@ export const StudyMateAiPage: React.FC = () => {
       id: 'msg-1',
       sender: 'assistant',
       content:
-        'Hello Aarav! I am **StudyMate AI**, your academic study companion for first-year courses. I have full context on your syllabus topics in Foundation in AI (CS101), Design Thinking, Digital Electronics, and Mathematics. How can I assist your study prep today?',
+        'Welcome to the StudyMate preview! This chat uses sample explanations—not a live AI model. Choose a subject and explore the interface.',
       timestamp: '10:00 AM',
       subjectContext: 'CS101',
     },
@@ -54,6 +54,9 @@ export const StudyMateAiPage: React.FC = () => {
     },
   ]);
 
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const copyMessage = async (msg: ChatMessage) => { try { await navigator.clipboard.writeText(msg.content); setCopiedId(msg.id); } catch { setCopiedId(null); } };
+  const clearChat = () => { setMessages([]); setInputText(''); };
   const promptSuggestions = [
     'Explain Karnaugh Maps minimization with a 4-variable example',
     'Summarize Cayley-Hamilton theorem and how to find matrix inverse',
@@ -108,6 +111,7 @@ export const StudyMateAiPage: React.FC = () => {
           </p>
         </div>
 
+        <button type="button" onClick={clearChat} className="text-xs font-semibold text-slate-500 hover:text-brand-blue border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2">Clear conversation</button>
         {/* Subject Context Selector */}
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-slate-500">Subject Context:</span>
@@ -136,7 +140,8 @@ export const StudyMateAiPage: React.FC = () => {
       {/* Chat Container */}
       <Card className="flex flex-col h-[650px] overflow-hidden border border-slate-200 dark:border-slate-800 shadow-premium">
         {/* Messages Body */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4" role="log" aria-label="StudyMate conversation" aria-live="polite">
+          {messages.length === 0 && <div className="grid place-items-center h-full text-center px-4"><div><Bot className="w-11 h-11 mx-auto text-brand-blue mb-4"/><h2 className="text-lg font-bold text-slate-900 dark:text-white">Start a new study chat</h2><p className="text-xs text-slate-500 mt-2">This is an illustrative AI chat preview. Choose a suggested question below.</p></div></div>}
           {messages.map((msg) => {
             const isUser = msg.sender === 'user';
             return (
@@ -166,6 +171,7 @@ export const StudyMateAiPage: React.FC = () => {
                     <span>{msg.timestamp}</span>
                   </div>
                   <div className="whitespace-pre-line mt-1">{msg.content}</div>
+                  {!isUser && <button type="button" onClick={() => void copyMessage(msg)} className="mt-3 text-[10px] font-semibold opacity-70 hover:opacity-100 underline underline-offset-2" aria-label="Copy assistant response">{copiedId === msg.id ? 'Copied' : 'Copy response'}</button>}
                 </div>
               </div>
             );
@@ -180,7 +186,7 @@ export const StudyMateAiPage: React.FC = () => {
                 <span className="w-2 h-2 rounded-full bg-brand-blue animate-bounce" />
                 <span className="w-2 h-2 rounded-full bg-brand-blue animate-bounce [animation-delay:0.2s]" />
                 <span className="w-2 h-2 rounded-full bg-brand-blue animate-bounce [animation-delay:0.4s]" />
-                <span>StudyMate AI is analyzing syllabus concept...</span>
+                <span>Preparing a sample explanation...</span>
               </div>
             </div>
           )}

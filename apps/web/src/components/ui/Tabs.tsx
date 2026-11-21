@@ -25,11 +25,24 @@ export const Tabs: React.FC<TabsProps> = ({
 }) => {
   if (variant === 'underline') {
     return (
-      <div className={cn('flex border-b border-slate-200 dark:border-slate-800 space-x-6', className)}>
+      <div role="tablist" className={cn('flex border-b border-slate-200 dark:border-slate-800 space-x-6', className)}>
         {tabs.map((tab) => {
           const isActive = tab.id === activeTab;
           return (
             <button
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              tabIndex={isActive ? 0 : -1}
+              onKeyDown={(e) => {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+                e.preventDefault();
+                const index = tabs.findIndex((t) => t.id === tab.id);
+                const next = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : (index + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+                onChange(tabs[next].id);
+                const root = e.currentTarget.parentElement;
+                requestAnimationFrame(() => root?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus());
+              }}
               key={tab.id}
               onClick={() => onChange(tab.id)}
               className={cn(
@@ -61,11 +74,24 @@ export const Tabs: React.FC<TabsProps> = ({
   }
 
   return (
-    <div className={cn('flex flex-wrap gap-2 p-1.5 bg-slate-100 dark:bg-slate-800/80 rounded-2xl', className)}>
+    <div role="tablist" className={cn('flex flex-wrap gap-2 p-1.5 bg-slate-100 dark:bg-slate-800/80 rounded-2xl', className)}>
       {tabs.map((tab) => {
         const isActive = tab.id === activeTab;
         return (
           <button
+            type="button"
+            role="tab"
+            aria-selected={isActive}
+            tabIndex={isActive ? 0 : -1}
+            onKeyDown={(e) => {
+              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+              e.preventDefault();
+              const index = tabs.findIndex((t) => t.id === tab.id);
+              const next = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : (index + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+              onChange(tabs[next].id);
+              const root = e.currentTarget.parentElement;
+              requestAnimationFrame(() => root?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus());
+            }}
             key={tab.id}
             onClick={() => onChange(tab.id)}
             className={cn(

@@ -1,0 +1,35 @@
+name: SolveSphere UI checks
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/**"
+      - "packages/shared/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/ui-checks.yml"
+  push:
+    branches:
+      - "feature/solvesphere-premium-ui"
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build shared contracts
+        run: npm run build --workspace=@solvesphere/shared
+      - name: Typecheck frontend
+        run: npm run typecheck --workspace=@solvesphere/web
+      - name: Production build
+        run: npm run build:web
+      - name: Frontend structure assertions
+        run: node --test tests/ui-structure.test.js
