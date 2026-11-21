@@ -15,12 +15,16 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.token.role == 'ADMIN';
     }
 
+    // Students can only update non-privileged profile fields.
+    // Registered student ID, account ID, role, email, and authorization claims are immutable.
     function isAllowedProfileUpdate() {
       let affected = request.resource.data.diff(resource.data).affectedKeys();
-      return affected.hasOnly(['displayName', 'fullName', 'studentId', 'phoneNumber', 'photoURL', 'avatarUrl', 'bio', 'department', 'semester', 'updatedAt'])
+      return affected.hasOnly(['displayName', 'fullName', 'phoneNumber', 'photoURL', 'avatarUrl', 'bio', 'department', 'semester', 'updatedAt'])
         && request.resource.data.role == resource.data.role
         && request.resource.data.id == resource.data.id
-        && request.resource.data.email == resource.data.email;
+        && request.resource.data.email == resource.data.email
+        && (!('studentId' in resource.data) || request.resource.data.studentId == resource.data.studentId)
+        && !('customClaims' in request.resource.data);
     }
 
     // Default deny
@@ -34,7 +38,7 @@ service cloud.firestore {
       allow read: if isOwner(userId) || isAdmin();
       // User can create their profile on registration with STUDENT role
       allow create: if isOwner(userId) && request.resource.data.role == 'STUDENT';
-      // User can update non-privileged fields only; cannot alter role, id, or email
+      // User can update non-privileged fields only; cannot alter registered student ID, role, id, or email
       allow update: if isOwner(userId) && isAllowedProfileUpdate();
       // Admins have full access
       allow update, delete: if isAdmin();

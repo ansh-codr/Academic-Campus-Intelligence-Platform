@@ -700,6 +700,63 @@ async function runTests() {
   console.log(`✓ Test 20 Passed: Conversation ownership enforced; unauthorized conversation injection blocked.`);
 
   // --------------------------------------------------------------------------
+  // TEST 20b: Non-Existent Conversation ID Rejection in askStudyMateAi
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 20b] Verifying Non-Existent Conversation ID Rejection...`);
+  await assert.rejects(
+    async () => {
+      await askFn2({
+        prompt: 'Query with non-existent conversation ID',
+        subjectId: 'subj-cs101',
+        conversationId: 'non-existent-conv-id-99999',
+      });
+    },
+    (err) => err.code?.includes('not-found') || /not-found|does not exist/i.test(err.message),
+    'Non-existent conversation ID must be rejected with not-found error'
+  );
+  console.log(`✓ Test 20b Passed: Non-existent conversation ID rejected rather than silently created.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 20c: Original Timestamp Preservation When Appending to Conversation
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 20c] Verifying Original createdAt Timestamp Preservation on Append...`);
+  const initialConvSnap = await db.collection('studyMateConversations').doc(createdConversationId).get();
+  const originalCreatedAt = initialConvSnap.data().createdAt;
+  assert.ok(originalCreatedAt, 'Initial conversation must have createdAt timestamp');
+
+  // Wait 2.1s to satisfy rate limit cooldown
+  await new Promise((resolve) => setTimeout(resolve, 2100));
+
+  // Student 1 appends a follow-up query to their existing conversation
+  const appendRes = await askFn({
+    prompt: 'What are the main advantages of using GELU over ReLU in modern Transformer models?',
+    subjectId: 'subj-cs101',
+    conversationId: createdConversationId,
+    mode: 'WITHIN_SYLLABUS',
+  });
+  assert.strictEqual(appendRes.data.conversationId, createdConversationId);
+
+  const updatedConvSnap = await db.collection('studyMateConversations').doc(createdConversationId).get();
+  const updatedData = updatedConvSnap.data();
+  assert.strictEqual(
+    updatedData.createdAt,
+    originalCreatedAt,
+    'Original createdAt timestamp must be preserved verbatim when appending to conversation'
+  );
+  assert.ok(
+    new Date(updatedData.updatedAt).getTime() >= new Date(originalCreatedAt).getTime(),
+    'updatedAt timestamp must be updated on append'
+  );
+
+  const totalMsgsSnap = await db
+    .collection('studyMateConversations')
+    .doc(createdConversationId)
+    .collection('messages')
+    .get();
+  assert.strictEqual(totalMsgsSnap.docs.length, 4, 'Conversation must now contain 4 messages (2 user + 2 model)');
+  console.log(`✓ Test 20c Passed: Original createdAt preserved and messages appended in atomic transaction.`);
+
+  // --------------------------------------------------------------------------
   // TEST 21: Direct Client Chat Message Forgery Block (Negative Security Test)
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 21] Verifying Forged Chat Message Creation Is Blocked in Firestore Rules...`);
@@ -745,9 +802,21 @@ async function runTests() {
   console.log(`✓ Test 22 Passed: Direct client ticket lifecycle event forgery blocked by Security Rules.`);
 
   // --------------------------------------------------------------------------
-  // TEST 23: Unauthorized Profile Field Modification Block (Negative Security Test)
+  // TEST 23: Registered Student ID & Profile Field Immutability (Negative Security Test)
   // --------------------------------------------------------------------------
-  console.log(`\n[TEST 23] Verifying Unauthorized Profile Field Modification (e.g. Email / Custom Claims) Is Blocked...`);
+  console.log(`\n[TEST 23] Verifying Registered Student ID & Profile Field Immutability...`);
+  // 23a: Attempting to modify registered studentId must be rejected
+  await assert.rejects(
+    async () => {
+      await updateDoc(doc(clientDb, 'users', testStudentUid), {
+        studentId: 'FORGED-ID-9999',
+      });
+    },
+    /permission-denied/i,
+    'Student attempting to modify registered studentId must be rejected with permission-denied'
+  );
+
+  // 23b: Attempting to modify registered email must be rejected
   await assert.rejects(
     async () => {
       await updateDoc(doc(clientDb, 'users', testStudentUid), {
@@ -755,9 +824,16 @@ async function runTests() {
       });
     },
     /permission-denied/i,
-    'Student attempting to modify email or non-whitelisted fields must be rejected with permission-denied'
+    'Student attempting to modify email must be rejected with permission-denied'
   );
-  console.log(`✓ Test 23 Passed: Unauthorized profile-field modification blocked by Security Rules.`);
+
+  // 23c: Updating permitted non-identity field (bio) must succeed
+  await updateDoc(doc(clientDb, 'users', testStudentUid), {
+    bio: 'First-year AI & Machine Learning student.',
+  });
+  const updatedUserDoc = await getDoc(doc(clientDb, 'users', testStudentUid));
+  assert.strictEqual(updatedUserDoc.data().bio, 'First-year AI & Machine Learning student.');
+  console.log(`✓ Test 23 Passed: Student ID & identity fields immutable; permitted profile fields update successfully.`);
 
   // --------------------------------------------------------------------------
   // TEST 24: Server-Side Academic Subject Validation in askStudyMateAi
@@ -775,6 +851,46 @@ async function runTests() {
     'Invalid subject must be rejected with not-found error'
   );
   console.log(`✓ Test 24 Passed: Server-side academic subject validation confirmed.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 25: Mock Gemini Restrictions (Production Environment Safeguard)
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 25] Verifying Mock Response Restrictions Against Production Environment...`);
+  const { isEmulatorOrTestEnvironment } = await import('../functions/lib/studymate.js');
+
+  // Verify that in the emulator environment, isEmulatorOrTestEnvironment() is true
+  assert.strictEqual(isEmulatorOrTestEnvironment(), true, 'Must detect test/emulator environment');
+
+  // Verify that outside emulator and test runner, mock responses are prohibited
+  const origEmulator = process.env.FUNCTIONS_EMULATOR;
+  const origHub = process.env.FIREBASE_EMULATOR_HUB;
+  const origFsHost = process.env.FIRESTORE_EMULATOR_HOST;
+  const origNodeEnv = process.env.NODE_ENV;
+  const origKService = process.env.K_SERVICE;
+  try {
+    delete process.env.FUNCTIONS_EMULATOR;
+    delete process.env.FIREBASE_EMULATOR_HUB;
+    delete process.env.FIRESTORE_EMULATOR_HOST;
+    process.env.K_SERVICE = 'us-central1-askStudyMateAi-prod';
+    process.env.NODE_ENV = 'production';
+    process.env.ALLOW_MOCK_GEMINI = 'true'; // Attempt to bypass via production env var
+
+    assert.strictEqual(
+      isEmulatorOrTestEnvironment(),
+      false,
+      'Production environment must strictly prohibit mock responses regardless of environment variables'
+    );
+  } finally {
+    if (origEmulator !== undefined) process.env.FUNCTIONS_EMULATOR = origEmulator;
+    if (origHub !== undefined) process.env.FIREBASE_EMULATOR_HUB = origHub;
+    if (origFsHost !== undefined) process.env.FIRESTORE_EMULATOR_HOST = origFsHost;
+    if (origKService !== undefined) process.env.K_SERVICE = origKService;
+    else delete process.env.K_SERVICE;
+    if (origNodeEnv !== undefined) process.env.NODE_ENV = origNodeEnv;
+    else delete process.env.NODE_ENV;
+    delete process.env.ALLOW_MOCK_GEMINI;
+  }
+  console.log(`✓ Test 25 Passed: Production environment strictly prohibits mock responses regardless of environment variables.`);
 
   // --------------------------------------------------------------------------
   // TEST 19: Security Scan - Zero API Keys in Client Bundles
@@ -797,7 +913,7 @@ async function runTests() {
   console.log(`✓ Test 19 Passed: Client distribution verified free of exposed API keys.`);
 
   console.log(`\n======================================================`);
-  console.log(`  ALL 24 INTEGRATION, AI & SECURITY TESTS PASSED!`);
+  console.log(`  ALL 27 INTEGRATION, AI & SECURITY TESTS PASSED!`);
   console.log(`======================================================\n`);
   process.exit(0);
 }

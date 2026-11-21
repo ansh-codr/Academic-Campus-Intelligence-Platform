@@ -32,15 +32,27 @@ function resolveGeminiApiKey(): string | undefined {
 }
 
 /**
- * Determines whether the function is executing in an emulator, CI, or explicit test harness.
+ * Determines whether the function is executing in the Firebase Emulator Suite or automated test runner.
+ * A production environment variable is strictly NOT sufficient to enable mock responses.
  */
-function isEmulatorOrTestEnvironment(): boolean {
-  return (
+export function isEmulatorOrTestEnvironment(): boolean {
+  // If running in deployed Cloud Run / Google Cloud Functions container, mock responses are strictly prohibited.
+  if (process.env.K_SERVICE || process.env.K_REVISION) {
+    // In production Cloud Run, FUNCTIONS_EMULATOR is NEVER set.
+    if (process.env.FUNCTIONS_EMULATOR !== 'true') {
+      return false;
+    }
+  }
+
+  // Must strictly detect the Firebase Functions emulator or an automated Node test runner.
+  // Arbitrary environment variables (e.g. ALLOW_MOCK_GEMINI) are completely ignored.
+  const isEmulator =
     process.env.FUNCTIONS_EMULATOR === 'true' ||
     Boolean(process.env.FIREBASE_EMULATOR_HUB) ||
-    process.env.NODE_ENV === 'test' ||
-    process.env.ALLOW_MOCK_GEMINI === 'true'
-  );
+    Boolean(process.env.FIRESTORE_EMULATOR_HOST);
+  const isTestRunner = process.env.NODE_ENV === 'test';
+
+  return isEmulator || isTestRunner;
 }
 
 /**
@@ -248,28 +260,31 @@ export const askStudyMateAi = onCall(
     const mode: SyllabusMode = data.mode === 'EXPLORE_BEYOND' ? 'EXPLORE_BEYOND' : 'WITHIN_SYLLABUS';
     const db = admin.firestore();
 
-    // 3. Conversation Ownership Verification
-    let conversationId = data.conversationId ? String(data.conversationId).trim() : null;
-    let conversationRef: admin.firestore.DocumentReference;
+    // 3. Conversation Ownership & Concurrency-Safe Pre-Validation
+    const isAppending = Boolean(data.conversationId && String(data.conversationId).trim());
+    const conversationId = isAppending
+      ? String(data.conversationId).trim()
+      : db.collection('studyMateConversations').doc().id;
 
-    if (conversationId) {
-      if (conversationId.length > 128) {
-        throw new HttpsError('invalid-argument', 'Conversation identifier exceeds maximum allowed length.');
+    if (isAppending && conversationId.length > 128) {
+      throw new HttpsError('invalid-argument', 'Conversation identifier exceeds maximum allowed length.');
+    }
+
+    const conversationRef = db.collection('studyMateConversations').doc(conversationId);
+
+    if (isAppending) {
+      // Reject supplied conversation IDs that don't exist rather than silently creating them
+      const preCheckSnap = await conversationRef.get();
+      if (!preCheckSnap.exists) {
+        throw new HttpsError('not-found', 'The specified conversation does not exist.');
       }
-      conversationRef = db.collection('studyMateConversations').doc(conversationId);
-      const existingConvSnap = await conversationRef.get();
-      if (existingConvSnap.exists) {
-        const convData = existingConvSnap.data();
-        if (convData?.userId !== uid) {
-          throw new HttpsError(
-            'permission-denied',
-            "Access denied: You do not have permission to append to another student's conversation."
-          );
-        }
+      const existingData = preCheckSnap.data();
+      if (existingData?.userId !== uid) {
+        throw new HttpsError(
+          'permission-denied',
+          "Access denied: You do not have permission to append to another student's conversation."
+        );
       }
-    } else {
-      conversationRef = db.collection('studyMateConversations').doc();
-      conversationId = conversationRef.id;
     }
 
     // 4. Enforce Rate Limits & Quotas
@@ -327,7 +342,8 @@ export const askStudyMateAi = onCall(
         throw new HttpsError('internal', 'The AI tutoring service encountered a provider error. Please try again in a moment.');
       }
     } else {
-      // In production, when the GEMINI_API_KEY is not configured, fail safely
+      // In production, when GEMINI_API_KEY is not configured, fail safely.
+      // A production environment variable is strictly not permitted to enable mock responses.
       if (!isEmulatorOrTestEnvironment()) {
         throw new HttpsError(
           'failed-precondition',
@@ -335,7 +351,7 @@ export const askStudyMateAi = onCall(
         );
       }
 
-      // Controlled Test Double for emulator tests and offline environments
+      // Controlled Test Double for Firebase Emulator Suite and automated tests only
       isMock = true;
       const ongoingTitle = topics.find((t) => t.status === 'ONGOING')?.title || 'Core Syllabus Foundations';
       aiReplyText = `**[Controlled Integration Test Double — Syllabus Mode: ${mode}]**
@@ -349,48 +365,69 @@ Hello! I am grounded in your **${subject.name}** curriculum.
 *(Notice: Running in emulator test-double mode. Live Gemini generation requires a verified GEMINI_API_KEY secret).*`;
     }
 
-    // 8. Conversation Persistence with Owner-Protected State
+    // 8. Concurrency-Safe Conversation Persistence
+    // Preserves original createdAt when appending to an existing conversation
     const now = new Date().toISOString();
-
-    await conversationRef.set(
-      {
-        id: conversationId,
-        userId: uid,
-        title: trimmedPrompt.slice(0, 60),
-        subjectId: subject.id,
-        mode,
-        updatedAt: now,
-        createdAt: data.conversationId ? admin.firestore.FieldValue.serverTimestamp() : now,
-      },
-      { merge: true }
-    );
-
-    // Save user message (trusted server write)
     const userMsgRef = conversationRef.collection('messages').doc();
-    await userMsgRef.set({
-      id: userMsgRef.id,
-      conversationId,
-      userId: uid,
-      role: 'user',
-      text: trimmedPrompt,
-      mode,
-      subjectId: subject.id,
-      timestamp: now,
-    });
-
-    // Save AI response message (trusted server write)
     const modelMsgRef = conversationRef.collection('messages').doc();
-    await modelMsgRef.set({
-      id: modelMsgRef.id,
-      conversationId,
-      userId: uid,
-      role: 'model',
-      text: aiReplyText,
-      mode,
-      subjectId: subject.id,
-      groundingContext,
-      timestamp: now,
-      isMockResponse: isMock,
+
+    await db.runTransaction(async (transaction) => {
+      if (isAppending) {
+        const convSnap = await transaction.get(conversationRef);
+        if (!convSnap.exists) {
+          throw new HttpsError('not-found', 'The specified conversation does not exist.');
+        }
+        const convData = convSnap.data();
+        if (convData?.userId !== uid) {
+          throw new HttpsError(
+            'permission-denied',
+            "Access denied: You do not have permission to append to another student's conversation."
+          );
+        }
+        // Concurrency-safe update: PRESERVES original createdAt timestamp
+        transaction.update(conversationRef, {
+          updatedAt: now,
+          mode,
+          subjectId: subject.id,
+        });
+      } else {
+        // Create new conversation document with initial createdAt
+        transaction.set(conversationRef, {
+          id: conversationId,
+          userId: uid,
+          title: trimmedPrompt.slice(0, 60),
+          subjectId: subject.id,
+          mode,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+
+      // Save user message (trusted server write) inside transaction
+      transaction.set(userMsgRef, {
+        id: userMsgRef.id,
+        conversationId,
+        userId: uid,
+        role: 'user',
+        text: trimmedPrompt,
+        mode,
+        subjectId: subject.id,
+        timestamp: now,
+      });
+
+      // Save AI response message (trusted server write) inside transaction
+      transaction.set(modelMsgRef, {
+        id: modelMsgRef.id,
+        conversationId,
+        userId: uid,
+        role: 'model',
+        text: aiReplyText,
+        mode,
+        subjectId: subject.id,
+        groundingContext,
+        timestamp: now,
+        isMockResponse: isMock,
+      });
     });
 
     return {
