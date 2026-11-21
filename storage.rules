@@ -1,0 +1,39 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.role == 'ADMIN';
+    }
+
+    // Default deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // Ticket Complaint Attachments
+    match /attachments/{userId}/{ticketId}/{fileName} {
+      // Must be authenticated, file owner or admin
+      allow read: if isOwner(userId) || isAdmin();
+      
+      // Upload rules: owner only, size < 10MB, restricted image/pdf MIME types
+      allow write: if isOwner(userId)
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)|application/pdf');
+    }
+
+    // Official Academic Resources (read-only for students, upload for admin)
+    match /academic-resources/{subjectId}/{fileName} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+  }
+}

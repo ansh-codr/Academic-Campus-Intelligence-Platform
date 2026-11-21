@@ -1,0 +1,29 @@
+{
+  "name": "solvesphere-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SolveSphere AI - Academic & Campus Intelligence Platform (Firebase Architecture)",
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "functions"
+  ],
+  "scripts": {
+    "dev": "npm run dev:web",
+    "dev:web": "npm run dev --workspace=@solvesphere/web",
+    "dev:api": "npm run dev --workspace=@solvesphere/api",
+    "build": "npm run build --workspaces --if-present",
+    "build:web": "npm run build --workspace=@solvesphere/web",
+    "build:functions": "npm run build --workspace=@solvesphere/functions",
+    "build:api": "npm run build --workspace=@solvesphere/api",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "emulators": "firebase emulators:start --only auth,firestore,functions,storage",
+    "seed": "node --input-type=module scripts/seed-firebase.js",
+    "admin:bootstrap": "node --input-type=module scripts/bootstrap-admin.js",
+    "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules functions/node_modules apps/*/dist functions/lib"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

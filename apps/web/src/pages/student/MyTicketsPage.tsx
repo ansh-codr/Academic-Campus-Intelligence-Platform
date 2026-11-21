@@ -1,0 +1,311 @@
+import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useAuth } from '@/hooks/useAuthDemo';
+import { CampusService } from '@/services/campusService';
+import { CampusTicket, TicketStatus } from '@solvesphere/shared';
+import { Card } from '@/components/ui/Card';
+import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
+import { Modal } from '@/components/ui/Modal';
+import {
+  Ticket,
+  Clock,
+  CheckCircle2,
+  AlertTriangle,
+  Building2,
+  Calendar,
+  Eye,
+  PlusCircle,
+  Radio,
+} from 'lucide-react';
+import { formatDate } from '@/lib/utils';
+
+export const MyTicketsPage: React.FC = () => {
+  const { user, role } = useAuth();
+  const [tickets, setTickets] = useState<CampusTicket[]>([]);
+  const [filterStatus, setFilterStatus] = useState<string>('ALL');
+  const [selectedTicket, setSelectedTicket] = useState<CampusTicket | null>(null);
+  const [isSubscribed, setIsSubscribed] = useState(true);
+
+  // Real-time Firestore subscription: updates automatically on changes
+  useEffect(() => {
+    const userId = role === 'ADMIN' ? undefined : user?.id;
+    const unsubscribe = CampusService.subscribeTickets((updatedTickets) => {
+      setTickets(updatedTickets);
+      // Also update selectedTicket if it is open in modal
+      if (selectedTicket) {
+        const found = updatedTickets.find((t) => t.id === selectedTicket.id);
+        if (found) setSelectedTicket(found);
+      }
+    }, userId);
+
+    return () => unsubscribe();
+  }, [user?.id, role]);
+
+  const filteredTickets = tickets.filter((t) => {
+    if (filterStatus === 'ALL') return true;
+    if (filterStatus === 'ACTIVE') return t.status !== 'RESOLVED' && t.status !== 'CLOSED';
+    if (filterStatus === 'RESOLVED') return t.status === 'RESOLVED' || t.status === 'CLOSED';
+    return t.status === filterStatus;
+  });
+
+  const LIFECYCLE_STEPS: { status: TicketStatus; label: string }[] = [
+    { status: 'SUBMITTED', label: '1. Submitted' },
+    { status: 'UNDER_REVIEW', label: '2. Under Review' },
+    { status: 'ASSIGNED', label: '3. Assigned' },
+    { status: 'IN_PROGRESS', label: '4. In Progress' },
+    { status: 'RESOLVED', label: '5. Resolved' },
+    { status: 'CLOSED', label: '6. Closed' },
+  ];
+
+  function getStepIndex(status: TicketStatus): number {
+    return LIFECYCLE_STEPS.findIndex((s) => s.status === status);
+  }
+
+  return (
+    <div className="space-y-8 animate-in fade-in duration-300">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <Badge variant="cyan" size="sm">Ticket History</Badge>
+            <span className="text-xs text-slate-500 font-semibold flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              Real-time Firestore Sync Active
+            </span>
+          </div>
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white mt-1">
+            My Maintenance Tickets
+          </h1>
+          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+            Track the end-to-end resolution lifecycle, department assignments, and inspection logs.
+          </p>
+        </div>
+
+        <Link to="/portal/report">
+          <Button variant="gradient" size="md">
+            <PlusCircle className="w-4 h-4 mr-1.5" />
+            Report New Issue
+          </Button>
+        </Link>
+      </div>
+
+      {/* Filter Tabs */}
+      <div className="flex flex-wrap gap-2 p-1.5 bg-slate-100 dark:bg-slate-800/80 rounded-2xl text-xs">
+        {[
+          { id: 'ALL', label: 'All Tickets' },
+          { id: 'ACTIVE', label: 'Active / Pending' },
+          { id: 'IN_PROGRESS', label: 'In Progress' },
+          { id: 'RESOLVED', label: 'Resolved / Closed' },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setFilterStatus(tab.id)}
+            className={`px-4 py-2 rounded-xl font-bold transition-all ${
+              filterStatus === tab.id
+                ? 'bg-white dark:bg-brand-cardDark text-brand-cyan shadow-sm'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Ticket List */}
+      <div className="space-y-4">
+        {filteredTickets.length === 0 ? (
+          <Card className="p-8 text-center space-y-3">
+            <Ticket className="w-8 h-8 text-slate-400 mx-auto" />
+            <h4 className="font-bold text-sm text-slate-700 dark:text-slate-300">
+              No tickets found in this view
+            </h4>
+            <p className="text-xs text-slate-500">
+              Submit your first campus issue to begin tracking status in real time.
+            </p>
+            <Link to="/portal/report">
+              <Button size="sm" variant="gradient">
+                Create First Ticket
+              </Button>
+            </Link>
+          </Card>
+        ) : (
+          filteredTickets.map((ticket) => (
+            <Card key={ticket.id} hoverEffect className="p-5 sm:p-6">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="space-y-2 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono font-bold text-xs">
+                      {ticket.referenceNumber}
+                    </span>
+                    <Badge
+                      variant={
+                        ticket.status === 'RESOLVED'
+                          ? 'green'
+                          : ticket.status === 'IN_PROGRESS'
+                          ? 'blue'
+                          : ticket.status === 'ASSIGNED'
+                          ? 'cyan'
+                          : 'amber'
+                      }
+                      size="sm"
+                    >
+                      {ticket.status.replace('_', ' ')}
+                    </Badge>
+                    <Badge
+                      variant={
+                        ticket.priority === 'URGENT' || ticket.priority === 'HIGH'
+                          ? 'rose'
+                          : 'slate'
+                      }
+                      size="sm"
+                    >
+                      {ticket.priority} Priority
+                    </Badge>
+                    <span className="text-[11px] text-slate-400">
+                      Category: {ticket.category.replace('_', ' ')}
+                    </span>
+                  </div>
+
+                  <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
+                    {ticket.title}
+                  </h3>
+                  <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 line-clamp-2">
+                    {ticket.description}
+                  </p>
+
+                  <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500 pt-1">
+                    <span className="flex items-center gap-1">
+                      <Building2 className="w-3.5 h-3.5 text-slate-400" />
+                      {ticket.building} &bull; {ticket.room}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                      Submitted: {formatDate(ticket.submittedAt)}
+                    </span>
+                    <span>
+                      Dept: <strong>{ticket.assignedDepartment}</strong>
+                    </span>
+                  </div>
+                </div>
+
+                {/* View Details Action */}
+                <div className="shrink-0 flex lg:flex-col justify-end">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSelectedTicket(ticket)}
+                    className="w-full sm:w-auto text-xs"
+                  >
+                    <Eye className="w-3.5 h-3.5 mr-1" />
+                    View Lifecycle Timeline
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          ))
+        )}
+      </div>
+
+      {/* Ticket Details & Lifecycle Modal */}
+      <Modal
+        isOpen={!!selectedTicket}
+        onClose={() => setSelectedTicket(null)}
+        title={`Ticket: ${selectedTicket?.referenceNumber || ''}`}
+        description={selectedTicket?.title}
+        maxWidth="xl"
+      >
+        {selectedTicket && (
+          <div className="space-y-6 text-xs sm:text-sm">
+            {/* Visual Lifecycle Stepper */}
+            <div>
+              <h5 className="font-bold text-xs uppercase tracking-wider text-slate-400 mb-4">
+                Lifecycle Progression
+              </h5>
+              <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 text-center text-xs">
+                {LIFECYCLE_STEPS.map((step, idx) => {
+                  const currentIdx = getStepIndex(selectedTicket.status);
+                  const isPassed = idx <= currentIdx;
+                  const isCurrent = idx === currentIdx;
+
+                  return (
+                    <div
+                      key={step.status}
+                      className={`p-2.5 rounded-xl border text-[11px] font-bold transition-all ${
+                        isCurrent
+                          ? 'bg-brand-blue text-white border-brand-blue shadow-glow-blue'
+                          : isPassed
+                          ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                          : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-400'
+                      }`}
+                    >
+                      {step.label}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Ticket Attributes */}
+            <div className="grid grid-cols-2 gap-3 p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs">
+              <div>
+                <span className="text-slate-400 block font-semibold">LOCATION</span>
+                <span className="font-bold text-slate-800 dark:text-slate-200">
+                  {selectedTicket.building}, {selectedTicket.floor}, {selectedTicket.room}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-400 block font-semibold">ASSIGNED DEPARTMENT</span>
+                <span className="font-bold text-slate-800 dark:text-slate-200">
+                  {selectedTicket.assignedDepartment}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-400 block font-semibold">SUBMITTED BY</span>
+                <span className="font-bold text-slate-800 dark:text-slate-200">
+                  {selectedTicket.submittedBy}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-400 block font-semibold">LAST UPDATED</span>
+                <span className="font-bold text-slate-800 dark:text-slate-200">
+                  {formatDate(selectedTicket.updatedAt)}
+                </span>
+              </div>
+            </div>
+
+            {/* Event Timeline History */}
+            <div>
+              <h5 className="font-bold text-xs uppercase tracking-wider text-slate-400 mb-3">
+                Audit Timeline Log (Firestore Subcollection)
+              </h5>
+              <div className="space-y-3 pl-4 border-l-2 border-slate-200 dark:border-slate-800">
+                {selectedTicket.timeline && selectedTicket.timeline.length > 0 ? (
+                  selectedTicket.timeline.map((ev) => (
+                    <div key={ev.id} className="relative space-y-1">
+                      <span className="absolute -left-[21px] top-1.5 w-2.5 h-2.5 rounded-full bg-brand-blue" />
+                      <div className="flex items-center justify-between text-xs font-semibold">
+                        <span className="text-brand-blue dark:text-cyan-400">{ev.status}</span>
+                        <span className="text-[11px] text-slate-400">{formatDate(ev.timestamp)}</span>
+                      </div>
+                      <p className="text-xs text-slate-600 dark:text-slate-300">{ev.note}</p>
+                      <p className="text-[10px] text-slate-400">By: {ev.updatedBy}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs text-slate-400 italic">Initial submission logged.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <Button variant="outline" size="sm" onClick={() => setSelectedTicket(null)}>
+                Close Details
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+};
