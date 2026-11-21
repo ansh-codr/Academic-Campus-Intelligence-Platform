@@ -201,45 +201,105 @@ export const AdminComplaintsClustersPage: React.FC = () => {
 
       {/* Issue Clusters Section */}
       <div className="space-y-4">
-        <h3 className="text-base font-bold text-white">
-          AI Semantic Issue Clusters
-        </h3>
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <Network className="w-4 h-4 text-brand-cyan" />
+              AI Issue Cluster Center
+            </h3>
+            <p className="text-xs text-slate-400">
+              Correlated complaints grouped via Gemini embeddings, semantic cosine similarity, and location heuristics.
+            </p>
+          </div>
+          <Badge variant="cyan" size="sm">
+            {clusters.length} Detected Clusters
+          </Badge>
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {clusters.map((cluster) => (
-            <Card key={cluster.id} className="p-6 bg-slate-950 border-slate-800 space-y-4">
-              <div className="flex items-center justify-between">
-                <Badge variant="cyan" size="sm">{cluster.category}</Badge>
-                <Badge variant="amber" size="sm">{cluster.ticketCount} Grouped Tickets</Badge>
-              </div>
+          {clusters.map((cluster) => {
+            const methodLabel =
+              cluster.clusteringMethod === 'SEMANTIC_SIMILARITY'
+                ? 'Semantic AI'
+                : cluster.clusteringMethod === 'HYBRID_SEMANTIC_PROXIMITY'
+                ? 'Hybrid Semantic + Zone'
+                : 'Location Proximity';
 
-              <div>
-                <h4 className="text-base font-bold text-white">{cluster.title}</h4>
-                <p className="text-xs text-slate-400 mt-1">
-                  <strong>Affected Zone:</strong> {cluster.affectedArea}
-                </p>
-              </div>
+            return (
+              <Card key={cluster.id} className="p-6 bg-slate-950 border-slate-800 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="cyan" size="sm">{cluster.category}</Badge>
+                    <Badge
+                      variant={
+                        cluster.status === 'ACTIVE_INCIDENT'
+                          ? 'green'
+                          : cluster.status === 'REJECTED'
+                          ? 'rose'
+                          : cluster.status === 'DISMISSED'
+                          ? 'slate'
+                          : 'amber'
+                      }
+                      size="sm"
+                    >
+                      {cluster.status}
+                    </Badge>
+                  </div>
 
-              <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-300">
-                <span className="font-bold text-amber-400 block mb-0.5">
-                  Consolidated Work Order Recommendation:
-                </span>
-                {cluster.suggestedAction}
-              </div>
+                  <div className="flex items-center gap-2">
+                    {cluster.similarityScore != null && (
+                      <Badge variant="green" size="sm">
+                        {Math.round(cluster.similarityScore * 100)}% Match
+                      </Badge>
+                    )}
+                    <Badge variant="blue" size="sm">
+                      {methodLabel}
+                    </Badge>
+                  </div>
+                </div>
 
-              <div className="pt-2 flex justify-between items-center text-xs text-slate-400 border-t border-slate-800">
-                <span className="font-mono">Tickets: {cluster.ticketIds.join(', ')}</span>
-                <Button
-                  size="sm"
-                  className="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs"
-                  onClick={() => setSelectedCluster(cluster)}
-                >
-                  <Wrench className="w-3.5 h-3.5 mr-1" />
-                  Dispatch Master Order
-                </Button>
-              </div>
-            </Card>
-          ))}
+                <div>
+                  <h4 className="text-base font-bold text-white">{cluster.title}</h4>
+                  <p className="text-xs text-slate-400 mt-1">
+                    <strong>Affected Zone:</strong> {cluster.affectedArea} &bull;{' '}
+                    <strong>Grouped Tickets:</strong> {cluster.ticketCount}
+                  </p>
+                </div>
+
+                {/* AI Maintenance Summary & Semantic Explanation */}
+                {cluster.aiMaintenanceSummary && (
+                  <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 text-xs text-slate-300 space-y-1">
+                    <span className="font-bold text-brand-cyan block">
+                      AI Maintenance Analysis:
+                    </span>
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      {cluster.aiMaintenanceSummary}
+                    </p>
+                  </div>
+                )}
+
+                {cluster.semanticExplanation && (
+                  <div className="p-2.5 rounded-lg bg-indigo-950/30 border border-indigo-900/40 text-[11px] text-indigo-300">
+                    <strong>Semantic Correlation:</strong> {cluster.semanticExplanation}
+                  </div>
+                )}
+
+                <div className="pt-2 flex justify-between items-center text-xs text-slate-400 border-t border-slate-800">
+                  <span className="font-mono text-[11px]">
+                    {cluster.ticketIds.length} tickets linked
+                  </span>
+                  <Button
+                    size="sm"
+                    className="bg-brand-cyan hover:bg-cyan-500 text-slate-950 font-bold text-xs gap-1.5"
+                    onClick={() => setSelectedCluster(cluster)}
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>Inspect Cluster &amp; Review</span>
+                  </Button>
+                </div>
+              </Card>
+            );
+          })}
         </div>
       </div>
 
@@ -346,46 +406,167 @@ export const AdminComplaintsClustersPage: React.FC = () => {
         )}
       </Modal>
 
-      {/* Master Work Order Modal */}
+      {/* AI Cluster Inspection & Review Modal */}
       <Modal
         isOpen={!!selectedCluster}
         onClose={() => setSelectedCluster(null)}
-        title={selectedCluster?.title || 'Cluster Action'}
-        description="Consolidated Root Cause Work Order Dispatch"
+        title={selectedCluster?.title || 'Cluster Inspection'}
+        description="AI Issue Cluster Review & Action Dispatch Center"
+        maxWidth="xl"
       >
-        <div className="space-y-4 text-xs sm:text-sm text-slate-300">
-          <p>
-            You are creating a single root-cause dispatch order for{' '}
-            <strong className="text-white">{selectedCluster?.ticketCount} tickets</strong> in{' '}
-            {selectedCluster?.affectedArea}.
-          </p>
-          <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 text-xs">
-            <span className="text-slate-400 block font-semibold">RECOMMENDED ACTION:</span>
-            <span className="text-white font-medium">{selectedCluster?.suggestedAction}</span>
+        {selectedCluster && (
+          <div className="space-y-5 text-xs sm:text-sm text-slate-300">
+            {/* Cluster Header & AI Metadata */}
+            <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Badge variant="cyan" size="sm">{selectedCluster.category}</Badge>
+                  <Badge
+                    variant={
+                      selectedCluster.status === 'ACTIVE_INCIDENT'
+                        ? 'green'
+                        : selectedCluster.status === 'REJECTED'
+                        ? 'rose'
+                        : selectedCluster.status === 'DISMISSED'
+                        ? 'slate'
+                        : 'amber'
+                    }
+                    size="sm"
+                  >
+                    {selectedCluster.status}
+                  </Badge>
+                  <span className="text-xs text-slate-400 font-semibold">
+                    {selectedCluster.ticketCount} Grouped Tickets
+                  </span>
+                </div>
+                {selectedCluster.similarityScore != null && (
+                  <Badge variant="green" size="sm">
+                    {Math.round(selectedCluster.similarityScore * 100)}% Cosine Similarity
+                  </Badge>
+                )}
+              </div>
+
+              {selectedCluster.aiMaintenanceSummary && (
+                <div className="text-xs text-slate-300">
+                  <strong className="text-brand-cyan block mb-0.5">AI Maintenance Summary:</strong>
+                  <p>{selectedCluster.aiMaintenanceSummary}</p>
+                </div>
+              )}
+
+              {selectedCluster.semanticExplanation && (
+                <div className="text-xs text-slate-300">
+                  <strong className="text-indigo-400 block mb-0.5">Semantic Rationale:</strong>
+                  <p>{selectedCluster.semanticExplanation}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Linked Tickets List */}
+            <div className="space-y-2">
+              <h5 className="font-bold text-xs uppercase tracking-wider text-slate-400">
+                Linked Tickets in Cluster ({selectedCluster.ticketIds.length})
+              </h5>
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                {tickets
+                  .filter((t) => selectedCluster.ticketIds.includes(t.id))
+                  .map((ticket) => (
+                    <div
+                      key={ticket.id}
+                      className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between text-xs"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-brand-cyan">{ticket.referenceNumber}</span>
+                          <Badge variant="slate" size="sm">{ticket.status}</Badge>
+                          <span className="text-slate-400">&bull; {ticket.building} ({ticket.room})</span>
+                        </div>
+                        <p className="text-slate-200 font-semibold mt-0.5">{ticket.title}</p>
+                        <p className="text-[11px] text-slate-400 truncate max-w-md">{ticket.description}</p>
+                      </div>
+                      <span className="text-[10px] text-slate-500">{ticket.submittedBy}</span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2">
+              <Button variant="outline" size="sm" onClick={() => setSelectedCluster(null)}>
+                Close
+              </Button>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-rose-400 hover:text-rose-300 border-rose-900/60 hover:bg-rose-950/40"
+                  onClick={async () => {
+                    try {
+                      await AdminService.reviewCluster(selectedCluster.id, 'reject', 'Admin rejected cluster: distinct root causes.');
+                      setActionSuccess(`Cluster "${selectedCluster.title}" rejected.`);
+                    } catch (err: any) {
+                      alert(err.message);
+                    }
+                    setSelectedCluster(null);
+                  }}
+                >
+                  Reject Suggestion
+                </Button>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-slate-300 hover:text-white border-slate-700"
+                  onClick={async () => {
+                    try {
+                      await AdminService.reviewCluster(selectedCluster.id, 'dismiss', 'Dismissed by admin.');
+                      setActionSuccess(`Cluster "${selectedCluster.title}" dismissed.`);
+                    } catch (err: any) {
+                      alert(err.message);
+                    }
+                    setSelectedCluster(null);
+                  }}
+                >
+                  Dismiss
+                </Button>
+
+                <Button
+                  size="sm"
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                  onClick={async () => {
+                    try {
+                      await AdminService.reviewCluster(selectedCluster.id, 'verify', 'Admin confirmed shared incident.');
+                      setActionSuccess(`Cluster "${selectedCluster.title}" verified as Active Incident.`);
+                    } catch (err: any) {
+                      alert(err.message);
+                    }
+                    setSelectedCluster(null);
+                  }}
+                >
+                  <CheckCircle className="w-3.5 h-3.5 mr-1" />
+                  Verify Incident
+                </Button>
+
+                <Button
+                  variant="gradient"
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      await AdminService.reviewCluster(selectedCluster.id, 'resolve', 'Master work order dispatched by admin.');
+                      setActionSuccess(`Master work order dispatched for "${selectedCluster.title}". Duplicate tickets grouped.`);
+                    } catch (err: any) {
+                      alert(err.message);
+                    }
+                    setSelectedCluster(null);
+                  }}
+                >
+                  <Wrench className="w-3.5 h-3.5 mr-1" />
+                  Dispatch Master Order
+                </Button>
+              </div>
+            </div>
           </div>
-          <div className="pt-2 flex justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={() => setSelectedCluster(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant="gradient"
-              size="sm"
-              onClick={async () => {
-                if (selectedCluster) {
-                  try {
-                    await AdminService.reviewCluster(selectedCluster.id, 'resolve', 'Master work order dispatched by admin.');
-                    setActionSuccess(`Master work order dispatched for "${selectedCluster.title}". Duplicate tickets grouped.`);
-                  } catch (err: any) {
-                    console.error('Error reviewing cluster:', err);
-                  }
-                  setSelectedCluster(null);
-                }
-              }}
-            >
-              Confirm Dispatch
-            </Button>
-          </div>
-        </div>
+        )}
       </Modal>
     </div>
   );

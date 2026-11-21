@@ -91,12 +91,17 @@ export interface IssueCluster {
   room?: string;
   ticketCount: number;
   ticketIds: string[];
-  clusteringMethod?: 'RULE_BASED_LOCATION_PROXIMITY';
+  clusteringMethod?: 'RULE_BASED_LOCATION_PROXIMITY' | 'SEMANTIC_SIMILARITY' | 'HYBRID_SEMANTIC_PROXIMITY';
+  similarityScore?: number;
+  semanticExplanation?: string;
+  aiMaintenanceSummary?: string;
   verifiedByAdmin?: boolean;
-  status: 'SUGGESTED_INCIDENT' | 'ACTIVE_INCIDENT' | 'RESOLVING' | 'MERGED' | 'DISMISSED';
+  status: 'SUGGESTED_INCIDENT' | 'REVIEWED' | 'ACTIVE_INCIDENT' | 'RESOLVING' | 'MERGED' | 'DISMISSED' | 'REJECTED';
   suggestedAction: string;
   createdAt: string;
   updatedAt?: string;
+  verifiedAt?: string;
+  verifiedBy?: string;
   confidenceScore?: number;
 }
 

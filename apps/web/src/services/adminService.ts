@@ -264,7 +264,7 @@ export const AdminService = {
    */
   async reviewCluster(
     clusterId: string,
-    action: 'merge' | 'resolve' | 'dismiss',
+    action: 'verify' | 'merge' | 'resolve' | 'dismiss' | 'reject',
     note?: string
   ): Promise<any> {
     try {
@@ -277,13 +277,28 @@ export const AdminService = {
 
     const ref = doc(db, 'issueClusters', clusterId);
     const now = new Date().toISOString();
-    let newStatus: 'ACTIVE_INCIDENT' | 'RESOLVING' | 'MERGED' | 'DISMISSED' = 'ACTIVE_INCIDENT';
-    if (action === 'merge') newStatus = 'MERGED';
-    else if (action === 'resolve') newStatus = 'RESOLVING';
-    else newStatus = 'DISMISSED';
+    let newStatus: 'ACTIVE_INCIDENT' | 'RESOLVING' | 'MERGED' | 'DISMISSED' | 'REJECTED' = 'ACTIVE_INCIDENT';
+    let verifiedByAdmin = true;
+    if (action === 'verify') {
+      newStatus = 'ACTIVE_INCIDENT';
+      verifiedByAdmin = true;
+    } else if (action === 'merge') {
+      newStatus = 'MERGED';
+      verifiedByAdmin = true;
+    } else if (action === 'resolve') {
+      newStatus = 'RESOLVING';
+      verifiedByAdmin = true;
+    } else if (action === 'reject') {
+      newStatus = 'REJECTED';
+      verifiedByAdmin = false;
+    } else {
+      newStatus = 'DISMISSED';
+      verifiedByAdmin = false;
+    }
 
     await updateDoc(ref, {
       status: newStatus,
+      verifiedByAdmin,
       updatedAt: now,
       ...(note ? { reviewNote: note } : {}),
     });

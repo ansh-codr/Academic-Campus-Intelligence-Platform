@@ -1709,6 +1709,291 @@ async function runTests() {
   console.log(`✓ Test 34 Passed: Direct client writes to Speak Freely blocked; read restricted exclusively to admin.`);
 
   // --------------------------------------------------------------------------
+  // TEST 35: Campus Care AI Assistant - Querying & Grounded Ticket Tracking
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 35] Verifying Campus Care AI Assistant & Grounded Ticket Tracking...`);
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  const askCampusCareFn = httpsCallable(clientFunctions, 'askCampusCareAi');
+
+  // Student 1 queries status of their tickets
+  const careRes1 = await askCampusCareFn({
+    prompt: 'What is the current status of my tickets?',
+  });
+  assert.ok(careRes1.data?.reply, 'Campus Care AI must return a reply');
+  assert.ok(careRes1.data?.conversationId, 'Must return generated conversationId');
+  assert.strictEqual(careRes1.data?.isMock, true, 'Emulator test double active');
+  assert.ok(Array.isArray(careRes1.data?.relevantTickets), 'Should return relevantTickets array');
+  const student1HasTicket = careRes1.data.relevantTickets.some((t) => t.id === createdCompData.id);
+  assert.ok(student1HasTicket, 'Student 1 should see their own submitted ticket');
+
+  // Query facilities issue generating complaint draft
+  // Wait 2.1s to respect per-user rate limit
+  await new Promise((r) => setTimeout(r, 2100));
+  const careRes2 = await askCampusCareFn({
+    prompt: 'The classroom AC in Engineering Block Room 204 is leaking water heavily',
+    conversationId: careRes1.data.conversationId,
+  });
+  assert.ok(careRes2.data?.reply);
+  assert.strictEqual(careRes2.data?.conversationId, careRes1.data.conversationId, 'Must preserve conversation ID');
+  assert.ok(careRes2.data?.draftComplaint, 'Must generate draft complaint for maintenance issue');
+  assert.strictEqual(careRes2.data.draftComplaint.category, 'AC_HVAC');
+  assert.strictEqual(careRes2.data.draftComplaint.suggestedDepartment, 'HVAC & Climate Control');
+  console.log(`✓ Test 35 Passed: Campus Care AI answered query, tracked tickets, and drafted structured complaint.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 36: Campus Care AI - Unauthenticated Invocation Rejection
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 36] Verifying Unauthenticated User is Rejected by askCampusCareAi...`);
+  await signOut(clientAuth);
+  await assert.rejects(
+    async () => {
+      await askCampusCareFn({
+        prompt: 'Unauthenticated facilities query',
+      });
+    },
+    (err) => err.code?.includes('unauthenticated') || /authenticated/i.test(err.message),
+    'Unauthenticated call to askCampusCareAi must fail with unauthenticated'
+  );
+  console.log(`✓ Test 36 Passed: Unauthenticated request rejected by askCampusCareAi.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 37: Cross-Student Ticket & Conversation Isolation in Campus Care AI
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 37] Verifying Cross-Student Ticket & Conversation Isolation...`);
+  await signInWithEmailAndPassword(clientAuth, student2Email, 'Password@2026');
+
+  // Student 2 queries ticket status -> must NOT receive Student 1's ticket
+  const student2CareRes = await askCampusCareFn({
+    prompt: 'What is the status of my tickets?',
+  });
+  const student2Tickets = student2CareRes.data?.relevantTickets || [];
+  const leakedTicket = student2Tickets.find((t) => t.id === createdCompData.id);
+  assert.strictEqual(leakedTicket, undefined, 'Student 2 must not see Student 1 tickets in AI lookup');
+
+  // Student 2 attempts to append to Student 1's conversation -> rejected
+  await new Promise((r) => setTimeout(r, 2100));
+  await assert.rejects(
+    async () => {
+      await askCampusCareFn({
+        prompt: 'Attempting to inject into student 1 conversation',
+        conversationId: careRes1.data.conversationId,
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /do not own/i.test(err.message),
+    'Attempting to append to another student conversation must be rejected'
+  );
+  console.log(`✓ Test 37 Passed: Ticket and conversation isolation strictly enforced across students.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 38: AI-Assisted Complaint Reporting (aiAssistComplaint)
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 38] Verifying AI-Assisted Complaint Reporting (aiAssistComplaint)...`);
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  const aiAssistFn = httpsCallable(clientFunctions, 'aiAssistComplaint');
+
+  await new Promise((r) => setTimeout(r, 2100));
+  const assistRes = await aiAssistFn({
+    rawInput: 'air conditioning unit in Room 302 is blowing warm humid air and dripping onto desks',
+    building: 'Engineering Block B',
+    room: 'Room 302',
+  });
+  assert.ok(assistRes.data?.suggestedTitle, 'Must return suggested title');
+  assert.strictEqual(assistRes.data.suggestedCategory, 'AC_HVAC');
+  assert.strictEqual(assistRes.data.suggestedDepartment, 'HVAC & Climate Control');
+  assert.ok(assistRes.data.enhancedDescription, 'Must return enhanced description');
+  assert.strictEqual(assistRes.data.isMock, true);
+  console.log(`✓ Test 38 Passed: aiAssistComplaint successfully enhanced student description into formal complaint suggestion.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 39: Semantic Duplicate Complaint Detection & Automation
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 39] Verifying Semantic Duplicate Detection & Issue Clustering...`);
+  // 1. Submit First Complaint
+  const acComp1Res = await createComplaintCallable({
+    title: 'Split AC blowing hot air',
+    category: 'AC_HVAC',
+    building: 'Science Block',
+    floor: '1st Floor',
+    room: 'Lab 101',
+    description: 'The air conditioner is not cooling and making loud rattling noise in the computer lab.',
+    priority: 'HIGH',
+  });
+  assert.ok(acComp1Res.data?.success);
+  const acComp1Id = acComp1Res.data.data.id;
+
+  // 2. Submit Second Semantically Similar Complaint (Different Room, but strongly correlated symptoms)
+  const acComp2Res = await createComplaintCallable({
+    title: 'Air conditioning cooling failure in lab',
+    category: 'AC_HVAC',
+    building: 'Science Block',
+    floor: '1st Floor',
+    room: 'Lab 102',
+    description: 'Air conditioner completely stopped cooling the room, temperature very high and AC unit hot.',
+    priority: 'HIGH',
+  });
+  assert.ok(acComp2Res.data?.success);
+  const acComp2Id = acComp2Res.data.data.id;
+
+  // Check that second complaint was grouped into an issueCluster
+  const acComp2Doc = await db.collection('complaints').doc(acComp2Id).get();
+  const clusterId = acComp2Doc.data()?.clusterId;
+  assert.ok(clusterId, 'Second semantically similar complaint must be assigned a clusterId');
+
+  const clusterDoc = await db.collection('issueClusters').doc(clusterId).get();
+  assert.ok(clusterDoc.exists, 'Cluster document must exist');
+  const semanticClusterData = clusterDoc.data();
+  assert.ok(semanticClusterData.clusteringMethod === 'SEMANTIC_SIMILARITY' || semanticClusterData.clusteringMethod === 'HYBRID_SEMANTIC_PROXIMITY');
+  assert.ok(semanticClusterData.similarityScore >= 0.80, `Similarity score must be >= 0.80 (actual: ${semanticClusterData.similarityScore})`);
+  assert.ok(semanticClusterData.semanticExplanation, 'Semantic explanation must be recorded');
+  assert.ok(semanticClusterData.aiMaintenanceSummary, 'AI maintenance summary must be generated');
+  assert.strictEqual(semanticClusterData.status, 'SUGGESTED_INCIDENT');
+  assert.strictEqual(semanticClusterData.verifiedByAdmin, false);
+  assert.ok(semanticClusterData.ticketIds.includes(acComp1Id));
+  assert.ok(semanticClusterData.ticketIds.includes(acComp2Id));
+
+  // 3. Submit Unrelated Complaint (Water Leak) -> Must NOT join AC cluster
+  const plumbingCompRes = await createComplaintCallable({
+    title: 'Water tap leaking heavily',
+    category: 'WATER_SUPPLY',
+    building: 'Science Block',
+    floor: '1st Floor',
+    room: 'Washroom 1',
+    description: 'Continuous water leakage from tap flooding washroom floor.',
+    priority: 'MEDIUM',
+  });
+  assert.ok(plumbingCompRes.data?.success);
+  const plumbingCompId = plumbingCompRes.data.data.id;
+  const plumbingDoc = await db.collection('complaints').doc(plumbingCompId).get();
+  assert.notStrictEqual(plumbingDoc.data()?.clusterId, clusterId, 'Dissimilar complaint must not join the AC cluster');
+  console.log(`✓ Test 39 Passed: Semantic embeddings accurately clustered similar issues (score: ${semanticClusterData.similarityScore}) and isolated dissimilar complaints.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 40: Admin Review Cluster Actions (Verify & Reject)
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 40] Verifying Admin Review Cluster Actions (Verify & Reject)...`);
+  await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+
+  // 1. Admin verifies AC cluster
+  const verifyRes = await reviewClusterCallable({
+    clusterId,
+    action: 'verify',
+    note: 'Admin verified centralized chiller outage.',
+  });
+  assert.ok(verifyRes.data?.success);
+  assert.strictEqual(verifyRes.data.status, 'ACTIVE_INCIDENT');
+  assert.strictEqual(verifyRes.data.verifiedByAdmin, true);
+
+  const updatedClusterSnap = await db.collection('issueClusters').doc(clusterId).get();
+  assert.strictEqual(updatedClusterSnap.data().status, 'ACTIVE_INCIDENT');
+  assert.strictEqual(updatedClusterSnap.data().verifiedByAdmin, true);
+  assert.ok(updatedClusterSnap.data().verifiedAt);
+  assert.ok(updatedClusterSnap.data().verifiedBy);
+
+  // 2. Admin rejects another cluster suggestion
+  const dummyClusterRef = db.collection('issueClusters').doc();
+  await dummyClusterRef.set({
+    id: dummyClusterRef.id,
+    title: 'False Positive Cluster',
+    status: 'SUGGESTED_INCIDENT',
+    verifiedByAdmin: false,
+    ticketIds: ['tkt-1', 'tkt-2'],
+    createdAt: new Date().toISOString(),
+  });
+
+  const rejectRes = await reviewClusterCallable({
+    clusterId: dummyClusterRef.id,
+    action: 'reject',
+    note: 'Independent problems, not a shared failure.',
+  });
+  assert.ok(rejectRes.data?.success);
+  assert.strictEqual(rejectRes.data.status, 'REJECTED');
+  assert.strictEqual(rejectRes.data.verifiedByAdmin, false);
+
+  const rejectedClusterSnap = await dummyClusterRef.get();
+  assert.strictEqual(rejectedClusterSnap.data().status, 'REJECTED');
+  assert.strictEqual(rejectedClusterSnap.data().verifiedByAdmin, false);
+  console.log(`✓ Test 40 Passed: Admin cluster verify and reject actions confirmed.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 41: Firestore Security Rules for Campus Care & Embeddings
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 41] Verifying Security Rules for Campus Care & Embeddings...`);
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  const student1ConvRef = doc(clientDb, 'campusCareConversations', careRes1.data.conversationId);
+
+  // Student 1 can read own conversation
+  const student1ReadSnap = await getDoc(student1ConvRef);
+  assert.ok(student1ReadSnap.exists, 'Student 1 must be able to read own conversation');
+
+  // Student 2 CANNOT read Student 1 conversation
+  await signInWithEmailAndPassword(clientAuth, student2Email, 'Password@2026');
+  await assert.rejects(
+    async () => {
+      await getDoc(student1ConvRef);
+    },
+    /permission-denied/i,
+    'Student 2 cannot read Student 1 campus care conversation'
+  );
+
+  // Direct client write to messages subcollection is blocked
+  await assert.rejects(
+    async () => {
+      await setDoc(doc(clientDb, 'campusCareConversations', careRes1.data.conversationId, 'messages', 'forged-msg'), {
+        role: 'user',
+        text: 'Forged message direct from client',
+        timestamp: new Date().toISOString(),
+      });
+    },
+    /permission-denied/i,
+    'Direct client message creation must be rejected'
+  );
+
+  // Direct client write to complaintEmbeddings is blocked
+  await assert.rejects(
+    async () => {
+      await setDoc(doc(clientDb, 'complaintEmbeddings', 'fake-complaint-id'), {
+        embedding: [0.1, 0.2, 0.3],
+        textSnippet: 'Fake embedding',
+      });
+    },
+    /permission-denied/i,
+    'Client write to complaintEmbeddings must be rejected'
+  );
+
+  // Direct client read of complaintEmbeddings is blocked
+  await assert.rejects(
+    async () => {
+      await getDoc(doc(clientDb, 'complaintEmbeddings', acComp1Id));
+    },
+    /permission-denied/i,
+    'Client read from complaintEmbeddings must be rejected'
+  );
+  console.log(`✓ Test 41 Passed: Campus Care chat privacy enforced; message and embedding forgery blocked.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 42: Production Mock Restrictions & Rate Limit Validation
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 42] Verifying Rate Limit Cooldown & Production Mock Restrictions...`);
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+
+  // Calling askCampusCareAi immediately without 2s interval must trigger rate limit
+  await assert.rejects(
+    async () => {
+      await askCampusCareFn({
+        prompt: 'Immediate rapid inquiry testing rate limit',
+      });
+    },
+    (err) => err.code?.includes('resource-exhausted') || /resource-exhausted|wait|seconds/i.test(err.message),
+    'Immediate rapid request must be rejected with resource-exhausted'
+  );
+
+  // Verify production mock restriction helper (already imported above)
+  assert.strictEqual(typeof isEmulatorOrTestEnvironment, 'function');
+  // In active emulator run, returns true
+  assert.strictEqual(isEmulatorOrTestEnvironment(), true);
+  console.log(`✓ Test 42 Passed: AI rate limiting enforced and mock restrictions confirmed.`);
+
+  // --------------------------------------------------------------------------
   // TEST 19: Security Scan - Zero API Keys in Client Bundles
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 19] Verifying Zero Sensitive Keys or Secrets in Client Assets...`);
@@ -1729,7 +2014,7 @@ async function runTests() {
   console.log(`✓ Test 19 Passed: Client distribution verified free of exposed API keys.`);
 
   console.log(`\n======================================================`);
-  console.log(`  ALL 34 INTEGRATION, AI & SECURITY TESTS PASSED!`);
+  console.log(`  ALL 42 INTEGRATION, AI & SECURITY TESTS PASSED!`);
   console.log(`======================================================\n`);
   process.exit(0);
 }

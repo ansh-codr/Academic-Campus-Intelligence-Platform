@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   Megaphone,
   Radio,
+  Sparkles,
 } from 'lucide-react';
 
 export const CampusDashboardPage: React.FC = () => {
@@ -58,12 +59,24 @@ export const CampusDashboardPage: React.FC = () => {
           </p>
         </div>
 
-        <Link to="/portal/report">
-          <Button variant="gradient" size="md">
-            <PlusCircle className="w-4 h-4 mr-1.5" />
-            Report New Campus Issue
-          </Button>
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link to="/portal/campus-care">
+            <Button
+              variant="outline"
+              size="md"
+              className="gap-1.5 text-cyan-600 dark:text-cyan-400 border-cyan-500/40 hover:bg-cyan-50 dark:hover:bg-cyan-950/40"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>Campus Care AI</span>
+            </Button>
+          </Link>
+          <Link to="/portal/report">
+            <Button variant="gradient" size="md">
+              <PlusCircle className="w-4 h-4 mr-1.5" />
+              Report New Campus Issue
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* Metrics Row */}

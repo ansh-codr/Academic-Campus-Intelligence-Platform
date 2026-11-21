@@ -412,7 +412,7 @@ export const adminManageClub = onCall({ cors: true }, async (request) => {
 
 /**
  * Callable Cloud Function: adminReviewCluster (Admin only)
- * Reviews, verifies, merges, resolves, or dismisses suggested rule-based issue clusters.
+ * Reviews, verifies, merges, resolves, rejects, or dismisses suggested rule-based and semantic issue clusters.
  * Enforces admin confirmation before converting a suggestion into an official active incident.
  */
 export const adminReviewCluster = onCall({ cors: true }, async (request) => {
@@ -424,12 +424,13 @@ export const adminReviewCluster = onCall({ cors: true }, async (request) => {
   }
 
   const { clusterId, action, note } = request.data || {};
-  if (!clusterId || !action || !['verify', 'merge', 'resolve', 'dismiss'].includes(action)) {
-    throw new HttpsError('invalid-argument', 'clusterId and valid action (verify, merge, resolve, dismiss) are required.');
+  if (!clusterId || !action || !['verify', 'merge', 'resolve', 'dismiss', 'reject'].includes(action)) {
+    throw new HttpsError('invalid-argument', 'clusterId and valid action (verify, merge, resolve, dismiss, reject) are required.');
   }
 
   const db = admin.firestore();
   const now = new Date().toISOString();
+  const adminName = request.auth.token.name || request.auth.token.email || 'Administrator';
   const clusterRef = db.collection('issueClusters').doc(clusterId);
 
   try {
@@ -438,7 +439,7 @@ export const adminReviewCluster = onCall({ cors: true }, async (request) => {
       throw new HttpsError('not-found', `Cluster ${clusterId} not found.`);
     }
 
-    let newStatus: 'ACTIVE_INCIDENT' | 'RESOLVING' | 'MERGED' | 'DISMISSED';
+    let newStatus: 'ACTIVE_INCIDENT' | 'RESOLVING' | 'MERGED' | 'DISMISSED' | 'REJECTED';
     let verifiedByAdmin = true;
 
     if (action === 'verify') {
@@ -447,22 +448,30 @@ export const adminReviewCluster = onCall({ cors: true }, async (request) => {
       newStatus = 'MERGED';
     } else if (action === 'resolve') {
       newStatus = 'RESOLVING';
+    } else if (action === 'reject') {
+      newStatus = 'REJECTED';
+      verifiedByAdmin = false;
     } else {
       newStatus = 'DISMISSED';
       verifiedByAdmin = false;
     }
 
-    await clusterRef.update({
+    const updatePayload: Record<string, any> = {
       status: newStatus,
       verifiedByAdmin,
       updatedAt: now,
+      verifiedAt: now,
+      verifiedBy: adminName,
       ...(note ? { reviewNote: note } : {}),
-    });
+    };
+
+    await clusterRef.update(updatePayload);
 
     return {
       success: true,
       message: `Cluster ${clusterId} status updated to ${newStatus}.`,
       status: newStatus,
+      verifiedByAdmin,
     };
   } catch (err: any) {
     if (err instanceof HttpsError) throw err;

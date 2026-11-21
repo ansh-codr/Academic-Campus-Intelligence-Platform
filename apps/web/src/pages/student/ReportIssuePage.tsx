@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { CreateTicketSchema, CreateTicketInput } from '@solvesphere/shared';
+import { CreateTicketSchema, CreateTicketInput, AiAssistComplaintResponse, TicketCategory, TicketPriority } from '@solvesphere/shared';
 import { CampusService } from '@/services/campusService';
+import { CampusCareService } from '@/services/campusCareService';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input, Textarea, Select } from '@/components/ui/Input';
@@ -17,21 +18,32 @@ import {
   Info,
   ShieldCheck,
   ArrowRight,
+  Sparkles,
+  Wrench,
+  Check,
 } from 'lucide-react';
 
 export const ReportIssuePage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submissionSuccess, setSubmissionSuccess] = useState<any | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
 
+  // AI Assist States
+  const [isAiAssisting, setIsAiAssisting] = useState(false);
+  const [aiSuggestion, setAiSuggestion] = useState<AiAssistComplaintResponse | null>(null);
+  const [aiAssistError, setAiAssistError] = useState<string | null>(null);
+
   const {
     register,
     handleSubmit,
     formState: { errors },
     reset,
+    setValue,
+    watch,
   } = useForm<CreateTicketInput>({
     resolver: zodResolver(CreateTicketSchema),
     defaultValues: {
@@ -44,6 +56,61 @@ export const ReportIssuePage: React.FC = () => {
       description: '',
     },
   });
+
+  // Watch fields for AI assist
+  const currentTitle = watch('title');
+  const currentDescription = watch('description');
+  const currentBuilding = watch('building');
+  const currentFloor = watch('floor');
+  const currentRoom = watch('room');
+
+  // Handle prefill from Campus Care AI draft
+  useEffect(() => {
+    const prefill = (location.state as any)?.prefillDraft;
+    if (prefill) {
+      if (prefill.title) setValue('title', prefill.title);
+      if (prefill.description) setValue('description', prefill.description);
+      if (prefill.category) setValue('category', prefill.category);
+      if (prefill.building) setValue('building', prefill.building);
+      if (prefill.floor) setValue('floor', prefill.floor);
+      if (prefill.room) setValue('room', prefill.room);
+      if (prefill.priority) setValue('priority', prefill.priority);
+    }
+  }, [location.state, setValue]);
+
+  const handleAiAssist = async () => {
+    const rawText = (currentDescription || currentTitle || '').trim();
+    if (!rawText) {
+      setAiAssistError('Please type a brief title or description first to enable AI enhancement.');
+      return;
+    }
+
+    setIsAiAssisting(true);
+    setAiAssistError(null);
+    try {
+      const res = await CampusCareService.aiAssistComplaint({
+        rawInput: rawText,
+        building: currentBuilding || undefined,
+        floor: currentFloor || undefined,
+        room: currentRoom || undefined,
+      });
+      setAiSuggestion(res);
+    } catch (err: any) {
+      console.warn('AI Assist error:', err);
+      setAiAssistError(err.message || 'AI Enhancement failed. You can continue submitting manually.');
+    } finally {
+      setIsAiAssisting(false);
+    }
+  };
+
+  const handleApplyAiSuggestion = () => {
+    if (!aiSuggestion) return;
+    if (aiSuggestion.suggestedTitle) setValue('title', aiSuggestion.suggestedTitle);
+    if (aiSuggestion.enhancedDescription) setValue('description', aiSuggestion.enhancedDescription);
+    if (aiSuggestion.suggestedCategory) setValue('category', aiSuggestion.suggestedCategory as TicketCategory);
+    if (aiSuggestion.suggestedPriority) setValue('priority', aiSuggestion.suggestedPriority as TicketPriority);
+    setAiSuggestion(null);
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -230,15 +297,95 @@ export const ReportIssuePage: React.FC = () => {
             </div>
           </div>
 
-          {/* Detailed Description */}
-          <Textarea
-            label="Detailed Description"
-            rows={4}
-            placeholder="Describe what is failing, any safety concerns, and the best time for technicians to inspect..."
-            error={errors.description?.message}
-            helperText="Minimum 15 characters. Clear descriptions speed up technician dispatch."
-            {...register('description')}
-          />
+          {/* Detailed Description with AI Enhancement Header */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Detailed Description
+              </label>
+              <button
+                type="button"
+                onClick={handleAiAssist}
+                disabled={isAiAssisting}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold text-cyan-700 dark:text-cyan-300 bg-cyan-50 dark:bg-cyan-950/60 border border-cyan-300 dark:border-cyan-800 hover:bg-cyan-100 dark:hover:bg-cyan-900/60 transition-colors shadow-sm"
+              >
+                <Sparkles className={`w-3.5 h-3.5 text-cyan-500 ${isAiAssisting ? 'animate-spin' : 'animate-pulse'}`} />
+                <span>{isAiAssisting ? 'Enhancing with AI...' : 'Enhance with Campus Care AI'}</span>
+              </button>
+            </div>
+
+            <Textarea
+              rows={4}
+              placeholder="Describe what is failing, any safety concerns, and the best time for technicians to inspect..."
+              error={errors.description?.message}
+              helperText="Minimum 15 characters. Clear descriptions speed up technician dispatch."
+              {...register('description')}
+            />
+
+            {aiAssistError && (
+              <p className="text-xs text-rose-500 dark:text-rose-400 font-medium">
+                {aiAssistError}
+              </p>
+            )}
+
+            {/* AI Suggestion Preview Card */}
+            {aiSuggestion && (
+              <div className="p-4 rounded-2xl bg-cyan-50/80 dark:bg-cyan-950/40 border border-cyan-300 dark:border-cyan-800/80 space-y-3 animate-in zoom-in-95">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-cyan-700 dark:text-cyan-300 flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-cyan-500" />
+                    AI Enhancement Suggestion
+                  </span>
+                  <Badge variant="cyan" size="sm">
+                    {aiSuggestion.suggestedCategory}
+                  </Badge>
+                </div>
+
+                <div className="space-y-2 text-xs text-slate-700 dark:text-slate-200">
+                  <p>
+                    <strong className="text-slate-500 dark:text-slate-400">Suggested Title:</strong>{' '}
+                    <span className="font-semibold">{aiSuggestion.suggestedTitle}</span>
+                  </p>
+                  <p>
+                    <strong className="text-slate-500 dark:text-slate-400">Enhanced Description:</strong>{' '}
+                    <span>{aiSuggestion.enhancedDescription}</span>
+                  </p>
+                  <div className="flex flex-wrap gap-3 pt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                    <span>Target Dept: <strong className="text-slate-700 dark:text-slate-200">{aiSuggestion.suggestedDepartment}</strong></span>
+                    <span>Priority: <strong className="text-amber-500">{aiSuggestion.suggestedPriority}</strong></span>
+                  </div>
+
+                  {aiSuggestion.missingInfo && aiSuggestion.missingInfo.length > 0 && (
+                    <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-[11px] text-amber-700 dark:text-amber-300">
+                      <strong>Missing details to confirm:</strong> {aiSuggestion.missingInfo.join(', ')}
+                    </div>
+                  )}
+                </div>
+
+                <div className="pt-1 flex items-center justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setAiSuggestion(null)}
+                    className="text-xs"
+                  >
+                    Dismiss
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="sm"
+                    onClick={handleApplyAiSuggestion}
+                    className="text-xs bg-cyan-600 hover:bg-cyan-700 text-white font-semibold gap-1"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Apply AI Suggestions</span>
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Attachments Section */}
           <div className="p-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/30 space-y-3">

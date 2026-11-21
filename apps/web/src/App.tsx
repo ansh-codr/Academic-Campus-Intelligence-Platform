@@ -26,6 +26,7 @@ const StudyResourcesPage = React.lazy(() => import('@/pages/student/StudyResourc
 const StudyMateAiPage = React.lazy(() => import('@/pages/student/StudyMateAiPage').then((module) => ({ default: module.StudyMateAiPage })));
 const PracticeQuizzesPage = React.lazy(() => import('@/pages/student/PracticeQuizzesPage').then((module) => ({ default: module.PracticeQuizzesPage })));
 const CampusDashboardPage = React.lazy(() => import('@/pages/student/CampusDashboardPage').then((module) => ({ default: module.CampusDashboardPage })));
+const CampusCareAiPage = React.lazy(() => import('@/pages/student/CampusCareAiPage').then((module) => ({ default: module.CampusCareAiPage })));
 const ReportIssuePage = React.lazy(() => import('@/pages/student/ReportIssuePage').then((module) => ({ default: module.ReportIssuePage })));
 const MyTicketsPage = React.lazy(() => import('@/pages/student/MyTicketsPage').then((module) => ({ default: module.MyTicketsPage })));
 const SpeakFreelyPage = React.lazy(() => import('@/pages/student/SpeakFreelyPage').then((module) => ({ default: module.SpeakFreelyPage })));
@@ -166,6 +167,7 @@ export function App() {
                 <Route path="studymate" element={<StudyMateAiPage />} />
                 <Route path="practice" element={<PracticeQuizzesPage />} />
                 <Route path="campus" element={<CampusDashboardPage />} />
+                <Route path="campus-care" element={<CampusCareAiPage />} />
                 <Route path="report" element={<ReportIssuePage />} />
                 <Route path="tickets" element={<MyTicketsPage />} />
                 <Route path="speak-freely" element={<SpeakFreelyPage />} />
