@@ -17,6 +17,8 @@ import {
   Eye,
   PlusCircle,
   Radio,
+  RotateCcw,
+  Paperclip,
 } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 
@@ -26,6 +28,26 @@ export const MyTicketsPage: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [selectedTicket, setSelectedTicket] = useState<CampusTicket | null>(null);
   const [isSubscribed, setIsSubscribed] = useState(true);
+  const [reopenModalTicket, setReopenModalTicket] = useState<CampusTicket | null>(null);
+  const [reopenReason, setReopenReason] = useState('');
+  const [isReopening, setIsReopening] = useState(false);
+  const [reopenMessage, setReopenMessage] = useState<string | null>(null);
+
+  const handleReopenTicket = async () => {
+    if (!reopenModalTicket || reopenReason.trim().length < 5) return;
+    setIsReopening(true);
+    setReopenMessage(null);
+    try {
+      await CampusService.reopenTicket(reopenModalTicket.id, reopenReason);
+      setReopenMessage(`Ticket ${reopenModalTicket.referenceNumber} has been reopened successfully.`);
+      setReopenModalTicket(null);
+      setReopenReason('');
+    } catch (err: any) {
+      alert(`Error reopening ticket: ${err.message}`);
+    } finally {
+      setIsReopening(false);
+    }
+  };
 
   // Real-time Firestore subscription: updates automatically on changes
   useEffect(() => {
@@ -89,6 +111,13 @@ export const MyTicketsPage: React.FC = () => {
           </Button>
         </Link>
       </div>
+
+      {reopenMessage && (
+        <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2 animate-in fade-in">
+          <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+          <span>{reopenMessage}</span>
+        </div>
+      )}
 
       {/* Filter Tabs */}
       <div className="flex flex-wrap gap-2 p-1.5 bg-slate-100 dark:bg-slate-800/80 rounded-2xl text-xs">
@@ -190,7 +219,7 @@ export const MyTicketsPage: React.FC = () => {
                 </div>
 
                 {/* View Details Action */}
-                <div className="shrink-0 flex lg:flex-col justify-end">
+                <div className="shrink-0 flex lg:flex-col justify-end gap-2">
                   <Button
                     variant="outline"
                     size="sm"
@@ -198,8 +227,19 @@ export const MyTicketsPage: React.FC = () => {
                     className="w-full sm:w-auto text-xs"
                   >
                     <Eye className="w-3.5 h-3.5 mr-1" />
-                    View Lifecycle Timeline
+                    View Timeline
                   </Button>
+                  {(ticket.status === 'RESOLVED' || ticket.status === 'CLOSED') && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setReopenModalTicket(ticket)}
+                      className="w-full sm:w-auto text-xs text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-800 hover:bg-amber-50 dark:hover:bg-amber-950/40"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 mr-1" />
+                      Reopen Ticket
+                    </Button>
+                  )}
                 </div>
               </div>
             </Card>
@@ -298,13 +338,95 @@ export const MyTicketsPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="pt-2 flex justify-end">
+            {/* Attachments Display */}
+            {selectedTicket.attachmentUrls && selectedTicket.attachmentUrls.length > 0 && (
+              <div>
+                <h5 className="font-bold text-xs uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5">
+                  <Paperclip className="w-3.5 h-3.5" />
+                  Attached Photos / Files ({selectedTicket.attachmentUrls.length})
+                </h5>
+                <div className="flex flex-wrap gap-2">
+                  {selectedTicket.attachmentUrls.map((url, idx) => (
+                    <a
+                      key={idx}
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-brand-blue dark:text-cyan-400 hover:underline text-xs"
+                    >
+                      <Paperclip className="w-3.5 h-3.5" />
+                      Attachment #{idx + 1}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="pt-2 flex justify-between items-center">
+              {(selectedTicket.status === 'RESOLVED' || selectedTicket.status === 'CLOSED') ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const t = selectedTicket;
+                    setSelectedTicket(null);
+                    setReopenModalTicket(t);
+                  }}
+                  className="text-xs text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-800"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 mr-1" />
+                  Reopen This Ticket
+                </Button>
+              ) : <div />}
               <Button variant="outline" size="sm" onClick={() => setSelectedTicket(null)}>
                 Close Details
               </Button>
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* Reopen Ticket Modal */}
+      <Modal
+        isOpen={!!reopenModalTicket}
+        onClose={() => setReopenModalTicket(null)}
+        title={`Reopen Ticket: ${reopenModalTicket?.referenceNumber || ''}`}
+        description="Provide a justification why this issue requires renewed technician intervention."
+        maxWidth="md"
+      >
+        <div className="space-y-4 text-xs sm:text-sm">
+          <p className="text-slate-600 dark:text-slate-300">
+            Please explain why this issue is not fully resolved or if the recurring problem reappeared:
+          </p>
+          <textarea
+            value={reopenReason}
+            onChange={(e) => setReopenReason(e.target.value)}
+            placeholder="e.g. The leak resumed after 2 hours of heavy AC usage..."
+            rows={4}
+            className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-blue"
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setReopenModalTicket(null);
+                setReopenReason('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="gradient"
+              size="sm"
+              disabled={reopenReason.trim().length < 5 || isReopening}
+              isLoading={isReopening}
+              onClick={handleReopenTicket}
+            >
+              Submit Reopen Request
+            </Button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

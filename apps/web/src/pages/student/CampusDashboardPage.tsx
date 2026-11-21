@@ -24,15 +24,13 @@ export const CampusDashboardPage: React.FC = () => {
   const [clusters, setClusters] = useState<IssueCluster[]>([]);
 
   useEffect(() => {
-    async function load() {
-      const [tkts, cls] = await Promise.all([
-        CampusService.getTickets(),
-        CampusService.getClusters(),
-      ]);
-      setTickets(tkts);
-      setClusters(cls);
-    }
-    load();
+    const unsubTickets = CampusService.subscribeTickets(setTickets);
+    const unsubClusters = CampusService.subscribeClusters(setClusters);
+
+    return () => {
+      unsubTickets();
+      unsubClusters();
+    };
   }, []);
 
   const activeCount = tickets.filter(

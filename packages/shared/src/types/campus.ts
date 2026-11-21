@@ -27,6 +27,38 @@ export interface TicketEvent {
   timestamp: string;
 }
 
+export interface CampusDepartment {
+  id: string;
+  name: string;
+  code: string;
+  category: TicketCategory;
+  contactEmail: string;
+  headName: string;
+  activeTicketsCount: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type NotificationType =
+  | 'SUBMITTED'
+  | 'ASSIGNED'
+  | 'STATUS_CHANGED'
+  | 'RESOLVED'
+  | 'REOPENED';
+
+export interface CampusNotification {
+  id: string;
+  userId: string;
+  ticketId: string;
+  referenceNumber: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  read: boolean;
+  createdAt: string;
+}
+
 export interface CampusTicket {
   id: string;
   referenceNumber: string;
@@ -39,6 +71,8 @@ export interface CampusTicket {
   priority: TicketPriority;
   status: TicketStatus;
   assignedDepartment: string;
+  assignedDepartmentId?: string;
+  attachmentUrls?: string[];
   submittedById?: string;
   submittedBy: string;
   submittedAt: string;
@@ -52,12 +86,15 @@ export interface IssueCluster {
   title: string;
   category: TicketCategory;
   affectedArea: string;
+  building?: string;
+  room?: string;
   ticketCount: number;
   ticketIds: string[];
   confidenceScore: number;
-  status: 'ACTIVE_INCIDENT' | 'RESOLVING' | 'MERGED';
+  status: 'ACTIVE_INCIDENT' | 'RESOLVING' | 'MERGED' | 'DISMISSED';
   suggestedAction: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface CampusClub {
@@ -71,6 +108,10 @@ export interface CampusClub {
   bannerGradient: string;
   tags: string[];
   recentActivities: string[];
+  isArchived?: boolean;
+  contactEmail?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface AnonymousReport {

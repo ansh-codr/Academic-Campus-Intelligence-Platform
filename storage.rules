@@ -19,13 +19,21 @@ service firebase.storage {
       allow read, write: if false;
     }
 
-    // Ticket Complaint Attachments
+    // Ticket Complaint Attachments (User scoped)
     match /attachments/{userId}/{ticketId}/{fileName} {
       // Must be authenticated, file owner or admin
       allow read: if isOwner(userId) || isAdmin();
       
       // Upload rules: owner only, size < 10MB, restricted image/pdf MIME types
       allow write: if isOwner(userId)
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)|application/pdf');
+    }
+
+    // Direct Complaint Attachments (Ticket scoped)
+    match /complaints/{ticketId}/{fileName} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated()
         && request.resource.size < 10 * 1024 * 1024
         && request.resource.contentType.matches('image/(jpeg|png|webp)|application/pdf');
     }

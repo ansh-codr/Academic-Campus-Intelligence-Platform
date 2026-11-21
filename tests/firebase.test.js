@@ -36,6 +36,12 @@ import {
   connectFunctionsEmulator as connectClientFunctionsEmulator,
   httpsCallable,
 } from 'firebase/functions';
+import {
+  getStorage as getClientStorage,
+  connectStorageEmulator as connectClientStorageEmulator,
+  ref as storageRef,
+  uploadBytes,
+} from 'firebase/storage';
 
 // Configure emulator endpoints
 process.env.FIREBASE_AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099';
@@ -346,7 +352,7 @@ async function runTests() {
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 9] Topic Status Pacing Lifecycle Updates...`);
   const topicRef = db.collection('syllabusTopics').doc('top-ai-4');
-  
+
   // Transition UPCOMING -> ONGOING
   await topicRef.update({
     status: 'ONGOING',
@@ -530,7 +536,11 @@ async function runTests() {
   // Initialize Client SDKs to simulate real browser clients for security tests
   // --------------------------------------------------------------------------
   const clientApp = initClientApp(
-    { apiKey: 'fake-api-key', projectId: testProjectId },
+    {
+      apiKey: 'fake-api-key',
+      projectId: testProjectId,
+      storageBucket: `${testProjectId}.appspot.com`,
+    },
     `client-${Date.now()}`
   );
   const clientAuth = getClientAuth(clientApp);
@@ -893,6 +903,426 @@ async function runTests() {
   console.log(`✓ Test 25 Passed: Production environment strictly prohibits mock responses regardless of environment variables.`);
 
   // --------------------------------------------------------------------------
+  // TEST 26: Complaint Creation with Attachments & Notification via Callable
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 26] Creating Complaint with Attachments & In-App Notification...`);
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  const createComplaintCallable = httpsCallable(clientFunctions, 'createComplaint');
+  const complaintPayload = {
+    title: 'Library 2nd Floor Split AC Unit Leak',
+    category: 'AC_HVAC',
+    building: 'Central Library',
+    floor: '2nd Floor',
+    room: 'Silent Zone 202',
+    description: 'Severe water leak above desks in silent study room.',
+    priority: 'HIGH',
+    attachmentUrls: ['https://storage.googleapis.com/test-bucket/leak1.jpg'],
+  };
+  const compRes = await createComplaintCallable(complaintPayload);
+  assert.ok(compRes.data?.success, 'createComplaint must return success: true');
+  const createdCompData = compRes.data?.data;
+  assert.ok(createdCompData?.id, 'Complaint must have generated ID');
+  assert.match(createdCompData?.referenceNumber, /^SS-2026-\d{4}$/, 'Complaint must have atomic SS-2026-XXXX sequence');
+  assert.strictEqual(createdCompData?.status, 'SUBMITTED', 'Initial status must be SUBMITTED');
+  assert.strictEqual(createdCompData?.assignedDepartment, 'HVAC & Climate Control', 'Should route to HVAC department');
+  assert.deepStrictEqual(createdCompData?.attachmentUrls, ['https://storage.googleapis.com/test-bucket/leak1.jpg']);
+
+  // Verify in Firestore
+  const compDocSnap = await db.collection('complaints').doc(createdCompData.id).get();
+  assert.ok(compDocSnap.exists, 'Complaint document must exist in Firestore');
+  assert.strictEqual(compDocSnap.data().submittedById, testStudentUid);
+
+  // Verify In-App Notification created in Firestore
+  const notifsSnap = await db.collection('notifications')
+    .where('userId', '==', testStudentUid)
+    .where('ticketId', '==', createdCompData.id)
+    .get();
+  assert.ok(!notifsSnap.empty, 'In-App notification must be generated for submitted complaint');
+  const notifData = notifsSnap.docs[0].data();
+  assert.strictEqual(notifData.type, 'SUBMITTED');
+  assert.strictEqual(notifData.read, false);
+  console.log(`✓ Test 26 Passed: Complaint created with atomic ref ${createdCompData.referenceNumber}, attachment, and in-app notification.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 27: Deterministic Duplicate Issue Grouping
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 27] Verifying Deterministic Duplicate Issue Grouping...`);
+  // Submit a second complaint with identical category and location within 48h
+  const duplicateCompPayload = {
+    title: 'AC Drip on Silent Zone 202 Carpet',
+    category: 'AC_HVAC',
+    building: 'Central Library',
+    floor: '2nd Floor',
+    room: 'Silent Zone 202',
+    description: 'Carpet soaked from AC leakage in silent room.',
+    priority: 'MEDIUM',
+  };
+  const compRes2 = await createComplaintCallable(duplicateCompPayload);
+  assert.ok(compRes2.data?.success);
+  const comp2Data = compRes2.data?.data;
+  assert.ok(comp2Data?.clusterId, 'Duplicate ticket must be assigned a clusterId');
+
+  // Verify cluster in Firestore
+  const clusterSnap = await db.collection('issueClusters').doc(comp2Data.clusterId).get();
+  assert.ok(clusterSnap.exists, 'Issue cluster document must exist in Firestore');
+  const clusterData = clusterSnap.data();
+  assert.strictEqual(clusterData.category, 'AC_HVAC');
+  assert.strictEqual(clusterData.building, 'Central Library');
+  assert.strictEqual(clusterData.room, 'Silent Zone 202');
+  assert.strictEqual(clusterData.ticketCount, 2, 'Cluster ticketCount must be 2');
+  assert.ok(clusterData.ticketIds.includes(createdCompData.id), 'Cluster must include first ticket ID');
+  assert.ok(clusterData.ticketIds.includes(comp2Data.id), 'Cluster must include second ticket ID');
+  assert.strictEqual(clusterData.status, 'ACTIVE_INCIDENT');
+
+  // Verify first ticket was also updated with clusterId
+  const firstTicketRefetched = await db.collection('complaints').doc(createdCompData.id).get();
+  assert.strictEqual(firstTicketRefetched.data().clusterId, comp2Data.clusterId);
+  console.log(`✓ Test 27 Passed: Deterministic grouping linked 2 complaints into cluster ${comp2Data.clusterId}.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 28: Ticket Status Transitions & Department Assignment
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 28] Testing Admin Status Transitions & Department Assignment...`);
+  // Sign in as Admin in client SDK
+  await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+  const updateStatusCallable = httpsCallable(clientFunctions, 'updateTicketStatus');
+  const assignDeptCallable = httpsCallable(clientFunctions, 'assignTicketDepartment');
+
+  // Valid transition: SUBMITTED -> UNDER_REVIEW
+  const statusRes1 = await updateStatusCallable({
+    ticketId: createdCompData.id,
+    newStatus: 'UNDER_REVIEW',
+    note: 'Under triage review by Admin.',
+  });
+  assert.ok(statusRes1.data?.success);
+
+  // Valid transition: UNDER_REVIEW -> ASSIGNED
+  const statusRes2 = await updateStatusCallable({
+    ticketId: createdCompData.id,
+    newStatus: 'ASSIGNED',
+    note: 'Assigned to central HVAC unit.',
+  });
+  assert.ok(statusRes2.data?.success);
+
+  // Assign department callable
+  const assignRes = await assignDeptCallable({
+    ticketId: createdCompData.id,
+    departmentName: 'HVAC & Climate Control',
+    note: 'Dispatching technician R. Gupta.',
+  });
+  assert.ok(assignRes.data?.success);
+
+  // Valid transition: ASSIGNED -> IN_PROGRESS
+  await updateStatusCallable({
+    ticketId: createdCompData.id,
+    newStatus: 'IN_PROGRESS',
+    note: 'Technician on site inspecting split AC.',
+  });
+
+  // Valid transition: IN_PROGRESS -> RESOLVED
+  await updateStatusCallable({
+    ticketId: createdCompData.id,
+    newStatus: 'RESOLVED',
+    note: 'Drain pan cleared, relay replaced. Resolved.',
+  });
+
+  // Verify invalid transition: RESOLVED -> UNDER_REVIEW (Not allowed by lifecycle rules)
+  await assert.rejects(
+    async () => {
+      await updateStatusCallable({
+        ticketId: createdCompData.id,
+        newStatus: 'UNDER_REVIEW',
+      });
+    },
+    (err) => err.code?.includes('failed-precondition') || /cannot transition/i.test(err.message),
+    'Transition from RESOLVED to UNDER_REVIEW must be rejected with failed-precondition'
+  );
+
+  const resolvedDocSnap = await db.collection('complaints').doc(createdCompData.id).get();
+  assert.strictEqual(resolvedDocSnap.data().status, 'RESOLVED');
+
+  // Verify RESOLVED in-app notification sent to student
+  const resolvedNotifSnap = await db.collection('notifications')
+    .where('userId', '==', testStudentUid)
+    .where('type', '==', 'RESOLVED')
+    .get();
+  assert.ok(!resolvedNotifSnap.empty, 'RESOLVED notification must be dispatched to student');
+  console.log(`✓ Test 28 Passed: Status lifecycle transitions and department assignment verified.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 29: Student Reopen Ticket Workflow
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 29] Verifying Ticket Reopening Workflow...`);
+  // Sign in back as student
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  const reopenCallable = httpsCallable(clientFunctions, 'reopenTicket');
+
+  // Student reopens their own RESOLVED ticket
+  const reopenRes = await reopenCallable({
+    ticketId: createdCompData.id,
+    reason: 'Water started dripping again after heavy morning classes.',
+  });
+  assert.ok(reopenRes.data?.success);
+  assert.strictEqual(reopenRes.data?.data?.status, 'REOPENED');
+
+  // Verify ticket status in Firestore
+  const reopenedSnap = await db.collection('complaints').doc(createdCompData.id).get();
+  assert.strictEqual(reopenedSnap.data().status, 'REOPENED');
+
+  // Verify timeline event in subcollection
+  const reopenedTimelineSnap = await db.collection('complaints').doc(createdCompData.id).collection('timeline')
+    .where('status', '==', 'REOPENED')
+    .get();
+  assert.strictEqual(reopenedTimelineSnap.docs.length, 1);
+  assert.ok(reopenedTimelineSnap.docs[0].data().note.includes('Water started dripping again'));
+
+  // Negative test: attempt to reopen ticket when not in RESOLVED or CLOSED status
+  await assert.rejects(
+    async () => {
+      await reopenCallable({
+        ticketId: createdCompData.id,
+        reason: 'Attempting to reopen an already reopened ticket',
+      });
+    },
+    (err) => err.code?.includes('failed-precondition') || /only resolved or closed/i.test(err.message),
+    'Reopening non-resolved ticket must be rejected'
+  );
+
+  // Negative test: student 2 cannot reopen student 1's ticket
+  const student2Email = `student2.test.${Date.now()}@campus.edu`;
+  const student2Record = await auth.createUser({
+    email: student2Email,
+    password: 'Password@2026',
+    displayName: 'Priya Patel',
+  });
+  await db.collection('users').doc(student2Record.uid).set({
+    id: student2Record.uid,
+    email: student2Email,
+    fullName: 'Priya Patel',
+    role: 'STUDENT',
+    createdAt: new Date().toISOString(),
+  });
+
+  await signInWithEmailAndPassword(clientAuth, student2Email, 'Password@2026');
+  await assert.rejects(
+    async () => {
+      await reopenCallable({
+        ticketId: createdCompData.id,
+        reason: 'Student 2 trying to reopen Student 1 ticket',
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission/i.test(err.message),
+    'Student 2 cannot reopen Student 1 ticket'
+  );
+  console.log(`✓ Test 29 Passed: Ticket reopening workflow, timeline event, and authorization verified.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 30: Notifications Isolation & Security Rules
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 30] Verifying In-App Notifications Isolation & Rules...`);
+  // Student 2 attempts to read Student 1's notification -> rejected
+  const notifId = notifsSnap.docs[0].id;
+  await assert.rejects(
+    async () => {
+      await getDoc(doc(clientDb, 'notifications', notifId));
+    },
+    /permission-denied/i,
+    'Student 2 must not be able to read Student 1 notification'
+  );
+
+  // Switch back to Student 1
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  // Student 1 reads their own notification -> allowed
+  const readNotifSnap = await getDoc(doc(clientDb, 'notifications', notifId));
+  assert.ok(readNotifSnap.exists);
+
+  // Student 1 marks notification as read -> allowed
+  await updateDoc(doc(clientDb, 'notifications', notifId), {
+    read: true,
+  });
+  const updatedNotif = await getDoc(doc(clientDb, 'notifications', notifId));
+  assert.strictEqual(updatedNotif.data().read, true);
+
+  // Student 1 attempts to forge new notification directly -> rejected (written strictly by Admin SDK/Cloud Functions)
+  await assert.rejects(
+    async () => {
+      await setDoc(doc(clientDb, 'notifications', 'forged-notif-1'), {
+        userId: testStudentUid,
+        title: 'Forged Alert',
+        message: 'Forged notification payload',
+        read: false,
+      });
+    },
+    /permission-denied/i,
+    'Direct client notification creation must be rejected'
+  );
+  console.log(`✓ Test 30 Passed: Notification read isolation, update of read status, and forge rejection verified.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 31: Campus Department Management & Admin Authorization
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 31] Verifying Department Management & Admin Authorization...`);
+  // Switch to Admin
+  await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+  const manageDeptCallable = httpsCallable(clientFunctions, 'adminManageDepartment');
+
+  // Admin creates department
+  const createDeptRes = await manageDeptCallable({
+    action: 'create',
+    data: {
+      name: 'Robotics & Automation Lab Maintenance',
+      code: 'DEPT-ROBOT',
+      category: 'GENERAL_INFRASTRUCTURE',
+      headName: 'Dr. Rajesh Nair',
+      contactEmail: 'robotics-maintenance@campus.edu',
+    },
+  });
+  assert.ok(createDeptRes.data?.success);
+  const createdDept = createDeptRes.data?.department;
+  assert.ok(createdDept?.id);
+
+  // Admin toggles active status
+  const toggleRes = await manageDeptCallable({
+    action: 'toggleActive',
+    departmentId: createdDept.id,
+  });
+  assert.ok(toggleRes.data?.success);
+  assert.strictEqual(toggleRes.data?.isActive, false);
+
+  // Switch to Student -> direct write to departments collection is rejected
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  await assert.rejects(
+    async () => {
+      await setDoc(doc(clientDb, 'departments', 'forged-dept'), {
+        name: 'Hacked Department',
+        code: 'HACK',
+      });
+    },
+    /permission-denied/i,
+    'Student direct write to departments collection must be rejected'
+  );
+  console.log(`✓ Test 31 Passed: Department CRUD by Admin and rejection of unauthorized client writes verified.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 32: Campus Clubs Management & Access Control
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 32] Verifying Campus Clubs Management & Rules...`);
+  // Admin creates club
+  await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+  const manageClubCallable = httpsCallable(clientFunctions, 'adminManageClub');
+
+  const createClubRes = await manageClubCallable({
+    action: 'create',
+    data: {
+      name: 'Autonomous Drone Society',
+      category: 'TECHNOLOGY',
+      leadName: 'Rohan Mehta',
+      description: 'Building autonomous quadcopters and computer vision navigation.',
+      memberCount: 45,
+      meetingSchedule: 'Wednesdays at 4 PM',
+      tags: ['Drones', 'ROS', 'PX4'],
+    },
+  });
+  assert.ok(createClubRes.data?.success);
+  const createdClub = createClubRes.data?.club;
+  assert.ok(createdClub?.id);
+
+  // Admin archives club
+  const archiveClubRes = await manageClubCallable({
+    action: 'archive',
+    clubId: createdClub.id,
+  });
+  assert.ok(archiveClubRes.data?.success);
+
+  // Student can read clubs
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  const readClubDoc = await getDoc(doc(clientDb, 'campusClubs', createdClub.id));
+  assert.ok(readClubDoc.exists);
+  assert.strictEqual(readClubDoc.data().isArchived, true);
+
+  // Student cannot write or delete clubs directly
+  await assert.rejects(
+    async () => {
+      await updateDoc(doc(clientDb, 'campusClubs', createdClub.id), {
+        name: 'Hacked Club Name',
+      });
+    },
+    /permission-denied/i,
+    'Student cannot update campusClubs directly'
+  );
+  console.log(`✓ Test 32 Passed: Campus Club administration and read-only student access verified.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 33: Cloud Storage Attachment Security Rules
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 33] Verifying Cloud Storage Attachment Security Rules...`);
+  const clientStorage = getClientStorage(clientApp, `gs://${testProjectId}.appspot.com`);
+  connectClientStorageEmulator(clientStorage, '127.0.0.1', 9199);
+
+  // Student 1 uploads valid image to their own attachment path -> allowed
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  const validAttachmentRef = storageRef(clientStorage, `attachments/${testStudentUid}/tkt-sample/photo.png`);
+  const sampleImageData = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]); // PNG magic bytes
+  await uploadBytes(validAttachmentRef, sampleImageData, { contentType: 'image/png' });
+
+  // Negative test: Student 1 attempts to upload disallowed executable / script file
+  const invalidAttachmentRef = storageRef(clientStorage, `attachments/${testStudentUid}/tkt-sample/script.sh`);
+  await assert.rejects(
+    async () => {
+      await uploadBytes(invalidAttachmentRef, new Uint8Array([101, 99, 104, 111]), { contentType: 'text/x-shellscript' });
+    },
+    /unauthorized|permission-denied|storage/i,
+    'Uploading disallowed MIME type must be rejected by Storage rules'
+  );
+
+  // Negative test: Student 2 attempts to upload to Student 1's path
+  await signInWithEmailAndPassword(clientAuth, student2Email, 'Password@2026');
+  const forbiddenUploadRef = storageRef(clientStorage, `attachments/${testStudentUid}/tkt-sample/hacked.png`);
+  await assert.rejects(
+    async () => {
+      await uploadBytes(forbiddenUploadRef, sampleImageData, { contentType: 'image/png' });
+    },
+    /unauthorized|permission-denied|storage/i,
+    'Student 2 cannot upload to Student 1 attachment path'
+  );
+  console.log(`✓ Test 33 Passed: Storage rules enforce owner upload, MIME-type checks, and tenant isolation.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 34: Speak Freely Sensitive Report Submission & Access Control
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 34] Verifying Speak Freely Submission & Strict Access Control...`);
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  const anonReportId = `anon-test-${Date.now()}`;
+  const anonDocRef = doc(clientDb, 'anonymousReports', anonReportId);
+
+  // Student can create anonymous report
+  await setDoc(anonDocRef, {
+    id: anonReportId,
+    trackingCode: 'ANON-XYZ123',
+    category: 'Student Welfare & Hostel Concerns',
+    description: 'Hostel 3 hot water geyser has been non-functional for 4 days.',
+    submittedAt: new Date().toISOString(),
+    status: 'RECEIVED',
+    privacyLevel: 'ANONYMOUS_UNVERIFIED_DEMO',
+  });
+
+  // Student CANNOT read anonymousReports collection (strict privacy - only admin can inspect)
+  await assert.rejects(
+    async () => {
+      await getDoc(anonDocRef);
+    },
+    /permission-denied/i,
+    'Student must not be allowed to read anonymousReports'
+  );
+
+  // Admin can read anonymousReports
+  await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+  const adminReadAnonSnap = await getDoc(anonDocRef);
+  assert.ok(adminReadAnonSnap.exists, 'Admin must be able to read anonymous report');
+  assert.strictEqual(adminReadAnonSnap.data().trackingCode, 'ANON-XYZ123');
+  console.log(`✓ Test 34 Passed: Speak Freely submission created with privacyLevel demo, read blocked for students, accessible to admin.`);
+
+  // --------------------------------------------------------------------------
   // TEST 19: Security Scan - Zero API Keys in Client Bundles
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 19] Verifying Zero Sensitive Keys or Secrets in Client Assets...`);
@@ -913,7 +1343,7 @@ async function runTests() {
   console.log(`✓ Test 19 Passed: Client distribution verified free of exposed API keys.`);
 
   console.log(`\n======================================================`);
-  console.log(`  ALL 27 INTEGRATION, AI & SECURITY TESTS PASSED!`);
+  console.log(`  ALL 34 INTEGRATION, AI & SECURITY TESTS PASSED!`);
   console.log(`======================================================\n`);
   process.exit(0);
 }
