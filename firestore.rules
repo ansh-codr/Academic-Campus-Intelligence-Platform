@@ -87,12 +87,25 @@ service cloud.firestore {
     match /quizzes/{quizId} {
       allow read: if isAuthenticated();
       allow write: if isAdmin();
+
+      // Protected Question Bank (prevents pre-submission answer leakage)
+      match /questions/{questionId} {
+        allow read, write: if isAdmin();
+      }
     }
 
     // Quiz Attempts
     match /quizAttempts/{attemptId} {
-      allow read, create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
       allow update, delete: if isAdmin();
+    }
+
+    // Student Study Progress (Personal Topic Checklist)
+    match /studentStudyProgress/{progressId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create, update: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
     }
 
     // Enrollments

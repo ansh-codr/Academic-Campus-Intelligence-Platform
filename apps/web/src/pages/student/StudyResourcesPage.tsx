@@ -18,37 +18,48 @@ import {
   BookOpen,
   Filter,
   Sparkles,
-  Info,
+  ExternalLink,
+  ShieldCheck,
 } from 'lucide-react';
 
 export const StudyResourcesPage: React.FC = () => {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const initialSubject = searchParams.get('subjectId') || 'ALL';
+  const initialTopic = searchParams.get('topicId') || '';
 
   const [subjects, setSubjects] = useState<SubjectSummary[]>([]);
   const [resources, setResources] = useState<StudyResource[]>([]);
   const [selectedSubject, setSelectedSubject] = useState<string>(initialSubject);
   const [selectedScope, setSelectedScope] = useState<string>('ALL');
+  const [selectedType, setSelectedType] = useState<string>('ALL');
   const [onlyFacultyApproved, setOnlyFacultyApproved] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [previewResource, setPreviewResource] = useState<StudyResource | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
-      const [subjs, resList] = await Promise.all([
-        AcademicService.getSubjects(),
-        AcademicService.getResources({
-          subjectId: selectedSubject,
-          scope: selectedScope,
-        }),
-      ]);
-      setSubjects(subjs);
-      setResources(resList);
+      setIsLoading(true);
+      try {
+        const [subjs, resList] = await Promise.all([
+          AcademicService.getSubjects(),
+          AcademicService.getResources({
+            subjectId: selectedSubject,
+            scope: selectedScope,
+            topicId: initialTopic || undefined,
+          }),
+        ]);
+        setSubjects(subjs);
+        setResources(resList);
+      } finally {
+        setIsLoading(false);
+      }
     }
     load();
-  }, [selectedSubject, selectedScope]);
+  }, [selectedSubject, selectedScope, initialTopic]);
 
   const filteredResources = resources.filter((res) => {
+    if (selectedType !== 'ALL' && res.type !== selectedType) return false;
     if (onlyFacultyApproved && !res.facultyApproved) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -119,18 +130,38 @@ export const StudyResourcesPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Faculty Checkbox */}
-        <div className="flex items-center gap-2 pt-1 text-xs">
-          <input
-            type="checkbox"
-            id="faculty-approved"
-            checked={onlyFacultyApproved}
-            onChange={(e) => setOnlyFacultyApproved(e.target.checked)}
-            className="rounded text-brand-blue focus:ring-brand-blue"
-          />
-          <label htmlFor="faculty-approved" className="font-semibold text-slate-700 dark:text-slate-300 cursor-pointer">
-            Show only faculty-approved official course resources
-          </label>
+        {/* Type & Faculty Checkbox Row */}
+        <div className="flex flex-wrap items-center justify-between gap-4 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="font-semibold text-slate-500 uppercase">Type:</span>
+            {['ALL', 'PDF', 'SLIDES', 'NOTE', 'PRACTICE_SHEET', 'VIDEO'].map((type) => (
+              <button
+                key={type}
+                onClick={() => setSelectedType(type)}
+                className={`px-2.5 py-1 rounded-lg font-semibold transition-all ${
+                  selectedType === type
+                    ? 'bg-brand-blue text-white shadow-sm'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                }`}
+              >
+                {type.replace('_', ' ')}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="faculty-approved"
+              checked={onlyFacultyApproved}
+              onChange={(e) => setOnlyFacultyApproved(e.target.checked)}
+              className="rounded text-brand-blue focus:ring-brand-blue"
+            />
+            <label htmlFor="faculty-approved" className="font-semibold text-slate-700 dark:text-slate-300 cursor-pointer flex items-center gap-1">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
+              Show only faculty-approved official course resources
+            </label>
+          </div>
         </div>
       </Card>
 
@@ -147,6 +178,7 @@ export const StudyResourcesPage: React.FC = () => {
               onClick={() => {
                 setSelectedSubject('ALL');
                 setSelectedScope('ALL');
+                setSelectedType('ALL');
                 setOnlyFacultyApproved(false);
                 setSearchQuery('');
               }}
@@ -157,113 +189,130 @@ export const StudyResourcesPage: React.FC = () => {
         />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredResources.map((resource) => (
-            <Card key={resource.id} hoverEffect className="p-5 flex flex-col justify-between space-y-4">
+          {filteredResources.map((res) => (
+            <Card
+              key={res.id}
+              hoverEffect
+              className="p-6 flex flex-col justify-between space-y-4"
+            >
               <div className="space-y-3">
                 <div className="flex items-start justify-between gap-2">
                   <Badge
-                    variant={resource.scope === 'WITHIN_SYLLABUS' ? 'green' : 'cyan'}
+                    variant={
+                      res.scope === 'WITHIN_SYLLABUS' ? 'blue' : 'amber'
+                    }
                     size="sm"
                   >
-                    {resource.scope === 'WITHIN_SYLLABUS' ? 'Within Syllabus' : 'Outside Syllabus'}
+                    {res.scope === 'WITHIN_SYLLABUS'
+                      ? 'Within Syllabus'
+                      : 'Outside Syllabus'}
                   </Badge>
-                  <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
-                    {resource.type}
+                  <span className="text-[11px] font-mono font-bold text-slate-400">
+                    {res.type}
                   </span>
                 </div>
 
                 <h3 className="text-base font-bold text-slate-900 dark:text-white leading-snug">
-                  {resource.title}
+                  {res.title}
                 </h3>
-                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                  {resource.description}
+                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed line-clamp-3">
+                  {res.description}
                 </p>
 
-                <div className="space-y-1.5 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
-                  {resource.facultyApproved && (
-                    <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-semibold">
-                      <CheckCircle className="w-3.5 h-3.5" />
-                      <span>Approved by {resource.authorFaculty}</span>
+                <div className="pt-2 text-xs space-y-1">
+                  {res.facultyApproved && (
+                    <div className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-semibold text-[11px]">
+                      <CheckCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span>Verified: {res.authorFaculty || 'Faculty Coordinator'}</span>
                     </div>
                   )}
-                  <div className="text-[11px] text-slate-400">
-                    Published: {resource.createdAt} &bull; {resource.downloadCount} cohort downloads
-                  </div>
+                  {res.downloadCount !== undefined && (
+                    <span className="text-[11px] text-slate-400">
+                      {res.downloadCount} student views
+                    </span>
+                  )}
                 </div>
               </div>
 
-              {/* View / Download Simulation */}
-              <div className="pt-2">
+              {/* Action Buttons */}
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex gap-2">
                 <Button
-                  variant="secondary"
+                  variant="outline"
                   size="sm"
-                  className="w-full text-xs"
-                  onClick={() => setPreviewResource(resource)}
+                  className="flex-1 text-xs"
+                  onClick={() => setPreviewResource(res)}
                 >
                   <Eye className="w-3.5 h-3.5 mr-1" />
-                  Inspect Document Preview
+                  Preview
                 </Button>
+                {res.fileUrl && (
+                  <a
+                    href={res.fileUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex-1"
+                  >
+                    <Button variant="secondary" size="sm" className="w-full text-xs">
+                      <Download className="w-3.5 h-3.5 mr-1" />
+                      Open
+                    </Button>
+                  </a>
+                )}
               </div>
             </Card>
           ))}
         </div>
       )}
 
-      {/* Resource Inspection Modal with explicit Phase 1 disclaimer */}
-      <Modal
-        isOpen={!!previewResource}
-        onClose={() => setPreviewResource(null)}
-        title={previewResource?.title || 'Resource Details'}
-        description={`Format: ${previewResource?.type} • Curated for first-year engineering syllabus`}
-      >
-        <div className="space-y-4 text-xs sm:text-sm text-slate-600 dark:text-slate-300">
-          <div className="p-3.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 text-xs text-brand-blue dark:text-blue-300 flex items-start gap-2">
-            <Info className="w-4 h-4 shrink-0 mt-0.5" />
-            <div>
-              <strong>Phase 1 Full-Stack Notice:</strong> This resource preview displays verified curriculum metadata. Cloud document storage (S3/GCS bucket download endpoints) will be wired in Phase 2.
+      {/* Resource Detail & Preview Modal */}
+      {previewResource && (
+        <Modal
+          isOpen={!!previewResource}
+          onClose={() => setPreviewResource(null)}
+          title={previewResource.title}
+          description={`${previewResource.type} Resource Preview`}
+        >
+          <div className="space-y-5 text-xs sm:text-sm">
+            <div className="flex flex-wrap gap-2">
+              <Badge variant={previewResource.scope === 'WITHIN_SYLLABUS' ? 'blue' : 'amber'} size="sm">
+                {previewResource.scope.replace('_', ' ')}
+              </Badge>
+              <Badge variant={previewResource.facultyApproved ? 'green' : 'slate'} size="sm">
+                {previewResource.facultyApproved ? 'Faculty Approved' : 'Community Curated'}
+              </Badge>
+              <Badge variant="blue" size="sm">
+                {previewResource.type}
+              </Badge>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
+              <h4 className="font-bold text-slate-900 dark:text-white">Document Abstract &amp; Content Overview</h4>
+              <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                {previewResource.description}
+              </p>
+              {previewResource.authorFaculty && (
+                <p className="text-xs text-slate-500 pt-2 border-t border-slate-200 dark:border-slate-800">
+                  Curated &amp; Reviewed by: <strong>{previewResource.authorFaculty}</strong>
+                </p>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 pt-2">
+              <Button variant="outline" size="sm" onClick={() => setPreviewResource(null)}>
+                Close
+              </Button>
+              {previewResource.fileUrl && (
+                <a href={previewResource.fileUrl} target="_blank" rel="noreferrer">
+                  <Button variant="gradient" size="sm">
+                    <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
+                    Open Full Resource
+                  </Button>
+                </a>
+              )}
             </div>
           </div>
-
-          <div>
-            <h5 className="font-bold text-slate-900 dark:text-white text-xs uppercase tracking-wider mb-1">
-              Curriculum Description
-            </h5>
-            <p>{previewResource?.description}</p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 pt-2 text-xs">
-            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-              <span className="text-slate-400 block font-semibold">FACULTY REVIEW</span>
-              <span className="font-bold text-slate-900 dark:text-white mt-0.5 block">
-                {previewResource?.authorFaculty || 'Academic Committee'}
-              </span>
-            </div>
-            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-              <span className="text-slate-400 block font-semibold">SYLLABUS STATUS</span>
-              <span className="font-bold text-slate-900 dark:text-white mt-0.5 block">
-                {previewResource?.scope.replace('_', ' ')}
-              </span>
-            </div>
-          </div>
-
-          <div className="pt-4 flex justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={() => setPreviewResource(null)}>
-              Close
-            </Button>
-            <Button
-              variant="gradient"
-              size="sm"
-              onClick={() => {
-                alert(`[Demo Mode] Simulated download initiated for "${previewResource?.title}".`);
-                setPreviewResource(null);
-              }}
-            >
-              <Download className="w-3.5 h-3.5 mr-1" />
-              Download Offline Copy (Demo)
-            </Button>
-          </div>
-        </div>
-      </Modal>
+        </Modal>
+      )}
     </div>
   );
 };
