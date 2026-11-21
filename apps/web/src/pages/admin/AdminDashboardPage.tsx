@@ -72,7 +72,7 @@ export const AdminDashboardPage: React.FC = () => {
             <Users className="w-4 h-4 text-blue-400" />
           </div>
           <p className="text-3xl font-extrabold text-white">
-            {data?.metrics.totalStudents.toLocaleString() || '1,420'}
+            {data?.metrics.totalStudents.toLocaleString() ?? '—'}
           </p>
           <p className="text-xs text-slate-400">First-year engineering batch</p>
         </Card>
@@ -83,10 +83,10 @@ export const AdminDashboardPage: React.FC = () => {
             <AlertTriangle className="w-4 h-4 text-rose-400" />
           </div>
           <p className="text-3xl font-extrabold text-rose-400">
-            {data?.metrics.openComplaints || 28}
+            {data?.metrics.openComplaints ?? '—'}
           </p>
           <p className="text-xs text-slate-400">
-            {data?.metrics.pendingApprovals || 9} awaiting triage review
+            {data?.metrics.pendingApprovals ?? '—'} awaiting triage review
           </p>
         </Card>
 
@@ -96,10 +96,10 @@ export const AdminDashboardPage: React.FC = () => {
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
           </div>
           <p className="text-3xl font-extrabold text-emerald-400">
-            {data?.metrics.resolutionRate || 93.2}%
+            {data?.metrics.resolutionRate ?? '—'}%
           </p>
           <p className="text-xs text-slate-400">
-            {data?.metrics.resolvedComplaints || 384} total issues solved
+            {data?.metrics.resolvedComplaints ?? '—'} total issues solved
           </p>
         </Card>
 
@@ -109,7 +109,7 @@ export const AdminDashboardPage: React.FC = () => {
             <Network className="w-4 h-4 text-amber-400" />
           </div>
           <p className="text-3xl font-extrabold text-amber-400">
-            {data?.metrics.criticalClusters || 2}
+            {data?.metrics.criticalClusters ?? '—'}
           </p>
           <p className="text-xs text-slate-400">Active root-cause work orders</p>
         </Card>

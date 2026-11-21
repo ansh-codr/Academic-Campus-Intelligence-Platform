@@ -38,7 +38,7 @@ export const AdminPortalLayout: React.FC = () => {
       title: 'OPERATIONAL COMMAND',
       items: [
         { label: 'Admin Dashboard', path: '/admin/dashboard', icon: LayoutDashboard },
-        { label: 'Enrolled Students', path: '/admin/students', icon: Users, badge: '1,420' },
+        { label: 'Enrolled Students', path: '/admin/students', icon: Users },
       ],
     },
     {
@@ -52,7 +52,7 @@ export const AdminPortalLayout: React.FC = () => {
     {
       title: 'CAMPUS COMPLAINTS & TRIAGE',
       items: [
-        { label: 'All Complaints', path: '/admin/complaints', icon: AlertTriangle, badge: '28' },
+        { label: 'All Complaints', path: '/admin/complaints', icon: AlertTriangle },
         { label: 'AI Issue Clusters', path: '/admin/clusters', icon: Network, highlight: true },
         { label: 'Ticket Assignments', path: '/admin/assignments', icon: UserCheck },
         { label: 'Department Workload', path: '/admin/departments', icon: Building2 },
@@ -70,7 +70,7 @@ export const AdminPortalLayout: React.FC = () => {
   ];
 
   return (
-    <div className="min-h-screen flex bg-slate-900 text-slate-100">
+    <div className="min-h-screen flex bg-[#0b1220] text-slate-100">
       {/* Mobile Drawer */}
       {mobileOpen && (
         <div
@@ -82,7 +82,7 @@ export const AdminPortalLayout: React.FC = () => {
       {/* Admin Sidebar */}
       <aside
         className={cn(
-          'fixed lg:sticky top-0 h-screen z-50 flex flex-col border-r border-slate-800 bg-slate-950 transition-all duration-300',
+          'fixed lg:sticky top-0 h-screen z-50 flex flex-col border-r border-slate-800 bg-[#0d1627] transition-all duration-300',
           collapsed ? 'w-20' : 'w-72',
           mobileOpen ? 'left-0' : '-left-full lg:left-0'
         )}
@@ -105,13 +105,13 @@ export const AdminPortalLayout: React.FC = () => {
           </Link>
 
           <button
-            onClick={() => setCollapsed(!collapsed)}
+            aria-label={collapsed ? "Expand admin navigation" : "Collapse admin navigation"} onClick={() => setCollapsed(!collapsed)}
             className="hidden lg:flex p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
           >
             {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
           </button>
           <button
-            onClick={() => setMobileOpen(false)}
+            aria-label="Close admin navigation" onClick={() => setMobileOpen(false)}
             className="lg:hidden p-1.5 rounded-lg text-slate-400 hover:text-white"
           >
             <X className="w-5 h-5" />
@@ -136,18 +136,19 @@ export const AdminPortalLayout: React.FC = () => {
                     key={item.path}
                     to={item.path}
                     onClick={() => setMobileOpen(false)}
+                    aria-current={isActive ? "page" : undefined}
                     title={collapsed ? item.label : undefined}
                     className={cn(
                       'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all group relative',
                       isActive
-                        ? 'bg-amber-500 text-slate-950 font-semibold shadow-md shadow-amber-500/20'
+                        ? 'bg-amber-500/15 text-amber-300 font-bold ring-1 ring-amber-500/20'
                         : item.highlight
                         ? 'text-amber-400 bg-amber-500/10 hover:bg-amber-500/20'
                         : 'text-slate-400 hover:bg-slate-800/80 hover:text-white',
                       collapsed && 'justify-center px-0'
                     )}
                   >
-                    <Icon className={cn('w-4 h-4 shrink-0', isActive ? 'text-slate-950' : '')} />
+                    <Icon className={cn('w-4 h-4 shrink-0', isActive ? 'text-amber-300' : '')} />
                     {!collapsed && <span className="truncate">{item.label}</span>}
                     {!collapsed && item.badge && (
                       <span
@@ -211,7 +212,7 @@ export const AdminPortalLayout: React.FC = () => {
         <header className="sticky top-0 z-30 h-16 bg-slate-950/80 backdrop-blur-md border-b border-slate-800 px-4 sm:px-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button
-              onClick={() => setMobileOpen(true)}
+              aria-label="Open admin navigation" onClick={() => setMobileOpen(true)}
               className="lg:hidden p-2 rounded-xl text-slate-400 hover:bg-slate-800"
             >
               <Menu className="w-5 h-5" />
@@ -222,7 +223,7 @@ export const AdminPortalLayout: React.FC = () => {
               <span className="font-semibold text-amber-400">Central Academic &amp; Estate Ops</span>
             </div>
             <Badge variant="amber" size="sm">
-              Administrator Preview Mode
+              Administration
             </Badge>
           </div>
 

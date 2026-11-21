@@ -83,14 +83,14 @@ export const ReportIssuePage: React.FC = () => {
       </div>
 
       {submitError && (
-        <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2 animate-in fade-in">
+        <div role="alert" className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2 animate-in fade-in">
           <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
           <span>{submitError}</span>
         </div>
       )}
 
       {submissionSuccess && (
-        <div className="p-6 rounded-3xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 space-y-3 animate-in zoom-in-95">
+        <div role="status" className="p-6 rounded-3xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 space-y-3 animate-in zoom-in-95">
           <div className="flex items-center gap-2 text-emerald-800 dark:text-emerald-300 font-bold text-base">
             <CheckCircle className="w-5 h-5 text-emerald-500" />
             <span>Ticket Successfully Stored in Firestore!</span>
@@ -201,22 +201,10 @@ export const ReportIssuePage: React.FC = () => {
             {...register('description')}
           />
 
-          {/* Attachment UI Dropzone */}
-          <div className="space-y-1.5">
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-              Photo / Attachment (Cloud Storage)
-            </label>
-            <div className="p-6 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-2xl text-center space-y-2 hover:border-brand-blue/50 transition-colors cursor-pointer bg-slate-50/50 dark:bg-slate-900/30">
-              <Paperclip className="w-6 h-6 text-slate-400 mx-auto" />
-              <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Click or drag photos of damaged equipment here
-              </p>
-              <p className="text-[11px] text-slate-400">
-                PNG, JPG or PDF up to 10MB (Validated by Storage Security Rules)
-              </p>
-            </div>
+          <div className="p-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/30 text-xs text-slate-600 dark:text-slate-400 flex items-start gap-3">
+            <Paperclip className="h-4 w-4 mt-0.5 shrink-0" />
+            <span>Photo attachments are not yet supported for ticket submissions. Include relevant details in the description.</span>
           </div>
-
           {/* Submit Action */}
           <div className="pt-2 flex items-center justify-between">
             <Button

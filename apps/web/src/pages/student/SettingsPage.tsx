@@ -17,7 +17,7 @@ export const SettingsPage: React.FC = () => {
           Preferences &amp; Portal Settings
         </h1>
         <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
-          Configure notifications, appearance mode, and privacy controls.
+          Customize your appearance and review available settings.
         </p>
       </div>
 
@@ -45,20 +45,20 @@ export const SettingsPage: React.FC = () => {
         <Card className="p-6 space-y-4">
           <h3 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-2">
             <Bell className="w-4 h-4 text-brand-cyan" />
-            Notification Preferences
+            Notification preferences (coming soon)
           </h3>
-          <div className="space-y-3 text-xs">
+          <p className="text-xs text-slate-500 dark:text-slate-400">Automated notification preferences are not configured in this version.</p><div className="space-y-3 text-xs">
             <label className="flex items-center justify-between py-2 border-b border-slate-100 dark:border-slate-800 cursor-pointer">
               <span>Notify me when a syllabus topic is marked completed by faculty</span>
-              <input type="checkbox" defaultChecked className="rounded text-brand-blue" />
+              <input type="checkbox" disabled className="rounded text-brand-blue" />
             </label>
             <label className="flex items-center justify-between py-2 border-b border-slate-100 dark:border-slate-800 cursor-pointer">
               <span>Real-time SMS / In-App alert when campus maintenance status updates</span>
-              <input type="checkbox" defaultChecked className="rounded text-brand-blue" />
+              <input type="checkbox" disabled className="rounded text-brand-blue" />
             </label>
             <label className="flex items-center justify-between py-2 cursor-pointer">
               <span>Weekly digest of newly approved study materials</span>
-              <input type="checkbox" defaultChecked className="rounded text-brand-blue" />
+              <input type="checkbox" disabled className="rounded text-brand-blue" />
             </label>
           </div>
         </Card>
