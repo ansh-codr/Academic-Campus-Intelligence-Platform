@@ -32,6 +32,18 @@ function resolveGeminiApiKey(): string | undefined {
 }
 
 /**
+ * Determines whether the function is executing in an emulator, CI, or explicit test harness.
+ */
+function isEmulatorOrTestEnvironment(): boolean {
+  return (
+    process.env.FUNCTIONS_EMULATOR === 'true' ||
+    Boolean(process.env.FIREBASE_EMULATOR_HUB) ||
+    process.env.NODE_ENV === 'test' ||
+    process.env.ALLOW_MOCK_GEMINI === 'true'
+  );
+}
+
+/**
  * Checks and updates per-user rate limits and daily usage quotas in Firestore.
  */
 async function enforceAiUsageLimits(db: admin.firestore.Firestore, uid: string): Promise<void> {
@@ -85,13 +97,13 @@ async function enforceAiUsageLimits(db: admin.firestore.Firestore, uid: string):
 }
 
 /**
- * Retrieves authorized subject, syllabus topics, and resources from Firestore.
+ * Validates and retrieves authorized subject, syllabus topics, and resources from Firestore.
  */
 async function fetchAcademicGrounding(
   db: admin.firestore.Firestore,
   subjectId: string
 ): Promise<{
-  subject: SubjectSummary | null;
+  subject: SubjectSummary;
   topics: SyllabusTopic[];
   resources: StudyResource[];
   groundingContext: GroundingContext;
@@ -113,7 +125,15 @@ async function fetchAcademicGrounding(
     }
   }
 
-  const effectiveSubjectId = subject ? subject.id : subjectId;
+  // Validate subject access server-side
+  if (!subject) {
+    throw new HttpsError(
+      'not-found',
+      `Subject "${subjectId}" was not found or is unavailable in the curriculum.`
+    );
+  }
+
+  const effectiveSubjectId = subject.id;
 
   // 2. Fetch Topics
   const topicsSnap = await db
@@ -149,7 +169,7 @@ async function fetchAcademicGrounding(
  * Builds the educational system prompt with strict syllabus grounding.
  */
 function buildSystemInstruction(
-  subject: SubjectSummary | null,
+  subject: SubjectSummary,
   topics: SyllabusTopic[],
   resources: StudyResource[],
   mode: SyllabusMode
@@ -163,7 +183,7 @@ function buildSystemInstruction(
 Your objective is to provide high-clarity, pedagogical, step-by-step conceptual guidance.
 
 ACADEMIC CONTEXT:
-- Course: ${subject ? `${subject.code} — ${subject.name} (Instructor: ${subject.instructor || 'Faculty'})` : 'First-Year Engineering & Computing'}
+- Course: ${subject.code} — ${subject.name} (Instructor: ${subject.instructor || 'Faculty'})
 - Current In-Class Ongoing Topic: ${ongoingTopic}
 - Completed Topics Taught: ${completedTopics || 'None yet'}
 - Upcoming Syllabus Topics: ${upcomingTopics || 'None'}
@@ -176,7 +196,7 @@ PEDAGOGICAL POLICIES:
 3. If mode is "WITHIN_SYLLABUS":
    - Prioritize concepts strictly covered in the official syllabus topics listed above.
    - If the student query falls completely outside the first-year syllabus for this subject, explicitly state:
-     "Notice: This concept is outside the approved first-year ${subject?.code || 'curriculum'} syllabus for this semester."
+     "Notice: This concept is outside the approved first-year ${subject.code} syllabus for this semester."
      Then provide a brief foundational overview and connect it back to the ongoing topic (${ongoingTopic}).
 4. If mode is "EXPLORE_BEYOND":
    - Provide comprehensive deep-dive explanations.
@@ -203,8 +223,12 @@ export const askStudyMateAi = onCall(
     const uid = request.auth.uid;
     const data = request.data as AskStudyMateRequest;
 
-    // 2. Validate Request
-    if (!data || !data.prompt || typeof data.prompt !== 'string') {
+    // 2. Validate Request Inputs
+    if (!data || typeof data !== 'object') {
+      throw new HttpsError('invalid-argument', 'Request body must be an object.');
+    }
+
+    if (!data.prompt || typeof data.prompt !== 'string') {
       throw new HttpsError('invalid-argument', 'A prompt string is required.');
     }
 
@@ -216,20 +240,48 @@ export const askStudyMateAi = onCall(
       throw new HttpsError('invalid-argument', 'Prompt exceeds maximum allowed length of 1500 characters.');
     }
 
-    const subjectId = data.subjectId || 'subj-cs101';
+    const rawSubjectId = data.subjectId ? String(data.subjectId).trim() : 'subj-cs101';
+    if (rawSubjectId.length > 64) {
+      throw new HttpsError('invalid-argument', 'Subject identifier exceeds maximum allowed length.');
+    }
+
     const mode: SyllabusMode = data.mode === 'EXPLORE_BEYOND' ? 'EXPLORE_BEYOND' : 'WITHIN_SYLLABUS';
     const db = admin.firestore();
 
-    // 3. Enforce Rate Limits & Quotas
+    // 3. Conversation Ownership Verification
+    let conversationId = data.conversationId ? String(data.conversationId).trim() : null;
+    let conversationRef: admin.firestore.DocumentReference;
+
+    if (conversationId) {
+      if (conversationId.length > 128) {
+        throw new HttpsError('invalid-argument', 'Conversation identifier exceeds maximum allowed length.');
+      }
+      conversationRef = db.collection('studyMateConversations').doc(conversationId);
+      const existingConvSnap = await conversationRef.get();
+      if (existingConvSnap.exists) {
+        const convData = existingConvSnap.data();
+        if (convData?.userId !== uid) {
+          throw new HttpsError(
+            'permission-denied',
+            "Access denied: You do not have permission to append to another student's conversation."
+          );
+        }
+      }
+    } else {
+      conversationRef = db.collection('studyMateConversations').doc();
+      conversationId = conversationRef.id;
+    }
+
+    // 4. Enforce Rate Limits & Quotas
     await enforceAiUsageLimits(db, uid);
 
-    // 4. Retrieve Academic Grounding from Firestore
-    const { subject, topics, resources, groundingContext } = await fetchAcademicGrounding(db, subjectId);
+    // 5. Retrieve Academic Grounding from Firestore (with subject validation)
+    const { subject, topics, resources, groundingContext } = await fetchAcademicGrounding(db, rawSubjectId);
 
-    // 5. Construct System Instruction & Context
+    // 6. Construct System Instruction & Context
     const systemInstruction = buildSystemInstruction(subject, topics, resources, mode);
 
-    // 6. Gemini Inference or Controlled Test Double
+    // 7. Gemini Inference or Controlled Test Double
     const apiKey = resolveGeminiApiKey();
     const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
     let aiReplyText = '';
@@ -239,14 +291,17 @@ export const askStudyMateAi = onCall(
       try {
         const ai = new GoogleGenAI({ apiKey });
         
-        // Build conversation contents including history
+        // Build conversation contents with server-side validation of conversation history
         const contents: any[] = [];
         if (Array.isArray(data.conversationHistory) && data.conversationHistory.length > 0) {
           const recentHistory = data.conversationHistory.slice(-6);
           for (const item of recentHistory) {
+            if (!item || typeof item !== 'object') continue;
+            if (typeof item.text !== 'string' || !item.text.trim()) continue;
+            const role = item.role === 'model' ? 'model' : 'user';
             contents.push({
-              role: item.role === 'model' ? 'model' : 'user',
-              parts: [{ text: item.text.slice(0, 1000) }],
+              role,
+              parts: [{ text: item.text.trim().slice(0, 1000) }],
             });
           }
         }
@@ -272,12 +327,20 @@ export const askStudyMateAi = onCall(
         throw new HttpsError('internal', 'The AI tutoring service encountered a provider error. Please try again in a moment.');
       }
     } else {
+      // In production, when the GEMINI_API_KEY is not configured, fail safely
+      if (!isEmulatorOrTestEnvironment()) {
+        throw new HttpsError(
+          'failed-precondition',
+          'StudyMate AI service is not properly configured. GEMINI_API_KEY secret is required in production.'
+        );
+      }
+
       // Controlled Test Double for emulator tests and offline environments
       isMock = true;
       const ongoingTitle = topics.find((t) => t.status === 'ONGOING')?.title || 'Core Syllabus Foundations';
       aiReplyText = `**[Controlled Integration Test Double — Syllabus Mode: ${mode}]**
 
-Hello! I am grounded in your **${subject?.name || 'Academic Course'}** curriculum.
+Hello! I am grounded in your **${subject.name}** curriculum.
 
 - **Active Lecture Focus**: ${ongoingTitle}
 - **Your Inquiry**: "${trimmedPrompt}"
@@ -286,17 +349,15 @@ Hello! I am grounded in your **${subject?.name || 'Academic Course'}** curriculu
 *(Notice: Running in emulator test-double mode. Live Gemini generation requires a verified GEMINI_API_KEY secret).*`;
     }
 
-    // 7. Conversation Persistence
-    const conversationId = data.conversationId || db.collection('studyMateConversations').doc().id;
+    // 8. Conversation Persistence with Owner-Protected State
     const now = new Date().toISOString();
 
-    const conversationRef = db.collection('studyMateConversations').doc(conversationId);
     await conversationRef.set(
       {
         id: conversationId,
         userId: uid,
         title: trimmedPrompt.slice(0, 60),
-        subjectId,
+        subjectId: subject.id,
         mode,
         updatedAt: now,
         createdAt: data.conversationId ? admin.firestore.FieldValue.serverTimestamp() : now,
@@ -304,7 +365,7 @@ Hello! I am grounded in your **${subject?.name || 'Academic Course'}** curriculu
       { merge: true }
     );
 
-    // Save user message
+    // Save user message (trusted server write)
     const userMsgRef = conversationRef.collection('messages').doc();
     await userMsgRef.set({
       id: userMsgRef.id,
@@ -313,11 +374,11 @@ Hello! I am grounded in your **${subject?.name || 'Academic Course'}** curriculu
       role: 'user',
       text: trimmedPrompt,
       mode,
-      subjectId,
+      subjectId: subject.id,
       timestamp: now,
     });
 
-    // Save AI response message
+    // Save AI response message (trusted server write)
     const modelMsgRef = conversationRef.collection('messages').doc();
     await modelMsgRef.set({
       id: modelMsgRef.id,
@@ -326,7 +387,7 @@ Hello! I am grounded in your **${subject?.name || 'Academic Course'}** curriculu
       role: 'model',
       text: aiReplyText,
       mode,
-      subjectId,
+      subjectId: subject.id,
       groundingContext,
       timestamp: now,
       isMockResponse: isMock,
@@ -337,7 +398,7 @@ Hello! I am grounded in your **${subject?.name || 'Academic Course'}** curriculu
       conversationId,
       messageId: modelMsgRef.id,
       mode,
-      subjectId,
+      subjectId: subject.id,
       groundingContext,
       isMockResponse: isMock,
     };

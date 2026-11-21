@@ -15,6 +15,14 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.token.role == 'ADMIN';
     }
 
+    function isAllowedProfileUpdate() {
+      let affected = request.resource.data.diff(resource.data).affectedKeys();
+      return affected.hasOnly(['displayName', 'fullName', 'studentId', 'phoneNumber', 'photoURL', 'avatarUrl', 'bio', 'department', 'semester', 'updatedAt'])
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.email == resource.data.email;
+    }
+
     // Default deny
     match /{document=**} {
       allow read, write: if false;
@@ -26,11 +34,8 @@ service cloud.firestore {
       allow read: if isOwner(userId) || isAdmin();
       // User can create their profile on registration with STUDENT role
       allow create: if isOwner(userId) && request.resource.data.role == 'STUDENT';
-      // User can update non-privileged fields (bio, phone, department, semester)
-      // Cannot alter role or id
-      allow update: if isOwner(userId) 
-        && request.resource.data.role == resource.data.role
-        && request.resource.data.id == resource.data.id;
+      // User can update non-privileged fields only; cannot alter role, id, or email
+      allow update: if isOwner(userId) && isAllowedProfileUpdate();
       // Admins have full access
       allow update, delete: if isAdmin();
     }
@@ -49,13 +54,11 @@ service cloud.firestore {
       // (or performed via Cloud Functions Admin SDK)
       allow update, delete: if isAdmin();
 
-      // Subcollection: timeline events
+      // Subcollection: timeline events (official lifecycle state transitions, written strictly by Admin SDK / Cloud Functions)
       match /timeline/{eventId} {
         allow read: if (isAuthenticated() && get(/databases/$(database)/documents/complaints/$(complaintId)).data.submittedById == request.auth.uid) || isAdmin();
-        allow create: if isAuthenticated() && (
-          get(/databases/$(database)/documents/complaints/$(complaintId)).data.submittedById == request.auth.uid || isAdmin()
-        );
-        allow update, delete: if isAdmin();
+        // Restrict forged ticket lifecycle events: direct client creation/update is blocked
+        allow write: if isAdmin();
       }
     }
 
@@ -117,11 +120,8 @@ service cloud.firestore {
         allow read: if isAuthenticated() && (
           get(/databases/$(database)/documents/studyMateConversations/$(conversationId)).data.userId == request.auth.uid || isAdmin()
         );
-        allow create: if isAuthenticated() && (
-          get(/databases/$(database)/documents/studyMateConversations/$(conversationId)).data.userId == request.auth.uid
-          && request.resource.data.userId == request.auth.uid
-        );
-        allow update, delete: if isAdmin();
+        // Restrict forged chat messages: Messages are written strictly by trusted Cloud Functions Admin SDK.
+        allow write: if isAdmin();
       }
     }
 

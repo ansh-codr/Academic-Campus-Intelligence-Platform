@@ -5,7 +5,6 @@ import {
   SubjectSummary,
   SyllabusMode,
   StudyMateConversation,
-  StudyMateMessage,
 } from '@solvesphere/shared';
 import { useAuth } from '@/hooks/useAuthDemo';
 import { Card } from '@/components/ui/Card';
@@ -14,11 +13,7 @@ import { Button } from '@/components/ui/Button';
 import {
   Bot,
   Send,
-  Sparkles,
-  BookOpen,
-  HelpCircle,
   AlertCircle,
-  CheckCircle,
   RotateCcw,
   User,
   Copy,
@@ -206,6 +201,12 @@ export const StudyMateAiPage: React.FC = () => {
     ]);
   };
 
+  const clearChat = () => {
+    setCurrentConversationId(null);
+    setMessages([]);
+    setInputText('');
+  };
+
   const handleLoadConversation = async (conv: StudyMateConversation) => {
     setCurrentConversationId(conv.id);
     setSelectedSubject(conv.subjectId);
@@ -275,8 +276,17 @@ export const StudyMateAiPage: React.FC = () => {
 
         {/* Course & Mode Controls */}
         <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={clearChat}
+            className="text-xs font-semibold text-slate-500 hover:text-brand-blue border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 transition-colors"
+          >
+            Clear chat
+          </button>
+
           {/* Subject Context Selector */}
           <div className="flex items-center gap-1.5">
+            <span className="text-xs font-semibold text-slate-500 hidden sm:inline">Subject:</span>
             <select
               value={selectedSubject}
               onChange={(e) => {
@@ -285,11 +295,21 @@ export const StudyMateAiPage: React.FC = () => {
               }}
               className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-bold text-brand-blue dark:text-cyan-400 focus:outline-none focus:ring-2 focus:ring-brand-blue"
             >
-              <option value="CS101">CS101 - Foundation in AI</option>
-              <option value="EC103">EC103 - Digital Electronics</option>
-              <option value="MA101">MA101 - Mathematics</option>
-              <option value="DT102">DT102 - Design Thinking</option>
-              <option value="HU101">HU101 - Business Communication</option>
+              {subjects.length > 0 ? (
+                subjects.map((s) => (
+                  <option key={s.id} value={s.code}>
+                    {s.code} - {s.name}
+                  </option>
+                ))
+              ) : (
+                <>
+                  <option value="CS101">CS101 - Foundation in AI</option>
+                  <option value="EC103">EC103 - Digital Electronics</option>
+                  <option value="MA101">MA101 - Mathematics</option>
+                  <option value="DT102">DT102 - Design Thinking</option>
+                  <option value="HU101">HU101 - Business Communication</option>
+                </>
+              )}
             </select>
           </div>
 
@@ -407,7 +427,22 @@ export const StudyMateAiPage: React.FC = () => {
           </div>
 
           {/* Messages Body */}
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+          <div
+            className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4"
+            role="log"
+            aria-label="StudyMate conversation"
+            aria-live="polite"
+          >
+            {messages.length === 0 && (
+              <div className="grid place-items-center h-full text-center px-4">
+                <div>
+                  <Bot className="w-11 h-11 mx-auto text-brand-blue mb-4" />
+                  <h2 className="text-lg font-bold text-slate-900 dark:text-white">Start a new study chat</h2>
+                  <p className="text-xs text-slate-500 mt-2">Choose a suggested question below or ask anything about {selectedSubject}.</p>
+                </div>
+              </div>
+            )}
+
             {messages.map((msg) => {
               const isUser = msg.sender === 'user';
               return (
@@ -455,8 +490,10 @@ export const StudyMateAiPage: React.FC = () => {
                     {/* Copy Button */}
                     {!isUser && (
                       <button
+                        type="button"
                         onClick={() => handleCopyText(msg.content, msg.id)}
                         className="absolute top-2 right-2 p-1.5 rounded-lg bg-white/80 dark:bg-slate-800/80 text-slate-400 hover:text-slate-700 dark:hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                        aria-label="Copy assistant response"
                         title="Copy Response"
                       >
                         {copiedMsgId === msg.id ? (

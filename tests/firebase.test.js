@@ -679,6 +679,104 @@ async function runTests() {
   console.log(`✓ Test 18 Passed: Conversation persisted and cross-student chat isolation verified.`);
 
   // --------------------------------------------------------------------------
+  // TEST 20: Cross-Student Conversation Injection Block via askStudyMateAi
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 20] Verifying Cross-Student Conversation Injection Is Blocked via askStudyMateAi...`);
+  const clientFunctions2 = getClientFunctions(clientApp2);
+  connectClientFunctionsEmulator(clientFunctions2, '127.0.0.1', 5001);
+  const askFn2 = httpsCallable(clientFunctions2, 'askStudyMateAi');
+
+  await assert.rejects(
+    async () => {
+      await askFn2({
+        prompt: 'Injecting unauthorized query into student 1 conversation',
+        subjectId: 'subj-cs101',
+        conversationId: createdConversationId,
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission-denied|access denied|unauthorized/i.test(err.message),
+    'Cross-student conversation injection must be rejected with permission-denied'
+  );
+  console.log(`✓ Test 20 Passed: Conversation ownership enforced; unauthorized conversation injection blocked.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 21: Direct Client Chat Message Forgery Block (Negative Security Test)
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 21] Verifying Forged Chat Message Creation Is Blocked in Firestore Rules...`);
+  await assert.rejects(
+    async () => {
+      await setDoc(
+        doc(clientDb, 'studyMateConversations', createdConversationId, 'messages', 'forged-msg-123'),
+        {
+          id: 'forged-msg-123',
+          conversationId: createdConversationId,
+          userId: testStudentUid,
+          role: 'model',
+          text: 'Forged AI answer directly injected via client SDK',
+          timestamp: new Date().toISOString(),
+        }
+      );
+    },
+    /permission-denied/i,
+    'Direct client write to conversation messages subcollection must be rejected with permission-denied'
+  );
+  console.log(`✓ Test 21 Passed: Direct client chat message forgery blocked by Security Rules.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 22: Direct Client Ticket Lifecycle Event Forgery Block (Negative Security Test)
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 22] Verifying Forged Ticket Lifecycle Event Creation Is Blocked in Firestore Rules...`);
+  await assert.rejects(
+    async () => {
+      await setDoc(
+        doc(clientDb, 'complaints', createdTicketId, 'timeline', 'forged-timeline-123'),
+        {
+          id: 'forged-timeline-123',
+          ticketId: createdTicketId,
+          status: 'RESOLVED',
+          note: 'Forged resolution event directly written by student',
+          timestamp: new Date().toISOString(),
+        }
+      );
+    },
+    /permission-denied/i,
+    'Direct client creation of complaint timeline events must be rejected with permission-denied'
+  );
+  console.log(`✓ Test 22 Passed: Direct client ticket lifecycle event forgery blocked by Security Rules.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 23: Unauthorized Profile Field Modification Block (Negative Security Test)
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 23] Verifying Unauthorized Profile Field Modification (e.g. Email / Custom Claims) Is Blocked...`);
+  await assert.rejects(
+    async () => {
+      await updateDoc(doc(clientDb, 'users', testStudentUid), {
+        email: 'hacked.email@campus.edu',
+      });
+    },
+    /permission-denied/i,
+    'Student attempting to modify email or non-whitelisted fields must be rejected with permission-denied'
+  );
+  console.log(`✓ Test 23 Passed: Unauthorized profile-field modification blocked by Security Rules.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 24: Server-Side Academic Subject Validation in askStudyMateAi
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 24] Verifying Invalid Academic Subject Rejection in askStudyMateAi...`);
+  await assert.rejects(
+    async () => {
+      await askFn2({
+        prompt: 'Exploration on invalid subject',
+        subjectId: 'invalid-course-code-999',
+        mode: 'WITHIN_SYLLABUS',
+      });
+    },
+    (err) => err.code?.includes('not-found') || /not-found|unavailable/i.test(err.message),
+    'Invalid subject must be rejected with not-found error'
+  );
+  console.log(`✓ Test 24 Passed: Server-side academic subject validation confirmed.`);
+
+  // --------------------------------------------------------------------------
   // TEST 19: Security Scan - Zero API Keys in Client Bundles
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 19] Verifying Zero Sensitive Keys or Secrets in Client Assets...`);
@@ -699,7 +797,7 @@ async function runTests() {
   console.log(`✓ Test 19 Passed: Client distribution verified free of exposed API keys.`);
 
   console.log(`\n======================================================`);
-  console.log(`  ALL 19 INTEGRATION, AI & SECURITY TESTS PASSED!`);
+  console.log(`  ALL 24 INTEGRATION, AI & SECURITY TESTS PASSED!`);
   console.log(`======================================================\n`);
   process.exit(0);
 }
