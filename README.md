@@ -1,4 +1,4 @@
-# SolveSphere AI — Academic & Campus Intelligence Platform
+> **Phase 8 real-data transition:** Production services must use genuine Firestore records instead of demonstration fixture fallbacks. The demo seed script is for local emulator/testing only. See [backend architecture](docs/BACKEND_ARCHITECTURE.md), [data model](docs/FIRESTORE_DATA_MODEL.md), [real-data onboarding](docs/REAL_DATA_ONBOARDING.md), [deployment runbook](docs/DEPLOYMENT_RUNBOOK.md), and [friend handover](docs/FRIEND_HANDOVER.md). Do not seed or purge a live Firebase database without explicit approval.\n\n# SolveSphere AI — Academic & Campus Intelligence Platform
 
 > **"Your Problems. Our Smart Solutions."**
 >
@@ -82,7 +82,7 @@ This starts:
 ### Step 4: Seed Database & Bootstrap Admin (One-time)
 In a second terminal:
 ```bash
-# Seed 6 subjects, topics, resources, departments, and sample tickets:
+# Seed **local emulator-only** sample subjects, topics, resources, departments and tickets (NEVER live production):
 npm run seed
 
 # Provision the default Administrator account with custom claim { role: 'ADMIN' }:
