@@ -1,42 +1,99 @@
 /**
  * SolveSphere AI — Deterministic Firebase Development Seed Script
  * 
+ * Safety & Integrity Standards:
+ * - Restricted to Firebase Emulator Suite only by default.
+ * - Refuses to execute against live Firestore even if GOOGLE_APPLICATION_CREDENTIALS is set.
+ * - Prevents accidental overwriting of production subjects, counters, or user data.
+ * 
  * Seeds:
- * - 6 First-Year Subjects
+ * - 6 First-Year Academic Subjects
  * - Syllabus Topics (Completed, Ongoing, Upcoming)
  * - Faculty-Approved Study Resources
  * - Campus Departments
  * - Campus Student Clubs
- * - System counter for complaint sequencing
+ * - System counter for complaint sequencing (emulator only)
+ * - Sample Quizzes and Question Bank
+ * - Sample Complaints and Event Timelines
  * 
  * Usage:
- *   node scripts/seed-firebase.js
+ *   # Standard emulator seed:
+ *   npm run seed
+ *   # or:
+ *   FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 npx tsx scripts/seed-firebase.js
  */
 
 import admin from 'firebase-admin';
 import { FIXTURE_SUBJECTS, FIXTURE_TOPICS, FIXTURE_RESOURCES } from '../apps/web/src/fixtures/academicFixtures.ts';
 import { FIXTURE_CLUBS, FIXTURE_TICKETS, FIXTURE_CLUSTERS } from '../apps/web/src/fixtures/campusFixtures.ts';
 
-// Target emulators if live credentials not explicitly provided
-if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-  process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
-  process.env.FIREBASE_AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099';
+/**
+ * Validates that database seeding is executing against a safe, authorized target.
+ * Throws an informative error if an unauthorized live Firestore target is detected.
+ * Exported for deterministic unit testing.
+ */
+export function validateSeedTarget(env = process.env) {
+  const isEmulator = Boolean(env.FIRESTORE_EMULATOR_HOST);
+
+  if (!isEmulator) {
+    const isExplicitlyAuthorized =
+      env.ALLOW_LIVE_DATABASE_MIGRATION === 'true' &&
+      Boolean(env.CONFIRM_MIGRATION_PROJECT_ID) &&
+      !env.CONFIRM_MIGRATION_PROJECT_ID.includes('<');
+
+    if (!isExplicitlyAuthorized) {
+      throw new Error(
+        'REFUSED: seed-firebase.js is strictly restricted to the Firebase Emulator Suite. ' +
+        'Permission to seed or overwrite live Firestore is NEVER inferred from GOOGLE_APPLICATION_CREDENTIALS. ' +
+        'To seed the local development emulator, start emulators ("npm run emulators") or set FIRESTORE_EMULATOR_HOST=127.0.0.1:8080.'
+      );
+    }
+
+    const targetProject = (env.GCLOUD_PROJECT || env.FIREBASE_PROJECT_ID || '').trim();
+    if (env.CONFIRM_MIGRATION_PROJECT_ID !== targetProject) {
+      throw new Error(
+        `REFUSED: CONFIRM_MIGRATION_PROJECT_ID ("${env.CONFIRM_MIGRATION_PROJECT_ID}") does not match active project ("${targetProject}").`
+      );
+    }
+
+    return {
+      isEmulator: false,
+      projectId: targetProject,
+    };
+  }
+
+  return {
+    isEmulator: true,
+    projectId: env.GCLOUD_PROJECT || 'solvesphere-ai-dev',
+    firestoreHost: env.FIRESTORE_EMULATOR_HOST,
+    authHost: env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099',
+  };
 }
 
-if (!admin.apps.length) {
-  admin.initializeApp({
-    projectId: process.env.GCLOUD_PROJECT || 'solvesphere-ai-dev',
-  });
+// Automatically configure emulator host for standard dev workflow if no live flags or credentials exist
+if (!process.env.FIRESTORE_EMULATOR_HOST && process.env.ALLOW_LIVE_DATABASE_MIGRATION !== 'true') {
+  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS && !process.env.CONFIRM_MIGRATION_PROJECT_ID) {
+    process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
+    process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
+  }
 }
-
-const db = admin.firestore();
 
 async function seed() {
+  const target = validateSeedTarget(process.env);
+
   console.log(`\n======================================================`);
   console.log(`  SolveSphere AI — Seeding Firestore Database`);
-  console.log(`  Firestore Host: ${process.env.FIRESTORE_EMULATOR_HOST || 'Cloud'}`);
+  console.log(`  Target:         ${target.isEmulator ? 'EMULATOR (' + target.firestoreHost + ')' : 'LIVE CLOUD MIGRATION'}`);
+  console.log(`  Project ID:     ${target.projectId}`);
   console.log(`======================================================\n`);
 
+  if (!admin.apps.length) {
+    admin.initializeApp({
+      projectId: target.projectId,
+    });
+  }
+
+  const db = admin.firestore();
   const batch = db.batch();
 
   // 1. Seed Subjects
@@ -82,13 +139,16 @@ async function seed() {
     batch.set(docRef, dept);
   }
 
-  // 6. Seed System Sequence Counter
+  // 6. Seed System Sequence Counter (Safe initialization: preserves existing counter if already set)
   console.log(`Initializing system complaint sequence counter...`);
   const counterRef = db.collection('systemCounters').doc('complaints');
-  batch.set(counterRef, { currentSequence: 840 }, { merge: true });
+  const counterSnap = await counterRef.get();
+  if (!counterSnap.exists) {
+    batch.set(counterRef, { currentSequence: 840 });
+  }
 
   // 6b. Seed Practice Quizzes and MCQs
-  console.log(`Seeding quizzes and questions...`);
+  console.log(`Seeding sample quizzes and question bank...`);
   const quizzes = [
     {
       id: 'quiz-cs101',
@@ -138,8 +198,8 @@ async function seed() {
     {
       id: 'quiz-dt102',
       subjectId: 'subj-dt102',
-      title: 'Design Thinking: Empathy Research & Prototyping',
-      description: 'Human-centered design frameworks, extreme user empathy, and iterative wireframing.',
+      title: 'Design Thinking: Human-Centric Ideation & Prototyping',
+      description: 'Test your understanding of empathy interviews, problem reframing, and rapid user validation.',
       type: 'QUIZ',
       durationMinutes: 10,
       difficulty: 'BEGINNER',
@@ -149,154 +209,60 @@ async function seed() {
       questions: [
         {
           id: 'q-dt-1',
-          questionText: 'In the Stanford d.school Design Thinking methodology, which phase focuses on building low-resolution representations of concepts to test assumptions rapidly?',
-          options: ['Empathize', 'Define', 'Ideate', 'Prototype'],
-          correctOptionIndex: 3,
-          explanation: 'Prototyping involves creating tangible artifacts to explore, test, and validate hypotheses with users.',
+          questionText: 'What is the primary objective of the "Empathize" stage in the 5-stage Stanford d.school Design Thinking model?',
+          options: [
+            'Developing a high-fidelity interactive software mockup',
+            'Understanding user experiences, emotional pain points, and latent needs in their context',
+            'Filtering out divergent ideas to select the single best technical solution',
+            'Writing functional requirement specifications for backend microservices',
+          ],
+          correctOptionIndex: 1,
+          explanation: 'Empathy immerses designers in the user experience to discover real human problems and latent needs without prior assumptions.',
         },
         {
           id: 'q-dt-2',
-          questionText: 'What is the primary objective of formulating "How-Might-We" (HMW) statements during problem framing?',
+          questionText: 'Why is "Failing Fast" considered a valuable practice during the iterative Prototyping phase?',
           options: [
-            'To immediately decide the technical software architecture',
-            'To reframe problem insights into open-ended opportunities for generative ideation',
-            'To establish contractual service level agreements with stakeholders',
-            'To eliminate all extreme users from demographic field studies',
-          ],
-          correctOptionIndex: 1,
-          explanation: 'HMW statements open up problem spaces for creative, user-centric brainstorming rather than presupposing narrow solutions.',
-        },
-      ],
-    },
-    {
-      id: 'quiz-de103',
-      subjectId: 'subj-de103',
-      title: 'Digital Electronics: Flip-Flops & Counter Circuits',
-      description: 'Combinational logic minimization, sequential flip-flops, excitation tables, and timing diagrams.',
-      type: 'QUIZ',
-      durationMinutes: 15,
-      difficulty: 'INTERMEDIATE',
-      published: true,
-      questionsCount: 2,
-      createdAt: '2026-11-03T10:00:00.000Z',
-      questions: [
-        {
-          id: 'q-de-1',
-          questionText: 'In a synchronous counter designed using JK flip-flops, why is the toggle condition (J=1, K=1) used for state transitions?',
-          options: [
-            'Because it forces the output Q to 0 asynchronously',
-            'Because it inverts the stored output bit on each active clock edge',
-            'Because it resets the clock pulse propagation delay to zero',
-            'Because it eliminates static-1 timing hazards in combinational logic',
-          ],
-          correctOptionIndex: 1,
-          explanation: 'When J=1 and K=1, the JK flip-flop toggles its output Q on each active clock edge (Q_next = Q_bar), enabling binary count sequences.',
-        },
-        {
-          id: 'q-de-2',
-          questionText: 'What is the simplified Boolean expression for F(A,B) = A\'B + AB using Boolean algebra or Karnaugh mapping?',
-          options: ['A', 'B', 'A + B', 'A\'B\''],
-          correctOptionIndex: 1,
-          explanation: 'F(A,B) = (A\' + A)B = 1 * B = B.',
-        },
-      ],
-    },
-    {
-      id: 'quiz-del104',
-      subjectId: 'subj-del104',
-      title: 'Digital Electronics Lab: Breadboard & Logic IC Diagnostics',
-      description: 'Hands-on lab hardware debugging, TTL 7400 IC pinouts, and logic probe state verification.',
-      type: 'QUIZ',
-      durationMinutes: 10,
-      difficulty: 'INTERMEDIATE',
-      published: true,
-      questionsCount: 2,
-      createdAt: '2026-11-04T10:00:00.000Z',
-      questions: [
-        {
-          id: 'q-del-1',
-          questionText: 'When probing a digital circuit on a breadboard, what state is indicated if a standard TTL logic probe shows both HIGH and LOW LEDs extinguished on an input pin?',
-          options: [
-            'Logic HIGH (5.0V)',
-            'Logic LOW (0.0V)',
-            'Floating / High-Impedance (Hi-Z) or disconnected input',
-            'Ground short-circuit',
+            'It minimizes documentation overhead by ignoring test cases',
+            'It eliminates the need for user feedback sessions',
+            'It allows teams to uncover flaws early at minimal cost before committing heavy engineering resources',
+            'It forces project managers to cancel high-risk creative initiatives immediately',
           ],
           correctOptionIndex: 2,
-          explanation: 'In TTL circuits, an open or floating node hovers in the undefined threshold band (~1.5V) and registers as high-impedance without pulling high or low.',
-        },
-        {
-          id: 'q-del-2',
-          questionText: 'Which TTL 7400-series integrated circuit contains four dual-input positive NAND gates?',
-          options: ['7400', '7402', '7404', '7408'],
-          correctOptionIndex: 0,
-          explanation: 'IC 7400 is the quintessential Quad 2-Input NAND gate IC.',
+          explanation: 'Low-fidelity rapid prototyping exposes false assumptions quickly and cheaply, accelerating convergence toward genuine user value.',
         },
       ],
     },
     {
-      id: 'quiz-ma105',
-      subjectId: 'subj-ma105',
-      title: 'Mathematics: Matrices, Eigenvalues & Diagonalization',
-      description: 'Vector spaces, characteristic polynomials, Cayley-Hamilton theorem, and diagonal forms.',
-      type: 'QUIZ',
-      durationMinutes: 15,
-      difficulty: 'ADVANCED',
-      published: true,
-      questionsCount: 2,
-      createdAt: '2026-11-05T10:00:00.000Z',
-      questions: [
-        {
-          id: 'q-ma-1',
-          questionText: 'If A is an n x n square matrix with eigenvalues λ, what are the eigenvalues of matrix A^2?',
-          options: ['λ', 'λ^2', '2λ', '√λ'],
-          correctOptionIndex: 1,
-          explanation: 'If Av = λv, then A^2 v = A(Av) = A(λv) = λ(Av) = λ^2 v. Hence the eigenvalues are λ^2.',
-        },
-        {
-          id: 'q-ma-2',
-          questionText: 'Under what condition is an n x n matrix A guaranteed to be diagonalizable over the real numbers?',
-          options: [
-            'It has determinant equal to 0',
-            'It possesses n linearly independent eigenvectors',
-            'Its trace is strictly greater than n',
-            'All diagonal entries are non-zero',
-          ],
-          correctOptionIndex: 1,
-          explanation: 'A matrix is diagonalizable if and only if there exists an eigenbasis consisting of n linearly independent eigenvectors.',
-        },
-      ],
-    },
-    {
-      id: 'quiz-bc106',
-      subjectId: 'subj-bc106',
-      title: 'Business Communication: Presentation Architecture & Executive Briefs',
-      description: 'BLUF principle, project defense Q&A tactics, and technical document drafting.',
+      id: 'quiz-comm105',
+      subjectId: 'subj-comm105',
+      title: 'Professional Technical Communication & Ethical Reporting',
+      description: 'Evaluate best practices in clarity, audience awareness, active listening, and technical integrity.',
       type: 'QUIZ',
       durationMinutes: 10,
       difficulty: 'BEGINNER',
       published: true,
       questionsCount: 2,
-      createdAt: '2026-11-06T10:00:00.000Z',
+      createdAt: '2026-11-03T10:00:00.000Z',
       questions: [
         {
-          id: 'q-bc-1',
-          questionText: 'In executive technical briefings, what is the "BLUF" (Bottom Line Up Front) principle designed to accomplish?',
+          id: 'q-comm-1',
+          questionText: 'When delivering an engineering design presentation to a multidisciplinary audience of both technical and financial stakeholders, which strategy is most effective?',
           options: [
-            'Placing detailed appendices before introductory remarks',
-            'Communicating the core conclusion and recommendation immediately to save stakeholder decision time',
-            'Eliminating all data charts and graphs from presentations',
-            'Extending oral presentations beyond the allotted schedule',
+            'Use dense mathematical derivations without verbal executive summaries',
+            'Structure communication in an inverted pyramid: start with high-level impact and objectives before diving into technical specifics',
+            'Avoid stating problem statements or business constraints entirely',
+            'Refuse to answer questions outside the software domain',
           ],
           correctOptionIndex: 1,
-          explanation: 'BLUF presents recommendations, key takeaways, and decisions at the outset for maximum executive clarity.',
+          explanation: 'An executive-first inverted pyramid structure gives diverse stakeholders the context they need to understand specialized technical contributions.',
         },
         {
-          id: 'q-bc-2',
-          questionText: 'During a technical engineering defense presentation, how should an engineer effectively address a tough question when the answer is not immediately known?',
+          id: 'q-comm-2',
+          questionText: 'If unexpected experimental results invalidate a key hypothesis in a research or progress report, what is the ethically sound response?',
           options: [
-            'Guess an answer with false confidence',
-            'Acknowledge the question, explain current knowledge bounds, and commit to following up with verified data',
+            'Quietly alter raw telemetry datasets so graphs align with desired conclusions',
+            'Transparently document anomalies, report the observed variance, and propose investigative follow-ups',
             'Ignore the questioner and advance to the next slide',
             'Directly blame a teammate for missing the calculation',
           ],
@@ -334,16 +300,18 @@ async function seed() {
   }
   console.log(`✓ Quiz questions written to protected subcollections.`);
 
-  // 7. Seed Sample Complaints with Subcollection Timelines
-  console.log(`Seeding sample complaints with timeline event subcollections...`);
-  for (const ticket of FIXTURE_TICKETS) {
-    const complaintRef = db.collection('complaints').doc(ticket.id);
-    const { timeline, ...complaintData } = ticket;
-    await complaintRef.set({ ...complaintData, isSampleData: true });
+  // 7. Seed Sample Complaints with Subcollection Timelines (Emulator Only)
+  if (target.isEmulator) {
+    console.log(`Seeding sample complaints with timeline event subcollections...`);
+    for (const ticket of FIXTURE_TICKETS) {
+      const complaintRef = db.collection('complaints').doc(ticket.id);
+      const { timeline, ...complaintData } = ticket;
+      await complaintRef.set({ ...complaintData, isSampleData: true });
 
-    if (timeline && timeline.length > 0) {
-      for (const ev of timeline) {
-        await complaintRef.collection('timeline').doc(ev.id).set(ev);
+      if (timeline && timeline.length > 0) {
+        for (const ev of timeline) {
+          await complaintRef.collection('timeline').doc(ev.id).set(ev);
+        }
       }
     }
   }
@@ -354,7 +322,11 @@ async function seed() {
   process.exit(0);
 }
 
-seed().catch((err) => {
-  console.error('Fatal error seeding Firestore:', err);
-  process.exit(1);
-});
+// Only auto-run if directly invoked as main script
+const isMain = process.argv[1] && process.argv[1].endsWith('seed-firebase.js');
+if (isMain) {
+  seed().catch((err) => {
+    console.error('\n✖ Fatal error seeding Firestore:', err.message || err);
+    process.exit(1);
+  });
+}

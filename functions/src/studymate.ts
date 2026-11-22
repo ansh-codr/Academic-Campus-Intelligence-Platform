@@ -308,7 +308,7 @@ export const askStudyMateAi = onCall(
     if (apiKey) {
       try {
         const ai = new GoogleGenAI({ apiKey });
-        
+
         // Build conversation contents with server-side validation of conversation history
         const contents: any[] = [];
         if (Array.isArray(data.conversationHistory) && data.conversationHistory.length > 0) {

@@ -1,4 +1,4 @@
-import { CampusTicket, IssueCluster, CampusClub, CampusDepartment } from '@solvesphere/shared';
+import type { CampusTicket, IssueCluster, CampusClub, CampusDepartment } from '@solvesphere/shared';
 
 export const FIXTURE_TICKETS: CampusTicket[] = [
   {

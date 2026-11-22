@@ -1,4 +1,4 @@
-import { SubjectSummary, SyllabusTopic, StudyResource, PracticeModule } from '@solvesphere/shared';
+import type { SubjectSummary, SyllabusTopic, StudyResource, PracticeModule } from '@solvesphere/shared';
 
 export const FIXTURE_SUBJECTS: SubjectSummary[] = [
   {
