@@ -2770,8 +2770,189 @@ async function runTests() {
 
   console.log(`✓ Test 51 Passed: Admin-created academic subjects, syllabus topics, protected quizzes, campus departments, and clubs are fully visible to students with answer keys protected.`);
 
+  // --------------------------------------------------------------------------
+  // TEST 52: Negative Assessment Publication Integrity & Draft Protection
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 52] Verifying Negative Assessment Publication Integrity & Draft Protection...`);
+
+  // Switch back to Admin
+  await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+
+  // Negative 1: Admin tries to publish quiz with empty question text
+  await assert.rejects(
+    async () => {
+      await adminSaveQuizCallable({
+        quiz: {
+          subjectId: realSubjId,
+          title: 'Invalid Quiz - Empty Question',
+          durationMinutes: 15,
+          difficulty: 'BEGINNER',
+          published: true,
+        },
+        questions: [
+          {
+            questionText: '   ',
+            options: ['Opt A', 'Opt B', 'Opt C', 'Opt D'],
+            correctOptionIndex: 0,
+            explanation: 'Valid explanation here.',
+            order: 1,
+          },
+        ],
+      });
+    },
+    (err) => err.code?.includes('invalid-argument') || /validation|invalid-argument/i.test(err.message),
+    'Publishing a quiz with empty question text must be rejected with invalid-argument'
+  );
+
+  // Negative 2: Admin tries to publish quiz with empty option string
+  await assert.rejects(
+    async () => {
+      await adminSaveQuizCallable({
+        quiz: {
+          subjectId: realSubjId,
+          title: 'Invalid Quiz - Blank Option',
+          durationMinutes: 15,
+          difficulty: 'BEGINNER',
+          published: true,
+        },
+        questions: [
+          {
+            questionText: 'Valid question text here?',
+            options: ['Option 1', '', 'Option 3', 'Option 4'],
+            correctOptionIndex: 0,
+            explanation: 'Valid explanation here.',
+            order: 1,
+          },
+        ],
+      });
+    },
+    (err) => err.code?.includes('invalid-argument') || /validation|invalid-argument/i.test(err.message),
+    'Publishing a quiz with empty options must be rejected with invalid-argument'
+  );
+
+  // Negative 3: Admin tries to publish quiz with invalid correctOptionIndex
+  await assert.rejects(
+    async () => {
+      await adminSaveQuizCallable({
+        quiz: {
+          subjectId: realSubjId,
+          title: 'Invalid Quiz - Out of Range Correct Index',
+          durationMinutes: 15,
+          difficulty: 'BEGINNER',
+          published: true,
+        },
+        questions: [
+          {
+            questionText: 'Valid question text here?',
+            options: ['Option 1', 'Option 2', 'Option 3', 'Option 4'],
+            correctOptionIndex: 5, // Invalid: must be 0-3
+            explanation: 'Valid explanation here.',
+            order: 1,
+          },
+        ],
+      });
+    },
+    (err) => err.code?.includes('invalid-argument') || /validation|invalid-argument/i.test(err.message),
+    'Publishing a quiz with correctOptionIndex > 3 must be rejected with invalid-argument'
+  );
+
+  // Negative 4: Admin tries to publish quiz with empty explanation
+  await assert.rejects(
+    async () => {
+      await adminSaveQuizCallable({
+        quiz: {
+          subjectId: realSubjId,
+          title: 'Invalid Quiz - Missing Explanation',
+          durationMinutes: 15,
+          difficulty: 'BEGINNER',
+          published: true,
+        },
+        questions: [
+          {
+            questionText: 'Valid question text here?',
+            options: ['Option 1', 'Option 2', 'Option 3', 'Option 4'],
+            correctOptionIndex: 1,
+            explanation: '   ',
+            order: 1,
+          },
+        ],
+      });
+    },
+    (err) => err.code?.includes('invalid-argument') || /validation|invalid-argument/i.test(err.message),
+    'Publishing a quiz with empty explanation must be rejected with invalid-argument'
+  );
+
+  // Draft Flow: Admin saves incomplete quiz as draft (published: false)
+  const draftQuizRes = await adminSaveQuizCallable({
+    quiz: {
+      subjectId: realSubjId,
+      title: 'In-Progress Incomplete Draft Assessment',
+      description: 'Draft notes still being compiled by faculty.',
+      durationMinutes: 15,
+      difficulty: 'BEGINNER',
+      published: false,
+    },
+    questions: [
+      {
+        questionText: 'Draft question title without all 4 options',
+        options: ['Candidate Draft Option A'],
+        correctOptionIndex: 0,
+        explanation: 'Work in progress',
+        order: 1,
+      },
+    ],
+  });
+  assert.ok(draftQuizRes.data?.success, 'Saving draft quiz must succeed');
+  const draftQuizId = draftQuizRes.data?.quizId;
+  assert.ok(draftQuizId);
+
+  // Switch to Student
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+
+  // Negative 5: Student cannot fetch questions for unpublished draft quiz
+  await assert.rejects(
+    async () => {
+      await getQuizQuestionsCallable({ quizId: draftQuizId });
+    },
+    (err) => err.code?.includes('failed-precondition') || /unpublished|draft|failed-precondition/i.test(err.message),
+    'Student attempting to get questions for draft quiz must be rejected with failed-precondition'
+  );
+
+  // Negative 6: Student cannot submit attempts for unpublished draft quiz
+  const submitQuizCallable52 = httpsCallable(clientFunctions, 'submitQuiz');
+  await assert.rejects(
+    async () => {
+      await submitQuizCallable52({
+        quizId: draftQuizId,
+        answers: [{ questionId: 'any-q-id', selectedOptionIndex: 0 }],
+      });
+    },
+    (err) => err.code?.includes('failed-precondition') || /unpublished|draft|failed-precondition/i.test(err.message),
+    'Student attempting to submit draft quiz must be rejected with failed-precondition'
+  );
+
+  // Negative 7: Non-admin student cannot call adminSaveQuiz
+  await assert.rejects(
+    async () => {
+      await adminSaveQuizCallable({
+        quiz: {
+          subjectId: realSubjId,
+          title: 'Unauthorized Student Created Quiz',
+          durationMinutes: 10,
+          difficulty: 'BEGINNER',
+          published: false,
+        },
+        questions: [],
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission|unauthorized|denied/i.test(err.message),
+    'Student attempting to invoke adminSaveQuiz must be rejected with permission-denied'
+  );
+
+  console.log(`✓ Test 52 Passed: Negative assessment validation, draft isolation, and unauthorized caller blocks confirmed.`);
+
   console.log(`\n======================================================`);
-  console.log(`  ALL 51 INTEGRATION, AI & SECURITY TESTS PASSED!`);
+  console.log(`  ALL 52 INTEGRATION, AI & SECURITY TESTS PASSED!`);
   console.log(`======================================================\n`);
   process.exit(0);
 }

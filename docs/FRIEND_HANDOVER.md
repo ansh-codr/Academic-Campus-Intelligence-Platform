@@ -33,4 +33,4 @@ Read in this order:
 - [ ] Source transfer and any existing live data transfer separately authorized and documented.
 
 ## Current state
-As of Phase 7 merge, source builds and IDE-reported emulator tests exist, but no live production deployment, Gemini inference or receiving-owner provisioning was independently confirmed. Do not mark handover complete before those steps.
+As of Phase 8 completion, real Firestore-backed services, dedicated admin management interfaces (`/admin/departments`, `/admin/clubs`, `/admin/academic`), assessment publication integrity & draft protection, read-only sample auditing, and 52 automated emulator integration/security tests exist and pass. However, **no live production deployment to Google Cloud/Firebase, live Gemini inference against production billing quotas, or receiving-owner project provisioning has been independently executed**. Do not mark handover complete before those operational steps are carried out on the receiving owner's GCP project.

@@ -1,31 +1,30 @@
-# SolveSphere AI — Data Inventory & Safe Cleanup Plan
+# SolveSphere AI — Data Inventory & Safe Handover Review
 
 **Document ID:** `SOLVESPHERE-OPS-008`  
-**Version:** 1.0.0  
+**Version:** 1.1.0  
 **Target Environment:** Firebase Firestore (Emulator, Staging, Production)  
 **Strict Policy:** **Zero Deletion of Live Production Records**
 
 ---
 
-## 1. Executive Policy
+## 1. Executive Policy & Non-Destructive Standard
 
-Under Phase 8 real-data handover, SolveSphere AI mandates that:
-1. **Live database records are never deleted automatically** by migration scripts, tests, or deployment triggers.
-2. Production applications display genuine empty states when a university department or academic registry is empty, rather than synthesizing mock records.
-3. Development seed scripts (`scripts/seed-firebase.js`) are strictly blocked from running against live Firebase projects unless multi-step environment flags are set.
-4. Any cleanup of legacy demonstration records must run in a dry-run audit mode first, generating an inventory for university administrator approval.
+Under Phase 8 real-data handover, SolveSphere AI enforces that:
+1. **The inventory tool (`scripts/inventory-sample-data.js`) is strictly read-only.** It contains zero deletion logic, performs zero mutations, and refuses destructive flags.
+2. **Ambiguous provenance is separated from explicit sample data.** A document with `[DEMO]` in its title is never automatically classified as disposable; human inspection is required to avoid deleting genuine university test-pilot courses or student clubs.
+3. **Candidate sample documents require explicit provenance tags**, such as `isSampleData: true` or `isDemoFixture: true`.
+4. **Live database records are never purged automatically** by test suites, deployment scripts, or CI/CD pipelines.
+5. **Zero data deletion in production:** Production deployments begin with empty Firestore collections displaying authentic Empty States, rather than mock records.
 
 ---
 
-## 2. Sample Data vs. Production Data Contract
+## 2. Sample Data vs. Production Data Classification
 
-All documents in Firestore collections adhere to the following contract:
-
-| Field | Production Data | Demonstration / Sample Data |
+| Classification | Determining Condition | Handover Action |
 | :--- | :--- | :--- |
-| `isSampleData` | `false` or absent | `true` |
-| `submittedById` / `uploadedById` | Valid Firebase Auth UID | `demo-*` or `seed-*` |
-| Authoritative Source | University Faculty / Facilities Admin | `scripts/seed-firebase.js` / test fixtures |
+| **Explicit Sample Data** | `isSampleData: true`, `isDemoFixture: true`, or `sampleRecord: true` | Cataloged in audit inventory as safe candidate for developer removal in emulator/sandbox environments. |
+| **Ambiguous Provenance** | Contains `[DEMO]` in title/name without explicit `isSampleData` flag | Reported in a distinct category for manual institutional administrator review. Never auto-deleted. |
+| **Production Data** | Real university records created by authenticated users | Retained permanently. Zero mutations. |
 
 ### Monitored Collections
 - `subjects`: Accredited university courses.
@@ -40,11 +39,11 @@ All documents in Firestore collections adhere to the following contract:
 
 ---
 
-## 3. Running the Dry-Run Inventory Tool
+## 3. Running the Read-Only Inventory Tool
 
 The repository provides `scripts/inventory-sample-data.js`, which inspects all target collections without executing any write or delete operations.
 
-### Local Emulator Verification
+### Local Emulator Inspection
 ```bash
 FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 node scripts/inventory-sample-data.js
 ```
@@ -55,28 +54,26 @@ GCLOUD_PROJECT=your-institution-firebase-project node scripts/inventory-sample-d
 ```
 
 The script produces:
-1. Console breakdown of total documents, sample documents, and genuine production documents per collection.
+1. A categorized breakdown of total documents, explicit sample documents, ambiguous documents, and genuine production records.
 2. A machine-readable audit report saved to `./sample-data-inventory-report.json`.
-3. Zero mutations to the database.
+3. Guarantees zero mutations or deletions to the database.
 
 ---
 
-## 4. Multi-Step Owner-Approved Cleanup Procedure
+## 4. Owner-Authorized Future Cleanup Procedure
 
-If university stakeholders review `./sample-data-inventory-report.json` and grant explicit authorization to remove sample records from a pre-production or staging project:
+If university stakeholders review `./sample-data-inventory-report.json` and grant explicit authorization to remove sample records from a pre-production or staging project, the following protocol must be observed:
 
-1. **Perform a Firestore Export Backup**:
+1. **Perform a Full Firestore Export Backup**:
    ```bash
    gcloud firestore export gs://[YOUR_BACKUP_BUCKET]/pre-cleanup-backup --project=[YOUR_PROJECT_ID]
    ```
 
-2. **Execute Authorized Cleanup**:
-   ```bash
-   GCLOUD_PROJECT=[YOUR_PROJECT_ID] \
-   CONFIRM_CLEANUP_PROJECT_ID=[YOUR_PROJECT_ID] \
-   EXECUTE_SAMPLE_CLEANUP=true \
-   node scripts/inventory-sample-data.js
-   ```
+2. **Manually Review Document IDs**:
+   Inspect `./sample-data-inventory-report.json` to verify that every document ID slated for removal is an acknowledged demo document. Ambiguous documents must be individually verified by the institution administrator.
 
-3. **Verify Integrity**:
-   Re-run the inventory script in dry-run mode to confirm sample count is 0 and production records remain unchanged.
+3. **Targeted Non-Recursive Deletion**:
+   Execute deletions only against an explicit allowlist of approved document IDs. Never delete recursively or drop entire collections.
+
+4. **Re-Run Inventory Verification**:
+   Re-run `scripts/inventory-sample-data.js` to confirm the explicit sample count is 0 and all production records remain intact.

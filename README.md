@@ -128,10 +128,10 @@ Public registration only creates accounts with `role: 'STUDENT'`. Admin accounts
 
 A comprehensive integration test suite verifies the complete platform:
 ```bash
-firebase emulators:exec --only auth,firestore "node tests/firebase.test.js"
+firebase emulators:exec --only auth,firestore,functions,storage "node tests/firebase.test.js"
 ```
 
-**Verified Test Scenarios:**
+**Verified Test Scenarios (52 automated test suites):**
 1. Student Account Registration in Firebase Auth and Cloud Firestore.
 2. Privilege Escalation Prevention (Public users cannot self-assign ADMIN role).
 3. Admin Account Provisioning with verified `{ role: 'ADMIN' }` custom claims.
@@ -139,12 +139,22 @@ firebase emulators:exec --only auth,firestore "node tests/firebase.test.js"
 5. Student Ownership Isolation (Students only see their own tickets).
 6. Admin Ticket Status Transitions (`SUBMITTED -> UNDER_REVIEW -> ASSIGNED -> IN_PROGRESS -> RESOLVED`).
 7. Department Assignment with auditable timeline event logs.
-8. Database Seeding for 6 academic subjects, topics, and resources.
+8. Database Seeding for academic subjects, topics, and resources.
+9. Campus Care AI Semantic Clustering with lease fences and idempotency.
+10. Protected Question Bank Provisioning and Server-Side Quiz Grading.
+11. Dedicated Admin Real Data Management (`/admin/departments`, `/admin/clubs`, `/admin/academic`).
+12. Assessment Publication Validation & Unpublished Draft Isolation (Drafts protected from student access).
+13. Read-Only Sample Data Inventory & Safety Auditing.
 
 ---
 
-## 7. Recommended Next Steps for Phase 3
+## 7. Operational Handover & Infrastructure Constraints
 
-1. **AI Service Layer**: Connect Google Gemini API for StudyMate AI conversational study assistance.
-2. **Semantic Clustering**: Cloud Function vector embeddings to group duplicate complaints using cosine similarity.
-3. **Real-time Push Notifications**: Firebase Cloud Messaging (FCM) web push notifications on ticket status transitions.
+- **Backend Architecture**: SolveSphere AI strictly utilizes Google Cloud / Firebase (Firebase Authentication, Cloud Firestore, Cloud Functions TypeScript LTS, Firebase Cloud Storage) and Google Gemini AI. No other backend services are used.
+- **Dedicated Administrative Command Interfaces**:
+  - `/admin/academic`, `/admin/subjects`, `/admin/topic-updates`, `/admin/resources`: Manage accredited subjects, syllabus progression, and curriculum resources.
+  - Quiz Manager: Draft or validate and publish assessments with protected answer keys and server-side grading.
+  - `/admin/departments`: Manage campus maintenance departments, contact channels, and triage dispatch routes.
+  - `/admin/clubs`: Register student campus clubs and activity schedules.
+  - `/admin/complaints` & `/admin/clusters`: Triage student tickets, review semantic clusters, and monitor lifecycle audits.
+- **Production Status & Operational Boundaries**: All automated verification suites (typecheck, unit, UI, Firebase Emulator integration) pass locally. **Live deployment to Google Cloud and live Gemini API quota inference** are not yet executed in a production environment and remain the responsibility of the receiving owner per `docs/DEPLOYMENT_RUNBOOK.md` and `docs/FRIEND_HANDOVER.md`.

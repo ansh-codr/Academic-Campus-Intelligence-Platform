@@ -127,6 +127,7 @@ export const CampusService = {
       }
     } catch (err) {
       console.error('Unable to load live complaints:', err);
+      throw err;
     }
 
     return [];
@@ -196,6 +197,7 @@ export const CampusService = {
       }
     } catch (err) {
       console.warn('Error fetching ticket by ID:', err);
+      throw err;
     }
     return null;
   },
@@ -209,10 +211,11 @@ export const CampusService = {
       if (!snap.empty) {
         return snap.docs.map((d) => ({ id: d.id, ...d.data() } as CampusDepartment));
       }
-    } catch {
-      // ignore
+      return [];
+    } catch (err) {
+      console.error('Error fetching departments:', err);
+      throw err;
     }
-    return [];
   },
 
   /**
@@ -248,10 +251,11 @@ export const CampusService = {
       if (!snap.empty) {
         return snap.docs.map((d) => ({ id: d.id, ...d.data() } as IssueCluster));
       }
-    } catch {
-      // ignore
+      return [];
+    } catch (err) {
+      console.error('Error fetching clusters:', err);
+      throw err;
     }
-    return [];
   },
 
   /**
@@ -312,12 +316,13 @@ export const CampusService = {
     try {
       const snap = await getDocs(collection(db, 'campusClubs'));
       if (!snap.empty) {
-        return snap.docs.map((d) => ({ id: d.id, ...d.data() } as CampusClub));
+        return snap.docs.map((d) => ({ id: d.id, ...d.data() } as CampusClub)).filter((c) => !c.isArchived);
       }
-    } catch {
-      // ignore
+      return [];
+    } catch (err) {
+      console.error('Error fetching clubs:', err);
+      throw err;
     }
-    return [];
   },
 
   /**

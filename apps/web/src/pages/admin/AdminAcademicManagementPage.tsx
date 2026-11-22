@@ -294,8 +294,7 @@ export const AdminAcademicManagementPage: React.FC = () => {
     }
   };
 
-  const handleSaveQuiz = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveQuiz = async (publish: boolean) => {
     if (!quizTitle.trim()) {
       alert('Quiz title is required.');
       return;
@@ -306,10 +305,31 @@ export const AdminAcademicManagementPage: React.FC = () => {
       return;
     }
 
-    const validQuestions = quizQuestions.filter((q) => q.questionText.trim().length > 0);
-    if (validQuestions.length === 0) {
-      alert('Please add at least one question with text and options.');
-      return;
+    if (publish) {
+      if (quizQuestions.length === 0) {
+        alert('Cannot publish assessment: at least one question is required.');
+        return;
+      }
+
+      for (let i = 0; i < quizQuestions.length; i++) {
+        const q = quizQuestions[i];
+        if (q.questionText.trim().length < 3) {
+          alert(`Question ${i + 1}: Meaningful question text is required before publishing.`);
+          return;
+        }
+        if (q.options.some((opt) => opt.trim().length === 0)) {
+          alert(`Question ${i + 1}: All 4 answer options must be explicitly filled out. Placeholder or empty options are forbidden.`);
+          return;
+        }
+        if (q.correctOptionIndex < 0 || q.correctOptionIndex >= q.options.length) {
+          alert(`Question ${i + 1}: A valid correct answer must be selected.`);
+          return;
+        }
+        if (q.explanation.trim().length < 3) {
+          alert(`Question ${i + 1}: An explicit faculty explanation is required for student review.`);
+          return;
+        }
+      }
     }
 
     try {
@@ -322,15 +342,17 @@ export const AdminAcademicManagementPage: React.FC = () => {
           durationMinutes: Number(quizDuration) || 15,
           difficulty: quizDifficulty,
           type: 'QUIZ',
-          published: true,
+          published: publish,
         },
-        validQuestions.map((q, idx) => ({
-          questionText: q.questionText.trim(),
-          options: q.options.map((opt, i) => opt.trim() || `Option ${String.fromCharCode(65 + i)}`),
-          correctOptionIndex: q.correctOptionIndex,
-          explanation: q.explanation.trim() || 'Official faculty explanation.',
-          order: idx + 1,
-        }))
+        quizQuestions
+          .filter((q) => q.questionText.trim().length > 0 || !publish)
+          .map((q, idx) => ({
+            questionText: q.questionText.trim(),
+            options: q.options.map((opt) => opt.trim()),
+            correctOptionIndex: q.correctOptionIndex,
+            explanation: q.explanation.trim(),
+            order: idx + 1,
+          }))
       );
 
       setIsNewQuizModalOpen(false);
@@ -1052,7 +1074,7 @@ export const AdminAcademicManagementPage: React.FC = () => {
           title="Create Practice Assessment"
           description="Provision a multiple-choice practice quiz with trusted server-side answers."
         >
-          <form onSubmit={handleSaveQuiz} className="space-y-4 text-xs sm:text-sm max-h-[75vh] overflow-y-auto pr-1">
+          <form onSubmit={(e) => { e.preventDefault(); handleSaveQuiz(true); }} className="space-y-4 text-xs sm:text-sm max-h-[75vh] overflow-y-auto pr-1">
             <div>
               <label className="font-bold text-slate-300 block mb-1">Target Academic Course</label>
               <select
@@ -1221,8 +1243,17 @@ export const AdminAcademicManagementPage: React.FC = () => {
               <Button variant="outline" size="sm" type="button" onClick={() => setIsNewQuizModalOpen(false)}>
                 Cancel
               </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                type="button"
+                disabled={isLoading}
+                onClick={() => handleSaveQuiz(false)}
+              >
+                Save as Draft
+              </Button>
               <Button variant="gradient" size="sm" type="submit" disabled={isLoading}>
-                {isLoading ? 'Saving...' : 'Save & Publish Assessment'}
+                {isLoading ? 'Saving...' : 'Validate & Publish Assessment'}
               </Button>
             </div>
           </form>

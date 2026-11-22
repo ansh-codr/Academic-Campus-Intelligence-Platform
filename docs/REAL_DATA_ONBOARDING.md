@@ -26,12 +26,19 @@
 
 ## Real onboarding order (no fixtures)
 1. Owner provisions independent Firebase project and grants scoped admin access.
-2. Administrator enters institution departments, naming conventions and official campus buildings.
-3. Faculty/admin enters subjects, courses, syllabus topics, semester/year and authentic study resources.
-4. Admin publishes reviewed quizzes/questions using protected operations.
-5. Institution staff registers current campus clubs and verified contacts.
-6. Students register and create their own records, attempts, progress and maintenance tickets.
-7. AI summarizes and suggests, but never invents official incidents or marks them verified.
+2. Administrator navigates to dedicated admin interfaces to enter genuine institutional data:
+   - `/admin/departments` (`AdminDepartmentsPage`): Enter campus maintenance departments, contact emails, category tags, and operational dispatch settings.
+   - `/admin/academic` or `/admin/subjects` (`AdminAcademicManagementPage`): Enter verified subjects, semester metadata, course codes, and syllabus topics.
+   - `/admin/resources`: Attach faculty-approved curriculum resources and vetted study materials.
+   - Quiz Management modal on `/admin/academic`: Draft or validate and publish protected assessments with mandatory non-empty options and explanations. Answer keys are securely stored in protected subcollections.
+   - `/admin/clubs` (`AdminClubsPage`): Register recognized student organizations, faculty contacts, and meeting schedules.
+3. Students register their own accounts (`role: 'STUDENT'`), view active course syllabi, take published assessments graded server-side, and submit campus maintenance complaints.
+4. Campus triage administrators manage lifecycle transitions and inspect semantic incident clusters at `/admin/complaints` and `/admin/clusters`.
+5. AI summarizes and suggests, but never invents official incidents or marks them verified.
+
+## Architecture and Current Environment Limitations
+- **GCP & Firebase Infrastructure**: SolveSphere AI exclusively targets Google Cloud / Firebase (Authentication, Cloud Firestore, Cloud Storage, TypeScript Cloud Functions) and Google Gemini AI. Alternative backends (e.g. AWS, Supabase, Prisma) are prohibited.
+- **Verification Status**: In-depth automated integration, AI accuracy, security rules, and client build tests pass 100% under the local Firebase Emulator Suite. However, **live production deployment to a live Google Cloud / Firebase project and live Gemini inference quota** have not yet been performed and must be verified by the receiving organization following `docs/DEPLOYMENT_RUNBOOK.md` and `docs/FRIEND_HANDOVER.md`.
 
 ## Existing sample data in Firestore
 Changing code **does not delete documents already seeded in a database**. Before considering removal:

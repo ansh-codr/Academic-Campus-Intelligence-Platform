@@ -33,6 +33,7 @@ export const MyTicketsPage: React.FC = () => {
   const [isReopening, setIsReopening] = useState(false);
   const [reopenMessage, setReopenMessage] = useState<string | null>(null);
   const [reopenError, setReopenError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const handleReopenTicket = async () => {
     if (!reopenModalTicket || reopenReason.trim().length < 5) return;
@@ -54,14 +55,22 @@ export const MyTicketsPage: React.FC = () => {
   // Real-time Firestore subscription: updates automatically on changes
   useEffect(() => {
     const userId = role === 'ADMIN' ? undefined : user?.id;
-    const unsubscribe = CampusService.subscribeTickets((updatedTickets) => {
-      setTickets(updatedTickets);
-      // Also update selectedTicket if it is open in modal
-      if (selectedTicket) {
-        const found = updatedTickets.find((t) => t.id === selectedTicket.id);
-        if (found) setSelectedTicket(found);
+    const unsubscribe = CampusService.subscribeTickets(
+      (updatedTickets) => {
+        setTickets(updatedTickets);
+        setLoadError(null);
+        // Also update selectedTicket if it is open in modal
+        if (selectedTicket) {
+          const found = updatedTickets.find((t) => t.id === selectedTicket.id);
+          if (found) setSelectedTicket(found);
+        }
+      },
+      userId,
+      (err) => {
+        console.error('Subscription error in MyTicketsPage:', err);
+        setLoadError('Failed to synchronize campus tickets. Please check your network connection.');
       }
-    }, userId);
+    );
 
     return () => unsubscribe();
   }, [user?.id, role]);
@@ -113,6 +122,13 @@ export const MyTicketsPage: React.FC = () => {
           </Button>
         </Link>
       </div>
+
+      {loadError && (
+        <div role="alert" className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-800 dark:text-rose-300 flex items-center gap-2 animate-in fade-in">
+          <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
+          <span>{loadError}</span>
+        </div>
+      )}
 
       {reopenMessage && (
         <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2 animate-in fade-in">

@@ -10,13 +10,21 @@ The routes `/admin/subjects`, `/admin/topic-updates` and `/admin/resources` are 
 Use `/admin/complaints` and `/admin/clusters` to triage actual submitted tickets, assign existing active departments, record lifecycle transitions and verify incident grouping. AI duplicate suggestions are not official resolutions. Students must retain ownership of their individual tickets. Review audit timelines before closing.
 
 ## Departments and clubs
-The service layer offers trusted `adminManageDepartment` and `adminManageClub` operations. **Known UI gap:** `/admin/departments` and `/admin/clubs` currently route to the generic admin dashboard; add and verify dedicated forms before calling these flows complete.
+Dedicated management interfaces are fully operational at `/admin/departments` (`AdminDepartmentsPage`) and `/admin/clubs` (`AdminClubsPage`).
+- `/admin/departments`: Create and edit maintenance departments, assign category specialties (e.g. Electrical, HVAC, Sanitation, General Infrastructure), specify faculty/staff heads and official contact emails, and toggle active triage routing status.
+- `/admin/clubs`: Register student organizations, update descriptions, assign student leads, record meeting schedules, and archive discontinued clubs.
+All changes commit directly to Firestore via authenticated `adminManageDepartment` and `adminManageClub` Cloud Functions enforcing custom claim `role === 'ADMIN'`.
 
 ## Sensitive reports
 The Speak Freely direct submission workflow is disabled. Do not imply anonymity or manually bypass its privacy guard.
 
 ## Daily operations
 Check errors in Functions logs without leaking complaint/AI personal content; review scheduler, quota and billing alerts; check incident queues, failed clustering attempts and department accuracy. Do not run emulator sample seeding against live Firestore.
+
+## Architecture and Infrastructure Constraints
+- The platform is strictly built upon Google Cloud / Firebase infrastructure (Firebase Authentication, Cloud Firestore, Cloud Functions TypeScript LTS, Firebase Cloud Storage) and Google Gemini AI.
+- No third-party backend substitutes (AWS, Supabase, MongoDB, Prisma) are permitted.
+- Live deployment to Google Cloud and live Gemini API quota validation are to be verified per the handover protocol; testing is verified through the Firebase Emulator Suite.
 
 ## Before publication
 Confirm every course, department, club and administrator profile with authorized institution staff. Record changes and rollback choices. See `docs/REAL_DATA_ONBOARDING.md` and `docs/DEPLOYMENT_RUNBOOK.md`.
