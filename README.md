@@ -100,14 +100,13 @@ Access the application at `http://localhost:5173`.
 
 ---
 
-## 4. Default Test Credentials (Emulator Mode)
+## 4. Authentication and Administrator Handover
 
-| Role | Email | Password | Display Name | Permissions |
-|---|---|---|---|---|
-| **Student** | `student.demo@campus.edu` | `Student@2026` | Test Student | Student Portal, Issue Reporting, My Tickets, Study Resources |
-| **Admin** | `admin@campus.edu` | `SolveSphereAdmin@2026` | Test Administrator | Full Administrative Command, Triage, Status Changes, Assignments |
+**No real administrator login credentials are shipped with the repository.** Emulator fixture accounts are not valid for the hosted Firebase development project. Do not use any example emails/passwords in live authentication.
 
-*Note: In production builds, login forms use genuine email/password authentication via Firebase Auth with email verification. One-click demo fill buttons and hardcoded credentials have been completely eradicated from production client bundles.*
+To provision a real ADMIN account **only after the current owner explicitly authorizes it**, follow [Administrator Account Provisioning](docs/ADMIN_ACCOUNT_PROVISIONING.md). After creating the account, the owner must transfer its credentials by a separate secure method and require a password change. Do not commit credentials or paste them into issues or chat.
+
+For the receiving operator's step-by-step guide, see [Friend Admin Handover](docs/FINAL_FRIEND_ADMIN_HANDOVER.md).
 
 ---
 
