@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AcademicService } from '@/services/academicService';
 import { Quiz, SanitizedQuizQuestion, QuizAttempt, QuizAnswerSubmission } from '@solvesphere/shared';
-import { useAuth } from '@/hooks/useAuthDemo';
+import { useAuth } from '@/hooks/useAuth';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -28,6 +28,7 @@ export const PracticeQuizzesPage: React.FC = () => {
   const [attempts, setAttempts] = useState<QuizAttempt[]>([]);
   const [activeTab, setActiveTab] = useState<'ALL' | 'QUIZ' | 'EXAM_PREP' | 'ATTEMPTS'>('ALL');
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Active Quiz State
   const [activeQuiz, setActiveQuiz] = useState<Quiz | null>(null);
@@ -48,6 +49,10 @@ export const PracticeQuizzesPage: React.FC = () => {
         ]);
         setQuizzes(loadedQuizzes);
         setAttempts(userAttempts);
+        setLoadError(null);
+      } catch (err: any) {
+        console.error('Failed to load quizzes:', err);
+        setLoadError(err?.message || 'Failed to load practice assessments.');
       } finally {
         setIsLoading(false);
       }
@@ -154,6 +159,15 @@ export const PracticeQuizzesPage: React.FC = () => {
         </p>
       </div>
 
+      {loadError && (
+        <div
+          role="alert"
+          className="p-4 rounded-xl border border-red-500/30 bg-red-950/20 text-red-200 text-xs sm:text-sm flex items-center justify-between"
+        >
+          <span>{loadError}</span>
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="flex flex-wrap gap-2 p-1.5 bg-slate-100 dark:bg-slate-800/80 rounded-2xl">
         {[
@@ -225,6 +239,12 @@ export const PracticeQuizzesPage: React.FC = () => {
             </div>
           )}
         </div>
+      ) : filteredQuizzes.length === 0 ? (
+        <EmptyState
+          icon={<HelpCircle className="w-10 h-10" />}
+          title="No quizzes available"
+          description="Check back later or browse other practice tabs."
+        />
       ) : (
         /* Practice Modules Grid */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

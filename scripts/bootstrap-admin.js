@@ -135,8 +135,6 @@ async function bootstrapAdmin() {
   const auth = admin.auth();
   const db = admin.firestore();
 
-  const studentId = 'ADM-8802';
-
   console.log(`\n======================================================`);
   console.log(`  SolveSphere AI — Admin Account Bootstrap`);
   console.log(`  Target Email: ${config.email}`);
@@ -148,8 +146,12 @@ async function bootstrapAdmin() {
     userRecord = await auth.getUserByEmail(config.email);
     console.log(`✓ Existing Firebase Auth user found: ${userRecord.uid}`);
     if (config.password) {
-      await auth.updateUser(userRecord.uid, { password: config.password });
-      console.log(`✓ Password updated for existing account.`);
+      if (config.isEmulator || process.env.OVERWRITE_EXISTING_ADMIN_PASSWORD === 'true') {
+        await auth.updateUser(userRecord.uid, { password: config.password });
+        console.log(`✓ Password updated for existing account.`);
+      } else {
+        console.log(`ℹ Preserving existing account password in live environment (set OVERWRITE_EXISTING_ADMIN_PASSWORD="true" to update).`);
+      }
     }
   } catch (error) {
     if (error.code === 'auth/user-not-found') {
@@ -165,9 +167,10 @@ async function bootstrapAdmin() {
     }
   }
 
-  // Set Custom Claims for Admin Role
+  // Set Custom Claims for Admin Role (preserving any unrelated existing custom claims)
   console.log(`Setting custom claim { role: 'ADMIN' } on UID: ${userRecord.uid}...`);
-  await auth.setCustomUserClaims(userRecord.uid, { role: 'ADMIN' });
+  const existingClaims = userRecord.customClaims || {};
+  await auth.setCustomUserClaims(userRecord.uid, { ...existingClaims, role: 'ADMIN' });
   console.log(`✓ Custom claims set successfully.`);
 
   // Write/Update Firestore profile in `users/{uid}`
@@ -177,15 +180,23 @@ async function bootstrapAdmin() {
       id: userRecord.uid,
       email: config.email,
       fullName: config.fullName,
-      studentId,
       role: 'ADMIN',
-      department: 'Academic Affairs & Campus Operations',
+      department: 'Central Administration',
       updatedAt: new Date().toISOString(),
       createdAt: new Date().toISOString(),
     },
     { merge: true }
   );
   console.log(`✓ Firestore user profile updated.`);
+
+  // Write privacy-safe audit record
+  await db.collection('adminAuditLogs').add({
+    action: 'ADMIN_PROVISIONED',
+    targetUid: userRecord.uid,
+    targetEmail: config.email,
+    timestamp: new Date().toISOString(),
+    environment: config.isEmulator ? 'EMULATOR' : 'LIVE',
+  });
 
   console.log(`\n======================================================`);
   console.log(`  Admin account provisioned successfully!`);

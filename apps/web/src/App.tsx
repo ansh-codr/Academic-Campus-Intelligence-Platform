@@ -1,7 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation, Link } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { AuthProvider, useAuth } from '@/hooks/useAuthDemo';
+import { AuthProvider, useAuth } from '@/hooks/useAuth';
 
 // Layouts
 import { PublicLayout } from '@/layouts/PublicLayout';
@@ -14,6 +14,7 @@ const LandingPage = React.lazy(() => import('@/pages/landing/LandingPage').then(
 // Auth Pages
 const StudentLoginPage = React.lazy(() => import('@/pages/auth/StudentLoginPage').then((module) => ({ default: module.StudentLoginPage })));
 const StudentRegisterPage = React.lazy(() => import('@/pages/auth/StudentRegisterPage').then((module) => ({ default: module.StudentRegisterPage })));
+const CompleteProfilePage = React.lazy(() => import('@/pages/auth/CompleteProfilePage').then((module) => ({ default: module.CompleteProfilePage })));
 const ForgotPasswordPage = React.lazy(() => import('@/pages/auth/ForgotPasswordPage').then((module) => ({ default: module.ForgotPasswordPage })));
 const AdminLoginPage = React.lazy(() => import('@/pages/auth/AdminLoginPage').then((module) => ({ default: module.AdminLoginPage })));
 
@@ -36,13 +37,19 @@ const SettingsPage = React.lazy(() => import('@/pages/student/SettingsPage').the
 
 // Admin Portal Pages
 const AdminDashboardPage = React.lazy(() => import('@/pages/admin/AdminDashboardPage').then((module) => ({ default: module.AdminDashboardPage })));
+const AdminEnrollmentsPage = React.lazy(() => import('@/pages/admin/AdminEnrollmentsPage').then((module) => ({ default: module.AdminEnrollmentsPage })));
+const AdminStudentsPage = React.lazy(() => import('@/pages/admin/AdminStudentsPage').then((module) => ({ default: module.AdminStudentsPage })));
 const AdminAcademicManagementPage = React.lazy(() => import('@/pages/admin/AdminAcademicManagementPage').then((module) => ({ default: module.AdminAcademicManagementPage })));
 const AdminComplaintsClustersPage = React.lazy(() => import('@/pages/admin/AdminComplaintsClustersPage').then((module) => ({ default: module.AdminComplaintsClustersPage })));
+const AdminDepartmentsPage = React.lazy(() => import('@/pages/admin/AdminDepartmentsPage').then((module) => ({ default: module.AdminDepartmentsPage })));
+const AdminClubsPage = React.lazy(() => import('@/pages/admin/AdminClubsPage').then((module) => ({ default: module.AdminClubsPage })));
+const AdminAnalyticsPage = React.lazy(() => import('@/pages/admin/AdminAnalyticsPage').then((module) => ({ default: module.AdminAnalyticsPage })));
+const AdminSettingsPage = React.lazy(() => import('@/pages/admin/AdminSettingsPage').then((module) => ({ default: module.AdminSettingsPage })));
 import { ShieldAlert } from 'lucide-react';
 
 // Protected Route Guard: Requires Authenticated Student or Admin
 const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { user, role, isAuthenticated, isLoading } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -58,6 +65,17 @@ const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   if (!isAuthenticated) {
     return <Navigate to="/auth/login" state={{ from: location }} replace />;
+  }
+
+  // If a student signed in via Google and lacks an enrollment number and submission, guide them to complete onboarding
+  if (
+    role === 'STUDENT' &&
+    user &&
+    !user.studentId &&
+    (!user.enrollmentStatus || user.enrollmentStatus === 'INCOMPLETE') &&
+    location.pathname !== '/auth/complete-profile'
+  ) {
+    return <Navigate to="/auth/complete-profile" replace />;
   }
 
   return <>{children}</>;
@@ -144,6 +162,7 @@ export function App() {
                 <Route path="/" element={<LandingPage />} />
                 <Route path="/auth/login" element={<StudentLoginPage />} />
                 <Route path="/auth/register" element={<StudentRegisterPage />} />
+                <Route path="/auth/complete-profile" element={<CompleteProfilePage />} />
                 <Route path="/auth/forgot-password" element={<ForgotPasswordPage />} />
                 <Route path="/auth/admin-login" element={<AdminLoginPage />} />
                 <Route path="*" element={<NotFoundPage />} />
@@ -187,18 +206,19 @@ export function App() {
               >
                 <Route index element={<Navigate to="/admin/dashboard" replace />} />
                 <Route path="dashboard" element={<AdminDashboardPage />} />
-                <Route path="students" element={<AdminDashboardPage />} />
+                <Route path="enrollments" element={<AdminEnrollmentsPage />} />
+                <Route path="students" element={<AdminStudentsPage />} />
                 <Route path="subjects" element={<AdminAcademicManagementPage />} />
                 <Route path="topic-updates" element={<AdminAcademicManagementPage />} />
                 <Route path="resources" element={<AdminAcademicManagementPage />} />
                 <Route path="complaints" element={<AdminComplaintsClustersPage />} />
                 <Route path="clusters" element={<AdminComplaintsClustersPage />} />
                 <Route path="assignments" element={<AdminComplaintsClustersPage />} />
-                <Route path="departments" element={<AdminDashboardPage />} />
+                <Route path="departments" element={<AdminDepartmentsPage />} />
                 <Route path="anonymous-reports" element={<AdminComplaintsClustersPage />} />
-                <Route path="clubs" element={<AdminDashboardPage />} />
-                <Route path="analytics" element={<AdminDashboardPage />} />
-                <Route path="settings" element={<AdminDashboardPage />} />
+                <Route path="clubs" element={<AdminClubsPage />} />
+                <Route path="analytics" element={<AdminAnalyticsPage />} />
+                <Route path="settings" element={<AdminSettingsPage />} />
               </Route>
             </Routes>
           </React.Suspense>

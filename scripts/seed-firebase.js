@@ -24,8 +24,8 @@
  */
 
 import admin from 'firebase-admin';
-import { FIXTURE_SUBJECTS, FIXTURE_TOPICS, FIXTURE_RESOURCES } from '../apps/web/src/fixtures/academicFixtures.ts';
-import { FIXTURE_CLUBS, FIXTURE_TICKETS, FIXTURE_CLUSTERS } from '../apps/web/src/fixtures/campusFixtures.ts';
+import { FIXTURE_SUBJECTS, FIXTURE_TOPICS, FIXTURE_RESOURCES } from '../tests/fixtures/academicFixtures.ts';
+import { FIXTURE_CLUBS, FIXTURE_TICKETS, FIXTURE_CLUSTERS } from '../tests/fixtures/campusFixtures.ts';
 
 /**
  * Validates that database seeding is executing against a safe, authorized target.

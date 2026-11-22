@@ -4,15 +4,30 @@ import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
 import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
 
+const rawApiKey = import.meta.env.VITE_FIREBASE_API_KEY;
+const rawAuthDomain = import.meta.env.VITE_FIREBASE_AUTH_DOMAIN;
+const rawProjectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
+
+// Fail fast in production if required Firebase configuration is missing or placeholder
+if (import.meta.env.PROD && import.meta.env.VITE_USE_FIREBASE_EMULATOR !== 'true') {
+  if (!rawApiKey || rawApiKey === 'demo-placeholder' || rawApiKey.includes('<')) {
+    throw new Error('CRITICAL: VITE_FIREBASE_API_KEY is missing or contains placeholder in production build. Application startup halted.');
+  }
+  if (!rawProjectId || rawProjectId === 'solvesphere-ai-dev' || rawProjectId.includes('<')) {
+    throw new Error('CRITICAL: VITE_FIREBASE_PROJECT_ID is missing or targeting placeholder project in production build. Application startup halted.');
+  }
+}
+
 /** Only public Firebase web configuration belongs in VITE_* environment variables. */
 const config = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'demo-placeholder',
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'solvesphere-ai-dev.firebaseapp.com',
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'solvesphere-ai-dev',
+  apiKey: rawApiKey || 'demo-placeholder',
+  authDomain: rawAuthDomain || 'solvesphere-ai-dev.firebaseapp.com',
+  projectId: rawProjectId || 'solvesphere-ai-dev',
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'solvesphere-ai-dev.appspot.com',
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
   appId: import.meta.env.VITE_FIREBASE_APP_ID || 'solvesphere-demo-placeholder',
 };
+
 export const app = getApps().length ? getApp() : initializeApp(config);
 export const auth = getAuth(app);
 export const db = getFirestore(app);

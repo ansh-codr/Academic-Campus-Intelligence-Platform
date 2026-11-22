@@ -23,7 +23,7 @@
     "admin:bootstrap": "node --input-type=module scripts/bootstrap-admin.js",
     "test:ui": "node tests/ui-structure.test.js",
     "test:smoke-ai": "node scripts/smoke-test-live-ai.js",
-    "test:unit": "tsx --test tests/seed-safety.test.js tests/smoke-ai-parser.test.js tests/bootstrap-admin.test.js tests/ui-structure.test.js",
+    "test:unit": "tsx --test tests/seed-safety.test.js tests/smoke-ai-parser.test.js tests/bootstrap-admin.test.js tests/ui-structure.test.js tests/real-data-contract.test.js tests/inventory-safety.test.js",
     "test": "npm run test:unit && npm run test:smoke-ai",
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules functions/node_modules apps/*/dist functions/lib"
   },

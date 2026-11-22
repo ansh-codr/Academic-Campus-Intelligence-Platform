@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { useAuth } from '@/hooks/useAuthDemo';
+import { useAuth } from '@/hooks/useAuth';
 import { CampusService } from '@/services/campusService';
 import { CampusNotification } from '@solvesphere/shared';
 import { Badge } from '@/components/ui/Badge';

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { AcademicService } from '@/services/academicService';
 import { SubjectSummary, SyllabusTopic } from '@solvesphere/shared';
-import { useAuth } from '@/hooks/useAuthDemo';
+import { useAuth } from '@/hooks/useAuth';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -31,10 +31,16 @@ export const TopicTimelinePage: React.FC = () => {
   const [topics, setTopics] = useState<SyllabusTopic[]>([]);
   const [studyProgress, setStudyProgress] = useState<Record<string, boolean>>({});
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Load subject list and initial progress
   useEffect(() => {
-    AcademicService.getSubjects().then(setSubjects);
+    AcademicService.getSubjects()
+      .then(setSubjects)
+      .catch((err: any) => {
+        console.error('Failed to load subjects:', err);
+        setLoadError(err?.message || 'Failed to load course subjects.');
+      });
     if (user?.id) {
       AcademicService.getStudentStudyProgress(user.id).then(setStudyProgress);
     }
@@ -47,6 +53,12 @@ export const TopicTimelinePage: React.FC = () => {
       selectedSubject === 'ALL' ? undefined : selectedSubject,
       (liveTopics) => {
         setTopics(liveTopics);
+        setIsLoading(false);
+        setLoadError(null);
+      },
+      (error) => {
+        console.error('Topic subscription error:', error);
+        setLoadError('Failed to load syllabus topics in real-time.');
         setIsLoading(false);
       }
     );
@@ -99,6 +111,15 @@ export const TopicTimelinePage: React.FC = () => {
           Chronological breakdown of syllabus units with real-time updates and personal self-study checklists.
         </p>
       </div>
+
+      {loadError && (
+        <div
+          role="alert"
+          className="p-4 rounded-xl border border-red-500/30 bg-red-950/20 text-red-200 text-xs sm:text-sm flex items-center justify-between"
+        >
+          <span>{loadError}</span>
+        </div>
+      )}
 
       {/* Filter Controls */}
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 p-4 rounded-2xl bg-white dark:bg-brand-surfaceDark border border-slate-200 dark:border-slate-800">

@@ -1,7 +1,7 @@
 {
   "projects": {
-    "default": "solvesphere-ai-dev",
-    "development": "solvesphere-ai-dev",
+    "default": "solvesphere-ai-dev-2026",
+    "development": "solvesphere-ai-dev-2026",
     "staging": "<YOUR_STAGING_FIREBASE_PROJECT_ID>",
     "production": "<YOUR_PRODUCTION_FIREBASE_PROJECT_ID>"
   }

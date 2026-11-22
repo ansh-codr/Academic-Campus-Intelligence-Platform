@@ -21,6 +21,10 @@ import {
   getAuth as getClientAuth,
   connectAuthEmulator as connectClientAuthEmulator,
   signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
+  sendEmailVerification,
+  updateProfile as updateClientProfile,
   signOut,
 } from 'firebase/auth';
 import {
@@ -98,6 +102,7 @@ async function runTests() {
     role: 'STUDENT',
     department: 'Computer Science & AI',
     semester: 1,
+    enrollmentStatus: 'VERIFIED',
     createdAt: new Date().toISOString(),
   });
 
@@ -2599,7 +2604,7 @@ async function runTests() {
   console.log(`✓ Test 50 Passed: Cluster membership, attempt count, and error clearance verified through retry workflow.`);
 
   // --------------------------------------------------------------------------
-  // TEST 19: Security Scan - Zero API Keys in Client Bundles
+  // TEST 19: Security Scan - No Server-Only Credentials in Client Bundles
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 19] Verifying Zero Sensitive Keys or Secrets in Client Assets...`);
   const distDir = path.resolve('apps/web/dist');
@@ -2610,16 +2615,961 @@ async function runTests() {
       for (const file of files) {
         if (file.endsWith('.js')) {
           const content = fs.readFileSync(path.join(assetsDir, file), 'utf-8');
-          assert.ok(!content.includes('AIzaSy'), `File ${file} must not contain Google API key prefixes`);
-          assert.ok(!content.includes('GEMINI_API_KEY'), `File ${file} must not contain GEMINI_API_KEY`);
+          // Public Firebase Web App client configuration is permissible, but server secrets (GEMINI_API_KEY) must never appear.
+          // Firebase web client config may legitimately be present in a Vite browser bundle.
+          // Do not hardcode a project-specific API key into tests or the repository.
+          // Verify server-only secrets are never bundled, irrespective of client config.
+          for (const privateEnvName of ['GEMINI_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'FIREBASE_PRIVATE_KEY', 'ADMIN_PASSWORD']) {
+            assert.ok(!content.includes(privateEnvName), `File ${file} unexpectedly exposes private server configuration: ${privateEnvName}`);
+          }
+
         }
       }
     }
   }
-  console.log(`✓ Test 19 Passed: Client distribution verified free of exposed API keys.`);
+  console.log(`✓ Test 19 Passed: Client distribution checked for server-only credential names; Firebase web configuration is public.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 51: Phase 8 End-to-End Real Data Visibility: Admin-Created Records
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 51] Verifying Phase 8 Admin-to-Student Real Data Visibility & Key Protection...`);
+
+  // Switch to Admin
+  await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+
+  // 1. Admin creates accredited subject
+  const realSubjId = 'subj-algorithms-real';
+  const subjNow = new Date().toISOString();
+  await setDoc(doc(clientDb, 'subjects', realSubjId), {
+    id: realSubjId,
+    code: 'CS204',
+    name: 'Design and Analysis of Algorithms',
+    instructor: 'Prof. Ananya Sen',
+    department: 'Computer Science & AI',
+    credits: 4,
+    category: 'CORE',
+    description: 'Asymptotic notation, divide-and-conquer, greedy algorithms, and dynamic programming.',
+    semester: 2,
+    academicYear: '2026-2027',
+    totalTopics: 1,
+    completedTopics: 0,
+    progressPercentage: 0,
+    createdAt: subjNow,
+    updatedAt: subjNow,
+    isArchived: false,
+  });
+
+  // 2. Admin creates syllabus topic
+  const realTopicId = 'topic-strassen-mult';
+  await setDoc(doc(clientDb, 'syllabusTopics', realTopicId), {
+    id: realTopicId,
+    subjectId: realSubjId,
+    unit: 1,
+    title: 'Divide and Conquer: Strassen Matrix Multiplication',
+    description: 'Recurrence analysis and sub-cubic matrix algebra.',
+    estimatedHours: 4,
+    order: 1,
+    status: 'ONGOING',
+    isCurrent: true,
+    createdAt: subjNow,
+    updatedAt: subjNow,
+    isArchived: false,
+  });
+
+  // 3. Admin creates quiz with protected question keys via adminSaveQuiz Cloud Function
+  const adminSaveQuizCallable = httpsCallable(clientFunctions, 'adminSaveQuiz');
+  const saveQuizRes = await adminSaveQuizCallable({
+    quiz: {
+      subjectId: realSubjId,
+      title: 'Algorithms Unit 1 Diagnostic Assessment',
+      description: 'Master Theorem and Recurrence Analysis.',
+      durationMinutes: 20,
+      difficulty: 'INTERMEDIATE',
+      type: 'QUIZ',
+      published: true,
+    },
+    questions: [
+      {
+        questionText: 'What is the runtime of Strassens matrix multiplication algorithm?',
+        options: ['O(n^2)', 'O(n^2.81)', 'O(n^3)', 'O(n log n)'],
+        correctOptionIndex: 1,
+        explanation: 'Strassens algorithm achieves roughly O(n^2.807) operations using 7 multiplications.',
+        order: 1,
+      },
+    ],
+  });
+  assert.ok(saveQuizRes.data?.success);
+  const realQuizId = saveQuizRes.data?.quizId;
+  assert.ok(realQuizId);
+
+  // 4. Admin creates campus department via adminManageDepartment
+  const manageDeptCallable51 = httpsCallable(clientFunctions, 'adminManageDepartment');
+  const createDeptRes51 = await manageDeptCallable51({
+    action: 'create',
+    data: {
+      name: 'Advanced Computing Infrastructure Division',
+      code: 'ACI-FACILITY',
+      category: 'GENERAL_INFRASTRUCTURE',
+      headName: 'Dr. Vikram Chandra',
+      contactEmail: 'aci-ops@campus.edu',
+      isActive: true,
+    },
+  });
+  assert.ok(createDeptRes51.data?.success);
+  const realDeptId = createDeptRes51.data?.department?.id;
+  assert.ok(realDeptId);
+
+  // 5. Admin creates campus club via adminManageClub
+  const manageClubCallable51 = httpsCallable(clientFunctions, 'adminManageClub');
+  const createClubRes51 = await manageClubCallable51({
+    action: 'create',
+    data: {
+      name: 'Competitive Algorithmic Thinkers Society',
+      category: 'TECHNOLOGY',
+      leadName: 'Priya Sundaram',
+      description: 'ACM-ICPC and algorithmic contest problem solvers.',
+      memberCount: 50,
+      meetingSchedule: 'Fridays at 5 PM',
+      tags: ['Algorithms', 'ICPC', 'CompetitiveProgramming'],
+    },
+  });
+  assert.ok(createClubRes51.data?.success);
+  const realClubId = createClubRes51.data?.club?.id;
+  assert.ok(realClubId);
+
+  // Switch to Student
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+
+  // Verify Student can read the newly created real Subject
+  const studentSubjSnap = await getDoc(doc(clientDb, 'subjects', realSubjId));
+  assert.ok(studentSubjSnap.exists(), 'Student must be able to view admin-created subject');
+  assert.strictEqual(studentSubjSnap.data().name, 'Design and Analysis of Algorithms');
+  assert.strictEqual(studentSubjSnap.data().code, 'CS204');
+  assert.strictEqual(studentSubjSnap.data().credits, 4);
+
+  // Verify Student can read the newly created Syllabus Topic
+  const studentTopicSnap = await getDoc(doc(clientDb, 'syllabusTopics', realTopicId));
+  assert.ok(studentTopicSnap.exists(), 'Student must be able to view admin-created topic');
+  assert.strictEqual(studentTopicSnap.data().title, 'Divide and Conquer: Strassen Matrix Multiplication');
+  assert.strictEqual(studentTopicSnap.data().status, 'ONGOING');
+
+  // Verify Student can read the published Quiz metadata
+  const studentQuizSnap = await getDoc(doc(clientDb, 'quizzes', realQuizId));
+  assert.ok(studentQuizSnap.exists(), 'Student must be able to view published quiz');
+  assert.strictEqual(studentQuizSnap.data().title, 'Algorithms Unit 1 Diagnostic Assessment');
+  assert.strictEqual(studentQuizSnap.data().questionsCount, 1);
+
+  // Verify Student accessing questions receives sanitized payloads (correctOptionIndex and explanation stripped)
+  const getQuizQuestionsCallable = httpsCallable(clientFunctions, 'getQuizQuestions');
+  const studentQuestionsRes = await getQuizQuestionsCallable({ quizId: realQuizId });
+  assert.ok(studentQuestionsRes.data?.questions?.length === 1);
+  const returnedQuestion = studentQuestionsRes.data.questions[0];
+  assert.strictEqual(returnedQuestion.questionText, 'What is the runtime of Strassens matrix multiplication algorithm?');
+  assert.strictEqual(returnedQuestion.correctOptionIndex, undefined, 'Answer key must be protected from student inspection');
+  assert.strictEqual(returnedQuestion.explanation, undefined, 'Explanation must be protected before grading');
+
+  // Verify Student can view newly created active department
+  const studentDeptSnap = await getDoc(doc(clientDb, 'departments', realDeptId));
+  assert.ok(studentDeptSnap.exists(), 'Student must be able to view active department');
+  assert.strictEqual(studentDeptSnap.data().name, 'Advanced Computing Infrastructure Division');
+  assert.strictEqual(studentDeptSnap.data().isActive, true);
+
+  // Verify Student can view newly created campus club
+  const studentClubSnap = await getDoc(doc(clientDb, 'campusClubs', realClubId));
+  assert.ok(studentClubSnap.exists(), 'Student must be able to view campus club');
+  assert.strictEqual(studentClubSnap.data().name, 'Competitive Algorithmic Thinkers Society');
+
+  console.log(`✓ Test 51 Passed: Admin-created academic subjects, syllabus topics, protected quizzes, campus departments, and clubs are fully visible to students with answer keys protected.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 52: Negative Assessment Publication Integrity & Draft Protection
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 52] Verifying Negative Assessment Publication Integrity & Draft Protection...`);
+
+  // Switch back to Admin
+  await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+
+  // Negative 1: Admin tries to publish quiz with empty question text
+  await assert.rejects(
+    async () => {
+      await adminSaveQuizCallable({
+        quiz: {
+          subjectId: realSubjId,
+          title: 'Invalid Quiz - Empty Question',
+          durationMinutes: 15,
+          difficulty: 'BEGINNER',
+          published: true,
+        },
+        questions: [
+          {
+            questionText: '   ',
+            options: ['Opt A', 'Opt B', 'Opt C', 'Opt D'],
+            correctOptionIndex: 0,
+            explanation: 'Valid explanation here.',
+            order: 1,
+          },
+        ],
+      });
+    },
+    (err) => err.code?.includes('invalid-argument') || /validation|invalid-argument/i.test(err.message),
+    'Publishing a quiz with empty question text must be rejected with invalid-argument'
+  );
+
+  // Negative 2: Admin tries to publish quiz with empty option string
+  await assert.rejects(
+    async () => {
+      await adminSaveQuizCallable({
+        quiz: {
+          subjectId: realSubjId,
+          title: 'Invalid Quiz - Blank Option',
+          durationMinutes: 15,
+          difficulty: 'BEGINNER',
+          published: true,
+        },
+        questions: [
+          {
+            questionText: 'Valid question text here?',
+            options: ['Option 1', '', 'Option 3', 'Option 4'],
+            correctOptionIndex: 0,
+            explanation: 'Valid explanation here.',
+            order: 1,
+          },
+        ],
+      });
+    },
+    (err) => err.code?.includes('invalid-argument') || /validation|invalid-argument/i.test(err.message),
+    'Publishing a quiz with empty options must be rejected with invalid-argument'
+  );
+
+  // Negative 3: Admin tries to publish quiz with invalid correctOptionIndex
+  await assert.rejects(
+    async () => {
+      await adminSaveQuizCallable({
+        quiz: {
+          subjectId: realSubjId,
+          title: 'Invalid Quiz - Out of Range Correct Index',
+          durationMinutes: 15,
+          difficulty: 'BEGINNER',
+          published: true,
+        },
+        questions: [
+          {
+            questionText: 'Valid question text here?',
+            options: ['Option 1', 'Option 2', 'Option 3', 'Option 4'],
+            correctOptionIndex: 5, // Invalid: must be 0-3
+            explanation: 'Valid explanation here.',
+            order: 1,
+          },
+        ],
+      });
+    },
+    (err) => err.code?.includes('invalid-argument') || /validation|invalid-argument/i.test(err.message),
+    'Publishing a quiz with correctOptionIndex > 3 must be rejected with invalid-argument'
+  );
+
+  // Negative 4: Admin tries to publish quiz with empty explanation
+  await assert.rejects(
+    async () => {
+      await adminSaveQuizCallable({
+        quiz: {
+          subjectId: realSubjId,
+          title: 'Invalid Quiz - Missing Explanation',
+          durationMinutes: 15,
+          difficulty: 'BEGINNER',
+          published: true,
+        },
+        questions: [
+          {
+            questionText: 'Valid question text here?',
+            options: ['Option 1', 'Option 2', 'Option 3', 'Option 4'],
+            correctOptionIndex: 1,
+            explanation: '   ',
+            order: 1,
+          },
+        ],
+      });
+    },
+    (err) => err.code?.includes('invalid-argument') || /validation|invalid-argument/i.test(err.message),
+    'Publishing a quiz with empty explanation must be rejected with invalid-argument'
+  );
+
+  // Draft Flow: Admin saves incomplete quiz as draft (published: false)
+  const draftQuizRes = await adminSaveQuizCallable({
+    quiz: {
+      subjectId: realSubjId,
+      title: 'In-Progress Incomplete Draft Assessment',
+      description: 'Draft notes still being compiled by faculty.',
+      durationMinutes: 15,
+      difficulty: 'BEGINNER',
+      published: false,
+    },
+    questions: [
+      {
+        questionText: 'Draft question title without all 4 options',
+        options: ['Candidate Draft Option A'],
+        correctOptionIndex: 0,
+        explanation: 'Work in progress',
+        order: 1,
+      },
+    ],
+  });
+  assert.ok(draftQuizRes.data?.success, 'Saving draft quiz must succeed');
+  const draftQuizId = draftQuizRes.data?.quizId;
+  assert.ok(draftQuizId);
+
+  // Switch to Student
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+
+  // Negative 5: Student cannot fetch questions for unpublished draft quiz
+  await assert.rejects(
+    async () => {
+      await getQuizQuestionsCallable({ quizId: draftQuizId });
+    },
+    (err) => err.code?.includes('failed-precondition') || /unpublished|draft|failed-precondition/i.test(err.message),
+    'Student attempting to get questions for draft quiz must be rejected with failed-precondition'
+  );
+
+  // Negative 6: Student cannot submit attempts for unpublished draft quiz
+  const submitQuizCallable52 = httpsCallable(clientFunctions, 'submitQuiz');
+  await assert.rejects(
+    async () => {
+      await submitQuizCallable52({
+        quizId: draftQuizId,
+        answers: [{ questionId: 'any-q-id', selectedOptionIndex: 0 }],
+      });
+    },
+    (err) => err.code?.includes('failed-precondition') || /unpublished|draft|failed-precondition/i.test(err.message),
+    'Student attempting to submit draft quiz must be rejected with failed-precondition'
+  );
+
+  // Negative 7: Non-admin student cannot call adminSaveQuiz
+  await assert.rejects(
+    async () => {
+      await adminSaveQuizCallable({
+        quiz: {
+          subjectId: realSubjId,
+          title: 'Unauthorized Student Created Quiz',
+          durationMinutes: 10,
+          difficulty: 'BEGINNER',
+          published: false,
+        },
+        questions: [],
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission|unauthorized|denied/i.test(err.message),
+    'Student attempting to invoke adminSaveQuiz must be rejected with permission-denied'
+  );
+
+  console.log(`✓ Test 52 Passed: Negative assessment validation, draft isolation, and unauthorized caller blocks confirmed.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 53: Phase 8.5 Production Authentication & Profile Security Verification
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 53] Verifying Phase 8.5 Production Student & Admin Authentication Workflows...`);
+
+  const uniqueStudentEmail = `student.phase85.${Date.now()}@university.edu`;
+  const uniqueStudentPassword = 'ComplexStudentPass@2026';
+
+  // 1. Real Student Account Creation via Firebase Auth client SDK
+  const studentCred53 = await createUserWithEmailAndPassword(clientAuth, uniqueStudentEmail, uniqueStudentPassword);
+  assert.ok(studentCred53.user.uid, 'Firebase Auth must generate valid UID');
+  const studentUid53 = studentCred53.user.uid;
+
+  // Update Auth displayName
+  await updateClientProfile(studentCred53.user, { displayName: 'Kavya Raman' });
+  assert.strictEqual(studentCred53.user.displayName, 'Kavya Raman');
+
+  // 2. Email verification dispatch
+  await sendEmailVerification(studentCred53.user);
+  console.log(`✓ Email verification message dispatched for ${uniqueStudentEmail}`);
+
+  // 3. Create initial student profile in `users/{uid}` matching Security Rules
+  const studentProfileNow = new Date().toISOString();
+  await setDoc(doc(clientDb, 'users', studentUid53), {
+    id: studentUid53,
+    email: uniqueStudentEmail,
+    fullName: 'Kavya Raman',
+    studentId: 'STU-2026-9042',
+    role: 'STUDENT',
+    department: 'Computer Science & AI',
+    semester: 2,
+    emailVerified: false,
+    createdAt: studentProfileNow,
+    updatedAt: studentProfileNow,
+  });
+
+  // Verify student profile exists
+  const profileSnap53 = await getDoc(doc(clientDb, 'users', studentUid53));
+  assert.ok(profileSnap53.exists(), 'Profile document must exist in Firestore');
+  assert.strictEqual(profileSnap53.data().role, 'STUDENT');
+  assert.strictEqual(profileSnap53.data().studentId, 'STU-2026-9042');
+
+  // 4. Duplicate Email Registration Rejection
+  await assert.rejects(
+    async () => {
+      await createUserWithEmailAndPassword(clientAuth, uniqueStudentEmail, 'AnotherPassword@2026');
+    },
+    /auth\/email-already-in-use/i,
+    'Registering an existing email must fail with auth/email-already-in-use'
+  );
+
+  // 5. Password Reset Request
+  await sendPasswordResetEmail(clientAuth, uniqueStudentEmail);
+  console.log(`✓ Password reset request succeeded for ${uniqueStudentEmail}`);
+
+  // 6. Security Rule: Student cannot self-escalate role to ADMIN
+  await assert.rejects(
+    async () => {
+      await updateDoc(doc(clientDb, 'users', studentUid53), {
+        role: 'ADMIN',
+      });
+    },
+    /permission-denied/i,
+    'Student attempting to update role to ADMIN must be blocked by Firestore Rules'
+  );
+
+  // 7. Security Rule: Student cannot alter immutable student ID
+  await assert.rejects(
+    async () => {
+      await updateDoc(doc(clientDb, 'users', studentUid53), {
+        studentId: 'STU-FORGED-9999',
+      });
+    },
+    /permission-denied/i,
+    'Student attempting to alter studentId must be blocked by Firestore Rules'
+  );
+
+  // 8. Security Rule: Student cannot read another student profile
+  await assert.rejects(
+    async () => {
+      await getDoc(doc(clientDb, 'users', testStudentUid));
+    },
+    /permission-denied/i,
+    'Student attempting to read another student profile must be blocked by Firestore Rules'
+  );
+
+  // 9. Permitted profile update succeeds (department, semester)
+  await updateDoc(doc(clientDb, 'users', studentUid53), {
+    department: 'AI & Data Science',
+    semester: 3,
+    updatedAt: new Date().toISOString(),
+  });
+  const updatedProfileSnap = await getDoc(doc(clientDb, 'users', studentUid53));
+  assert.strictEqual(updatedProfileSnap.data().department, 'AI & Data Science');
+  assert.strictEqual(updatedProfileSnap.data().semester, 3);
+
+  // 10. Non-admin student blocked from administrative Cloud Functions
+  const manageDeptFn53 = httpsCallable(clientFunctions, 'adminManageDepartment');
+  await assert.rejects(
+    async () => {
+      await manageDeptFn53({
+        action: 'create',
+        data: {
+          name: 'Unauthorized Student Department',
+          code: 'UNAUTH',
+          category: 'GENERAL_INFRASTRUCTURE',
+          headName: 'Imposter',
+          contactEmail: 'unauth@campus.edu',
+          isActive: true,
+        },
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission|unauthorized|denied/i.test(err.message),
+    'Non-admin student must be rejected with permission-denied from adminManageDepartment'
+  );
+
+  // Sign out student
+  await signOut(clientAuth);
+
+  // 11. Admin Authentication with Custom Claim Verification
+  const adminCred53 = await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+  const adminToken53 = await adminCred53.user.getIdTokenResult(true);
+  assert.strictEqual(adminToken53.claims.role, 'ADMIN', 'Admin user must have verified role: "ADMIN" custom claim');
+
+  // Admin can read any student profile
+  const adminReadStudentSnap = await getDoc(doc(clientDb, 'users', studentUid53));
+  assert.ok(adminReadStudentSnap.exists(), 'Admin must have permission to read any student profile');
+  assert.strictEqual(adminReadStudentSnap.data().fullName, 'Kavya Raman');
+
+  console.log(`✓ Test 53 Passed: Student registration, email verification dispatch, profile ownership, role escalation protection, and admin RBAC verified.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 54: Verifying Google Sign-In Provisioning, Onboarding & Immutability
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 54] Verifying Google Sign-In Provisioning, Profile Completion & Student ID Immutability...`);
+
+  // Sign out admin
+  await signOut(clientAuth);
+
+  // 1. Simulate Google Auth user creation (Auth identity with verified email from Google)
+  const googleEmail = `google.student.${Date.now()}@university.edu`;
+  const googleUserRecord = await auth.createUser({
+    email: googleEmail,
+    emailVerified: true,
+    displayName: 'Priyanshu Google Student',
+    password: 'GoogleUser@Pass2026',
+  });
+  const googleUid = googleUserRecord.uid;
+
+  // 2. Sign in as the Google authenticated student
+  const googleCred = await signInWithEmailAndPassword(clientAuth, googleEmail, 'GoogleUser@Pass2026');
+  const googleToken = await googleCred.user.getIdTokenResult(true);
+
+  // 3. Verify Google sign-in grants NO admin claim by default (must be STUDENT role)
+  assert.strictEqual(googleToken.claims.role || 'STUDENT', 'STUDENT', 'Google sign-in must not grant admin custom claim');
+
+  // 4. Negative test: student CANNOT create user profile with self-asserted 'VERIFIED' status
+  await assert.rejects(
+    async () => {
+      await setDoc(doc(clientDb, 'users', googleUid), {
+        id: googleUid,
+        email: googleEmail,
+        fullName: 'Priyanshu Google Student',
+        role: 'STUDENT',
+        emailVerified: true,
+        enrollmentStatus: 'VERIFIED', // FORBIDDEN: self-verification on profile creation
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission|denied/i.test(err.message),
+    'Student attempting to create user profile with enrollmentStatus VERIFIED must be rejected with permission-denied'
+  );
+
+  // 5. Initial profile created without studentId (simulating first-time Google sign-in)
+  const initialGoogleProfile = {
+    id: googleUid,
+    email: googleEmail,
+    fullName: 'Priyanshu Google Student',
+    role: 'STUDENT',
+    emailVerified: true,
+    enrollmentStatus: 'INCOMPLETE',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  await setDoc(doc(clientDb, 'users', googleUid), initialGoogleProfile);
+
+  // 6. Security Rule check: student CANNOT self-assert or directly write authoritative studentId to users/{uid}
+  await assert.rejects(
+    async () => {
+      await updateDoc(doc(clientDb, 'users', googleUid), {
+        studentId: 'STU-2026-CS-099',
+        updatedAt: new Date().toISOString(),
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission|denied/i.test(err.message),
+    'Direct client assignment of authoritative studentId in users collection must be rejected with permission-denied'
+  );
+
+  // 7. Security Rule check: student CANNOT self-elevate enrollmentStatus to VERIFIED
+  await assert.rejects(
+    async () => {
+      await updateDoc(doc(clientDb, 'users', googleUid), {
+        enrollmentStatus: 'VERIFIED',
+        updatedAt: new Date().toISOString(),
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission|denied/i.test(err.message),
+    'Student attempting to self-verify enrollmentStatus must be rejected with permission-denied'
+  );
+
+  // 8. Security Rule check: student CANNOT elevate role to ADMIN
+  await assert.rejects(
+    async () => {
+      await updateDoc(doc(clientDb, 'users', googleUid), {
+        role: 'ADMIN',
+        updatedAt: new Date().toISOString(),
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission|denied/i.test(err.message),
+    'Attempt to escalate role to ADMIN must be rejected with permission-denied'
+  );
+
+  // 9. Negative authorization test: Unverified student CANNOT submit campus complaints
+  const unverifiedComplaintCallable = httpsCallable(clientFunctions, 'createComplaint');
+  await assert.rejects(
+    async () => {
+      await unverifiedComplaintCallable({
+        title: 'Unverified Student Complaint',
+        category: 'GENERAL_INFRASTRUCTURE',
+        building: 'Academic Block A',
+        floor: '2nd Floor',
+        room: 'Room 201',
+        description: 'Testing that unverified student complaint submissions are blocked by Cloud Functions.',
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /verified institutional enrollment|permission/i.test(err.message),
+    'Unverified student attempting to invoke createComplaint must be rejected with permission-denied'
+  );
+
+  // 10. Negative authorization test: Unverified student CANNOT submit continuous assessment quizzes
+  const unverifiedQuizCallable = httpsCallable(clientFunctions, 'submitQuiz');
+  await assert.rejects(
+    async () => {
+      await unverifiedQuizCallable({
+        quizId: quizId,
+        answers: [],
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /verified institutional student enrollment|permission/i.test(err.message),
+    'Unverified student attempting to invoke submitQuiz must be rejected with permission-denied'
+  );
+
+  // 11. Negative authorization test: Student CANNOT write directly to enrollmentNumbers registry
+  await assert.rejects(
+    async () => {
+      await setDoc(doc(clientDb, 'enrollmentNumbers', 'STU-2026-CS-099'), {
+        studentId: 'STU-2026-CS-099',
+        userId: googleUid,
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission|denied/i.test(err.message),
+    'Direct client write to enrollmentNumbers collection must be rejected with permission-denied'
+  );
+
+  // 12. Negative authorization test: Student CANNOT invoke adminApproveEnrollment or adminRejectEnrollment
+  const studentApproveCallable = httpsCallable(clientFunctions, 'adminApproveEnrollment');
+  await assert.rejects(
+    async () => {
+      await studentApproveCallable({
+        requestId: googleUid,
+        studentId: 'STU-2026-CS-099',
+        department: 'Computer Science & Engineering',
+        semester: 2,
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /administrator|permission/i.test(err.message),
+    'Student attempting to invoke adminApproveEnrollment must be rejected with permission-denied'
+  );
+
+  // 13. Permitted profile update: non-privileged fields (department, semester, bio) succeed
+  await updateDoc(doc(clientDb, 'users', googleUid), {
+    department: 'Computer Science & Engineering',
+    semester: 2,
+    bio: 'Google authenticated student',
+    updatedAt: new Date().toISOString(),
+  });
+  const partialProfileSnap = await getDoc(doc(clientDb, 'users', googleUid));
+  assert.strictEqual(partialProfileSnap.data().department, 'Computer Science & Engineering');
+  assert.strictEqual(partialProfileSnap.data().semester, 2);
+
+  console.log(`✓ Test 54 Passed: Google user provisioning, self-verification rejection, and unverified service blocks verified.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 55: Student Enrollment Request Submission & Self-Approval Prevention
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 55] Verifying Enrollment Request Submission & Self-Approval Block...`);
+  // Student CANNOT submit request with status 'VERIFIED'
+  await assert.rejects(
+    async () => {
+      await setDoc(doc(clientDb, 'enrollmentRequests', googleUid), {
+        id: googleUid,
+        userId: googleUid,
+        fullName: 'Priyanshu Google Student',
+        email: googleEmail,
+        studentId: 'STU-2026-CS-099',
+        department: 'Computer Science & Engineering',
+        semester: 2,
+        status: 'VERIFIED',
+        submittedAt: new Date().toISOString(),
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission|denied/i.test(err.message),
+    'Student attempting to create enrollmentRequest directly as VERIFIED must be rejected with permission-denied'
+  );
+
+  // Student successfully submits enrollmentRequest with status 'PENDING'
+  await setDoc(doc(clientDb, 'enrollmentRequests', googleUid), {
+    id: googleUid,
+    userId: googleUid,
+    fullName: 'Priyanshu Google Student',
+    email: googleEmail,
+    studentId: 'STU-2026-CS-099',
+    department: 'Computer Science & Engineering',
+    semester: 2,
+    status: 'PENDING',
+    submittedAt: new Date().toISOString(),
+  });
+
+  const submittedReqSnap = await getDoc(doc(clientDb, 'enrollmentRequests', googleUid));
+  assert.ok(submittedReqSnap.exists(), 'Enrollment request document must exist');
+  assert.strictEqual(submittedReqSnap.data().status, 'PENDING');
+  assert.strictEqual(submittedReqSnap.data().studentId, 'STU-2026-CS-099');
+  console.log(`✓ Test 55 Passed: Enrollment request submitted as PENDING; self-approval strictly blocked.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 56: University Roster Data Confidentiality (Student Access Blocked)
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 56] Verifying University Roster Confidentiality...`);
+  // Student cannot read or write universityRoster
+  await assert.rejects(
+    async () => {
+      await getDoc(doc(clientDb, 'universityRoster', 'roster-record-001'));
+    },
+    (err) => err.code?.includes('permission-denied') || /permission|denied/i.test(err.message),
+    'Student attempting to read universityRoster must be rejected with permission-denied'
+  );
+
+  await assert.rejects(
+    async () => {
+      await setDoc(doc(clientDb, 'universityRoster', 'forged-roster-001'), {
+        studentId: 'STU-2026-CS-099',
+        fullName: 'Forged Roster Student',
+        active: true,
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission|denied/i.test(err.message),
+    'Student attempting to write to universityRoster must be rejected with permission-denied'
+  );
+  console.log(`✓ Test 56 Passed: Institutional university roster completely shielded from student reads & writes.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 57: Admin Review, Callable Function Approval, Uniqueness & Feature Unblocking
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 57] Verifying Admin Enrollment Approval & Uniqueness Reservation...`);
+  // Sign in as Administrator
+  const adminClientApp = initClientApp(
+    {
+      apiKey: 'test-api-key',
+      authDomain: `${testProjectId}.firebaseapp.com`,
+      projectId: testProjectId,
+    },
+    `admin-enrollment-app-${Date.now()}`
+  );
+  const adminClientAuth = getClientAuth(adminClientApp);
+  connectClientAuthEmulator(adminClientAuth, 'http://127.0.0.1:9099', { disableWarnings: true });
+  await signInWithEmailAndPassword(adminClientAuth, adminEmail, 'SolveSphereAdmin@2026');
+
+  const adminClientDb = getClientFirestore(adminClientApp);
+  connectClientFirestoreEmulator(adminClientDb, '127.0.0.1', 8080);
+  const adminClientFunctions = getClientFunctions(adminClientApp);
+  connectClientFunctionsEmulator(adminClientFunctions, '127.0.0.1', 5001);
+
+  // Negative test: Client cannot directly write to enrollmentNumbers even if logged in as Admin (writes restricted to Cloud Functions Admin SDK)
+  const targetId = 'STU-2026-CS-099';
+  await assert.rejects(
+    async () => {
+      await setDoc(doc(adminClientDb, 'enrollmentNumbers', targetId), {
+        studentId: targetId,
+        userId: googleUid,
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission|denied/i.test(err.message),
+    'Direct client write to enrollmentNumbers must be blocked for all client connections'
+  );
+
+  // Admin approves enrollment using trusted callable Cloud Function
+  const adminApproveCallable = httpsCallable(adminClientFunctions, 'adminApproveEnrollment');
+  const approveRes = await adminApproveCallable({
+    requestId: googleUid,
+    studentId: targetId,
+    department: 'Computer Science & Engineering',
+    semester: 2,
+  });
+  assert.ok(approveRes.data?.success, 'adminApproveEnrollment must return success');
+
+  // Verify student profile now holds verified student ID and status
+  const verifiedUserSnap = await getDoc(doc(clientDb, 'users', googleUid));
+  assert.strictEqual(verifiedUserSnap.data().studentId, targetId);
+  assert.strictEqual(verifiedUserSnap.data().enrollmentStatus, 'VERIFIED');
+
+  const verifiedReqSnap = await getDoc(doc(clientDb, 'enrollmentRequests', googleUid));
+  assert.strictEqual(verifiedReqSnap.data().status, 'VERIFIED');
+  assert.strictEqual(verifiedReqSnap.data().reviewedBy, adminEmail);
+
+  // Verify audit log entry in adminAuditLogs
+  const auditSnap = await db.collection('adminAuditLogs')
+    .where('action', '==', 'APPROVE_ENROLLMENT')
+    .where('requestId', '==', googleUid)
+    .get();
+  assert.strictEqual(auditSnap.empty, false, 'Audit log must record enrollment approval');
+  assert.strictEqual(auditSnap.docs[0].data().studentId, targetId);
+
+  // Post-verification feature unblocking test: Google student now CAN submit complaints & quizzes
+  const verifiedComplaintCallable = httpsCallable(clientFunctions, 'createComplaint');
+  const googleCompRes = await verifiedComplaintCallable({
+    title: 'Verified Student Air Conditioner Issue',
+    category: 'AC_HVAC',
+    building: 'Engineering Block 2',
+    floor: '3rd Floor',
+    room: 'Lab 304',
+    description: 'AC unit in Lab 304 is leaking water onto the student work desks.',
+  });
+  assert.ok(googleCompRes.data?.success, 'Verified student must now be permitted to submit complaints');
+  assert.match(googleCompRes.data?.data?.referenceNumber, /^SS-2026-\d{4}$/);
+
+  const verifiedQuizCallable = httpsCallable(clientFunctions, 'submitQuiz');
+  const googleQuizRes = await verifiedQuizCallable({
+    quizId: quizId,
+    answers: [{ questionId: 'q-math-1', selectedOptionIndex: 1 }],
+  });
+  assert.ok(googleQuizRes.data?.success, 'Verified student must now be permitted to take quizzes');
+
+  console.log(`✓ Test 57 Passed: Admin enrollment approval, audit trail, and student service unblocking verified.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 58: Duplicate Roll Number Collision & Transaction Safety
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 58] Verifying Duplicate Enrollment Number Prevention...`);
+  // Create second student
+  const secondStudentEmail = `student2.${Date.now()}@campus.edu`;
+  const secondRecord = await auth.createUser({
+    email: secondStudentEmail,
+    password: 'Password@2026',
+    displayName: 'Duplicate Student Claimer',
+  });
+  const secondUid = secondRecord.uid;
+
+  const dupClientApp = initClientApp(
+    {
+      apiKey: 'test-api-key',
+      authDomain: `${testProjectId}.firebaseapp.com`,
+      projectId: testProjectId,
+    },
+    `dup-client-app-${Date.now()}`
+  );
+  const dupClientAuth = getClientAuth(dupClientApp);
+  connectClientAuthEmulator(dupClientAuth, 'http://127.0.0.1:9099', { disableWarnings: true });
+  await signInWithEmailAndPassword(dupClientAuth, secondStudentEmail, 'Password@2026');
+
+  const dupClientDb = getClientFirestore(dupClientApp);
+  connectClientFirestoreEmulator(dupClientDb, '127.0.0.1', 8080);
+
+  // Student 2 attempts to claim the exact same studentId in enrollmentRequests
+  await setDoc(doc(dupClientDb, 'users', secondUid), {
+    id: secondUid,
+    email: secondStudentEmail,
+    fullName: 'Duplicate Student Claimer',
+    role: 'STUDENT',
+    enrollmentStatus: 'PENDING',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+
+  await setDoc(doc(dupClientDb, 'enrollmentRequests', secondUid), {
+    id: secondUid,
+    userId: secondUid,
+    fullName: 'Duplicate Student Claimer',
+    email: secondStudentEmail,
+    studentId: targetId, // Already verified to googleUid!
+    department: 'Civil Engineering',
+    semester: 1,
+    status: 'PENDING',
+    submittedAt: new Date().toISOString(),
+  });
+
+  // Admin approval transaction checks enrollmentNumbers reservation and rejects collision
+  await assert.rejects(
+    async () => {
+      await adminApproveCallable({
+        requestId: secondUid,
+        studentId: targetId, // Colliding ID
+        department: 'Civil Engineering',
+        semester: 1,
+      });
+    },
+    (err) => err.code?.includes('already-exists') || /already.*registered/i.test(err.message),
+    'Admin approval with already reserved roll number must be rejected with already-exists'
+  );
+
+  // Negative test: Retrying approval on an already VERIFIED student request must be rejected
+  await assert.rejects(
+    async () => {
+      await adminApproveCallable({
+        requestId: googleUid,
+        studentId: targetId,
+        department: 'Computer Science & Engineering',
+        semester: 2,
+      });
+    },
+    (err) => err.code?.includes('failed-precondition') || /already verified/i.test(err.message),
+    'Approving an already verified enrollment request must be rejected'
+  );
+
+  console.log(`✓ Test 58 Passed: Duplicate enrollment number collision detected and atomic rejection verified.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 59: Admin Rejection Flow, Audit Log & Student Resubmission Integrity
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 59] Verifying Admin Rejection Flow & Student Resubmission...`);
+  const rejectionReason = 'Enrollment Number STU-2026-CS-099 is already registered to another active student account.';
+
+  const adminRejectCallable = httpsCallable(adminClientFunctions, 'adminRejectEnrollment');
+  const rejectEnrollmentRes = await adminRejectCallable({
+    requestId: secondUid,
+    rejectionReason,
+  });
+  assert.ok(rejectEnrollmentRes.data?.success, 'adminRejectEnrollment must return success');
+
+  // Verify rejection logged to audit log
+  const rejectAuditSnap = await db.collection('adminAuditLogs')
+    .where('action', '==', 'REJECT_ENROLLMENT')
+    .where('requestId', '==', secondUid)
+    .get();
+  assert.strictEqual(rejectAuditSnap.empty, false, 'Audit log must record enrollment rejection');
+
+  // Second student reads rejection reason
+  const rejectedUserSnap = await getDoc(doc(dupClientDb, 'users', secondUid));
+  assert.strictEqual(rejectedUserSnap.data().enrollmentStatus, 'REJECTED');
+  assert.strictEqual(rejectedUserSnap.data().rejectionReason, rejectionReason);
+
+  // Negative test: Student CANNOT wipe or forge reviewedBy or set status to VERIFIED on resubmission
+  await assert.rejects(
+    async () => {
+      await updateDoc(doc(dupClientDb, 'enrollmentRequests', secondUid), {
+        studentId: 'STU-2026-CV-044',
+        status: 'VERIFIED', // FORBIDDEN: self-verification
+        reviewedBy: 'Forged Admin',
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission|denied/i.test(err.message),
+    'Student attempting to forge review fields or self-verify on resubmission must be rejected'
+  );
+
+  // Second student resubmits with corrected unique enrollment number as PENDING
+  const correctedStudentId = 'STU-2026-CV-044';
+  await updateDoc(doc(dupClientDb, 'enrollmentRequests', secondUid), {
+    studentId: correctedStudentId,
+    department: 'Civil Engineering',
+    semester: 1,
+    fullName: 'Duplicate Student Claimer',
+    status: 'PENDING',
+    submittedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+
+  const resubmittedSnap = await getDoc(doc(dupClientDb, 'enrollmentRequests', secondUid));
+  assert.strictEqual(resubmittedSnap.data().status, 'PENDING');
+  assert.strictEqual(resubmittedSnap.data().studentId, correctedStudentId);
+  // Audit fields from previous rejection must be preserved
+  assert.strictEqual(resubmittedSnap.data().reviewedBy, adminEmail);
+  assert.strictEqual(resubmittedSnap.data().rejectionReason, rejectionReason);
+
+  // --------------------------------------------------------------------------
+  // TEST 60: Approval of Resubmitted Enrollment Request
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 60] Verifying Approval of Corrected Resubmitted Request...`);
+  const secondApproveRes = await adminApproveCallable({
+    requestId: secondUid,
+    studentId: correctedStudentId,
+    department: 'Civil Engineering',
+    semester: 1,
+  });
+  assert.ok(secondApproveRes.data?.success, 'Approval of resubmitted request must succeed');
+
+  const secondApprovedUser = await getDoc(doc(dupClientDb, 'users', secondUid));
+  assert.strictEqual(secondApprovedUser.data().enrollmentStatus, 'VERIFIED');
+  assert.strictEqual(secondApprovedUser.data().studentId, correctedStudentId);
+
+  console.log(`✓ Test 59 & 60 Passed: Admin rejection records reason, student receives explanation, resubmits, and gets approved.`);
+
+  // Clean up: sign out
+  await signOut(clientAuth);
+  await signOut(dupClientAuth);
+  await signOut(adminClientAuth);
 
   console.log(`\n======================================================`);
-  console.log(`  ALL 50 INTEGRATION, AI & SECURITY TESTS PASSED!`);
+  console.log(`  ALL 60 INTEGRATION, AI & SECURITY TESTS PASSED!`);
   console.log(`======================================================\n`);
   process.exit(0);
 }

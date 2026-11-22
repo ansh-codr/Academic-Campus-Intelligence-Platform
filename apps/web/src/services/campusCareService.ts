@@ -24,24 +24,52 @@ export const CampusCareService = {
    * Calls the secure server-side Cloud Function askCampusCareAi
    */
   async askCampusCare(request: AskCampusCareRequest): Promise<AskCampusCareResponse> {
-    const askFn = httpsCallable<AskCampusCareRequest, AskCampusCareResponse>(
-      functions,
-      'askCampusCareAi'
-    );
-    const result = await askFn(request);
-    return result.data;
+    try {
+      const askFn = httpsCallable<AskCampusCareRequest, AskCampusCareResponse>(
+        functions,
+        'askCampusCareAi'
+      );
+      const result = await askFn(request);
+      return result.data;
+    } catch (err: any) {
+      if (
+        err.code === 'functions/not-found' ||
+        err.code === 'functions/unavailable' ||
+        err.message?.includes('NOT_FOUND') ||
+        err.message?.includes('Failed to fetch')
+      ) {
+        throw new Error(
+          'Campus Care AI is currently unserviceable (serverless Cloud Functions require Blaze plan deployment). Please contact campus estate maintenance directly.'
+        );
+      }
+      throw err;
+    }
   },
 
   /**
    * Calls the secure server-side Cloud Function aiAssistComplaint to enhance rough issue descriptions
    */
   async aiAssistComplaint(request: AiAssistComplaintRequest): Promise<AiAssistComplaintResponse> {
-    const assistFn = httpsCallable<AiAssistComplaintRequest, AiAssistComplaintResponse>(
-      functions,
-      'aiAssistComplaint'
-    );
-    const result = await assistFn(request);
-    return result.data;
+    try {
+      const assistFn = httpsCallable<AiAssistComplaintRequest, AiAssistComplaintResponse>(
+        functions,
+        'aiAssistComplaint'
+      );
+      const result = await assistFn(request);
+      return result.data;
+    } catch (err: any) {
+      if (
+        err.code === 'functions/not-found' ||
+        err.code === 'functions/unavailable' ||
+        err.message?.includes('NOT_FOUND') ||
+        err.message?.includes('Failed to fetch')
+      ) {
+        throw new Error(
+          'AI description enhancement is unavailable on the Spark plan. Please write your complaint description manually.'
+        );
+      }
+      throw err;
+    }
   },
 
   /**

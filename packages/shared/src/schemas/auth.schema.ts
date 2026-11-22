@@ -42,3 +42,24 @@ export const AdminLoginSchema = z.object({
 });
 
 export type AdminLoginInput = z.infer<typeof AdminLoginSchema>;
+
+export const EnrollmentSubmissionSchema = z.object({
+  fullName: z.string().min(2, 'Full Name must be at least 2 characters').max(100),
+  studentId: z
+    .string()
+    .min(4, 'Institutional Enrollment Number must be at least 4 characters')
+    .max(30, 'Institutional Enrollment Number cannot exceed 30 characters')
+    .regex(/^[a-zA-Z0-9_-]+$/, 'Enrollment Number can only contain letters, numbers, hyphens, and underscores'),
+  department: z.string().min(2, 'Department is required').max(100, 'Department cannot exceed 100 characters'),
+  semester: z.number().int().min(1, 'Semester must be between 1 and 12').max(12, 'Semester must be between 1 and 12'),
+});
+
+export type EnrollmentSubmissionInput = z.infer<typeof EnrollmentSubmissionSchema>;
+
+export const EnrollmentReviewSchema = z.object({
+  requestId: z.string().min(1, 'Request ID is required'),
+  status: z.enum(['VERIFIED', 'REJECTED']),
+  rejectionReason: z.string().max(500, 'Rejection reason cannot exceed 500 characters').optional(),
+});
+
+export type EnrollmentReviewInput = z.infer<typeof EnrollmentReviewSchema>;

@@ -12,11 +12,19 @@ import { BookOpen, UserCheck, Award, Layers, FileText, Building2, Flame } from '
 export const MySubjectsPage: React.FC = () => {
   const [subjects, setSubjects] = useState<SubjectSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     setIsLoading(true);
     AcademicService.getSubjects()
-      .then(setSubjects)
+      .then((data) => {
+        setSubjects(data);
+        setLoadError(null);
+      })
+      .catch((err: any) => {
+        console.error('Failed to load subjects:', err);
+        setLoadError(err?.message || 'Failed to load enrolled courses.');
+      })
       .finally(() => setIsLoading(false));
   }, []);
 
@@ -28,12 +36,21 @@ export const MySubjectsPage: React.FC = () => {
           <span className="text-xs text-slate-500 font-semibold">Semester 1 Enrolled Curricula</span>
         </div>
         <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white mt-1">
-          My Six First-Year Subjects
+          Enrolled Academic Curricula
         </h1>
         <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
           Complete syllabus structure, course credits, and assigned department faculty.
         </p>
       </div>
+
+      {loadError && (
+        <div
+          role="alert"
+          className="p-4 rounded-xl border border-red-500/30 bg-red-950/20 text-red-200 text-xs sm:text-sm flex items-center justify-between"
+        >
+          <span>{loadError}</span>
+        </div>
+      )}
 
       {isLoading ? (
         <div className="space-y-6">

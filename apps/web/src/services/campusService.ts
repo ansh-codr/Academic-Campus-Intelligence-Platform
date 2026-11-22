@@ -26,12 +26,6 @@ import {
   AnonymousReport,
   TicketEvent,
 } from '@solvesphere/shared';
-import {
-  FIXTURE_TICKETS,
-  FIXTURE_CLUSTERS,
-  FIXTURE_CLUBS,
-  FIXTURE_DEPARTMENTS,
-} from '@/fixtures/campusFixtures';
 
 export const CampusService = {
   /**
@@ -77,11 +71,25 @@ export const CampusService = {
       functions,
       'createComplaint'
     );
-    const res = await createComplaintFn(input as any);
-    if (res.data?.success && res.data.data) {
-      return { ticket: res.data.data, isRemote: true };
+    try {
+      const res = await createComplaintFn(input as any);
+      if (res.data?.success && res.data.data) {
+        return { ticket: res.data.data, isRemote: true };
+      }
+      throw new Error('Failed to create ticket via authenticated service.');
+    } catch (err: any) {
+      if (
+        err.code === 'functions/not-found' ||
+        err.code === 'functions/unavailable' ||
+        err.message?.includes('NOT_FOUND') ||
+        err.message?.includes('Failed to fetch')
+      ) {
+        throw new Error(
+          'Campus maintenance ticket creation is currently unserviceable because Cloud Functions are undeployed on the Spark plan. Please notify campus administration or contact estate management directly.'
+        );
+      }
+      throw err;
     }
-    throw new Error('Failed to create ticket via authenticated service.');
   },
 
   /**
@@ -132,10 +140,11 @@ export const CampusService = {
         return tickets;
       }
     } catch (err) {
-      console.warn('Firestore tickets fetch note (falling back to fixtures):', err);
+      console.error('Unable to load live complaints:', err);
+      throw err;
     }
 
-    return FIXTURE_TICKETS;
+    return [];
   },
 
   /**
@@ -144,7 +153,8 @@ export const CampusService = {
    */
   subscribeTickets(
     callback: (tickets: CampusTicket[]) => void,
-    userId?: string
+    userId?: string,
+    onError?: (error: Error) => void
   ): () => void {
     const complaintsCol = collection(db, 'complaints');
     let q = query(complaintsCol);
@@ -157,7 +167,7 @@ export const CampusService = {
       q,
       async (snap) => {
         if (snap.empty) {
-          callback(FIXTURE_TICKETS);
+          callback([]);
           return;
         }
 
@@ -177,8 +187,9 @@ export const CampusService = {
         callback(tickets);
       },
       (error) => {
-        console.warn('Firestore tickets subscription notice, fallback to fixtures:', error);
-        callback(FIXTURE_TICKETS);
+        console.error('Live complaints subscription failed:', error);
+        if (onError) onError(error as Error);
+        callback([]);
       }
     );
 
@@ -200,8 +211,9 @@ export const CampusService = {
       }
     } catch (err) {
       console.warn('Error fetching ticket by ID:', err);
+      throw err;
     }
-    return FIXTURE_TICKETS.find((t) => t.id === ticketId) || null;
+    return null;
   },
 
   /**
@@ -213,16 +225,20 @@ export const CampusService = {
       if (!snap.empty) {
         return snap.docs.map((d) => ({ id: d.id, ...d.data() } as CampusDepartment));
       }
-    } catch {
-      // ignore
+      return [];
+    } catch (err) {
+      console.error('Error fetching departments:', err);
+      throw err;
     }
-    return FIXTURE_DEPARTMENTS;
   },
 
   /**
    * Real-time Firestore Subscription for Departments
    */
-  subscribeDepartments(callback: (departments: CampusDepartment[]) => void): () => void {
+  subscribeDepartments(
+    callback: (departments: CampusDepartment[]) => void,
+    onError?: (error: Error) => void
+  ): () => void {
     return onSnapshot(
       collection(db, 'departments'),
       (snap) => {
@@ -230,10 +246,13 @@ export const CampusService = {
           const depts = snap.docs.map((d) => ({ id: d.id, ...d.data() } as CampusDepartment));
           callback(depts);
         } else {
-          callback(FIXTURE_DEPARTMENTS);
+          callback([]);
         }
       },
-      () => callback(FIXTURE_DEPARTMENTS)
+      (err) => {
+        if (onError) onError(err as Error);
+        callback([]);
+      }
     );
   },
 
@@ -246,16 +265,20 @@ export const CampusService = {
       if (!snap.empty) {
         return snap.docs.map((d) => ({ id: d.id, ...d.data() } as IssueCluster));
       }
-    } catch {
-      // ignore
+      return [];
+    } catch (err) {
+      console.error('Error fetching clusters:', err);
+      throw err;
     }
-    return FIXTURE_CLUSTERS;
   },
 
   /**
    * Real-time Firestore Subscription for Issue Clusters (Admin Only)
    */
-  subscribeClusters(callback: (clusters: IssueCluster[]) => void): () => void {
+  subscribeClusters(
+    callback: (clusters: IssueCluster[]) => void,
+    onError?: (error: Error) => void
+  ): () => void {
     return onSnapshot(
       collection(db, 'issueClusters'),
       (snap) => {
@@ -263,12 +286,13 @@ export const CampusService = {
           const clusters = snap.docs.map((d) => ({ id: d.id, ...d.data() } as IssueCluster));
           callback(clusters);
         } else {
-          callback(FIXTURE_CLUSTERS);
+          callback([]);
         }
       },
       (err) => {
         console.warn('issueClusters subscription notice (Admin role required):', err.message);
-        callback(FIXTURE_CLUSTERS);
+        if (onError) onError(err as Error);
+        callback([]);
       }
     );
   },
@@ -277,7 +301,10 @@ export const CampusService = {
    * Real-time Firestore Subscription for Sanitized Public Campus Incidents (Student Safe)
    * Exposes only verified, privacy-reviewed maintenance incidents without student IDs or individual complaint references.
    */
-  subscribePublicIncidents(callback: (incidents: PublicCampusIncident[]) => void): () => void {
+  subscribePublicIncidents(
+    callback: (incidents: PublicCampusIncident[]) => void,
+    onError?: (error: Error) => void
+  ): () => void {
     return onSnapshot(
       collection(db, 'publicIncidents'),
       (snap) => {
@@ -285,24 +312,12 @@ export const CampusService = {
           const incidents = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PublicCampusIncident));
           callback(incidents);
         } else {
-          // Fall back to sanitized fixture clusters
-          callback(
-            FIXTURE_CLUSTERS.map((c) => ({
-              id: c.id,
-              title: c.title,
-              category: c.category,
-              affectedArea: c.affectedArea,
-              building: c.building,
-              status: c.status === 'ACTIVE_INCIDENT' ? 'ACTIVE_INCIDENT' : 'RESOLVING',
-              summary: c.suggestedAction,
-              ticketCount: c.ticketCount,
-              verifiedAt: c.createdAt,
-            }))
-          );
+          callback([]);
         }
       },
       (err) => {
         console.warn('publicIncidents subscription notice:', err.message);
+        if (onError) onError(err as Error);
         callback([]);
       }
     );
@@ -315,18 +330,22 @@ export const CampusService = {
     try {
       const snap = await getDocs(collection(db, 'campusClubs'));
       if (!snap.empty) {
-        return snap.docs.map((d) => ({ id: d.id, ...d.data() } as CampusClub));
+        return snap.docs.map((d) => ({ id: d.id, ...d.data() } as CampusClub)).filter((c) => !c.isArchived);
       }
-    } catch {
-      // ignore
+      return [];
+    } catch (err) {
+      console.error('Error fetching clubs:', err);
+      throw err;
     }
-    return FIXTURE_CLUBS;
   },
 
   /**
    * Real-time Firestore Subscription for Campus Clubs
    */
-  subscribeClubs(callback: (clubs: CampusClub[]) => void): () => void {
+  subscribeClubs(
+    callback: (clubs: CampusClub[]) => void,
+    onError?: (error: Error) => void
+  ): () => void {
     return onSnapshot(
       collection(db, 'campusClubs'),
       (snap) => {
@@ -334,10 +353,14 @@ export const CampusService = {
           const clubs = snap.docs.map((d) => ({ id: d.id, ...d.data() } as CampusClub));
           callback(clubs.filter((c) => !c.isArchived));
         } else {
-          callback(FIXTURE_CLUBS);
+          callback([]);
         }
       },
-      () => callback(FIXTURE_CLUBS)
+      (err) => {
+        console.warn('Campus clubs subscription failed:', err.message);
+        if (onError) onError(err as Error);
+        callback([]);
+      }
     );
   },
 

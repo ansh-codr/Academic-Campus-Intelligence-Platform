@@ -6,6 +6,8 @@ import {
   QuizAnswerReview,
   QuizAttempt,
   TopicStatus,
+  publishedQuizSubmissionSchema,
+  draftQuizSubmissionSchema,
 } from '@solvesphere/shared';
 
 /**
@@ -27,6 +29,11 @@ export const getQuizQuestions = onCall({ cors: true }, async (request) => {
   const quizDoc = await db.collection('quizzes').doc(quizId).get();
   if (!quizDoc.exists) {
     throw new HttpsError('not-found', `Quiz ${quizId} was not found.`);
+  }
+
+  // Unpublished drafts can only be previewed by Administrators
+  if (!quizDoc.data()?.published && request.auth.token.role !== 'ADMIN') {
+    throw new HttpsError('failed-precondition', 'This assessment is currently an unpublished draft and cannot be viewed by students.');
   }
 
   const questionsSnap = await db
@@ -81,12 +88,26 @@ export const submitQuiz = onCall({ cors: true }, async (request) => {
   let studentName = request.auth.token.name || request.auth.token.email || 'Student';
   const userDoc = await db.collection('users').doc(uid).get();
   if (userDoc.exists) {
-    studentName = userDoc.data()?.fullName || studentName;
+    const userData = userDoc.data();
+    if (request.auth.token.role !== 'ADMIN' && userData?.enrollmentStatus !== 'VERIFIED') {
+      throw new HttpsError(
+        'permission-denied',
+        'Official continuous assessment quiz submission requires verified institutional student enrollment.'
+      );
+    }
+    studentName = userData?.fullName || studentName;
+  } else if (request.auth.token.role !== 'ADMIN') {
+    throw new HttpsError('permission-denied', 'Student user profile not found.');
   }
 
   const quizDoc = await db.collection('quizzes').doc(quizId).get();
   if (!quizDoc.exists) {
     throw new HttpsError('not-found', `Quiz ${quizId} was not found.`);
+  }
+
+  // Unpublished drafts can only be previewed by Administrators
+  if (!quizDoc.data()?.published && request.auth.token.role !== 'ADMIN') {
+    throw new HttpsError('failed-precondition', 'This assessment is currently an unpublished draft and cannot be viewed by students.');
   }
   const quizData = quizDoc.data()!;
 
@@ -171,8 +192,23 @@ export const adminSaveQuiz = onCall({ cors: true }, async (request) => {
   }
 
   const { quiz, questions } = request.data || {};
-  if (!quiz || !quiz.title || !quiz.subjectId || !Array.isArray(questions)) {
-    throw new HttpsError('invalid-argument', 'Valid quiz metadata and questions array required.');
+  if (!quiz || typeof quiz !== 'object') {
+    throw new HttpsError('invalid-argument', 'Valid quiz metadata object is required.');
+  }
+
+  const isPublishing = quiz.published === true;
+  if (isPublishing) {
+    const parseResult = publishedQuizSubmissionSchema.safeParse({ quiz, questions });
+    if (!parseResult.success) {
+      const firstError = parseResult.error.errors[0]?.message || 'Assessment publication validation failed.';
+      throw new HttpsError('invalid-argument', `Cannot publish assessment: ${firstError}`);
+    }
+  } else {
+    const parseResult = draftQuizSubmissionSchema.safeParse({ quiz, questions: questions || [] });
+    if (!parseResult.success) {
+      const firstError = parseResult.error.errors[0]?.message || 'Draft validation failed.';
+      throw new HttpsError('invalid-argument', `Cannot save draft assessment: ${firstError}`);
+    }
   }
 
   const db = admin.firestore();
@@ -187,7 +223,8 @@ export const adminSaveQuiz = onCall({ cors: true }, async (request) => {
     {
       ...quiz,
       id: quizId,
-      questionsCount: questions.length,
+      published: Boolean(quiz.published),
+      questionsCount: Array.isArray(questions) ? questions.length : 0,
       updatedAt: now,
       createdAt: quiz.createdAt || now,
     },
@@ -195,15 +232,17 @@ export const adminSaveQuiz = onCall({ cors: true }, async (request) => {
   );
 
   // Write question subcollection
-  for (const q of questions) {
-    const qId = q.id || quizRef.collection('questions').doc().id;
-    const qRef = quizRef.collection('questions').doc(qId);
-    batch.set(qRef, {
-      ...q,
-      id: qId,
-      quizId,
-      subjectId: quiz.subjectId,
-    });
+  if (Array.isArray(questions)) {
+    for (const q of questions) {
+      const qId = q.id || quizRef.collection('questions').doc().id;
+      const qRef = quizRef.collection('questions').doc(qId);
+      batch.set(qRef, {
+        ...q,
+        id: qId,
+        quizId,
+        subjectId: quiz.subjectId,
+      });
+    }
   }
 
   await batch.commit();
@@ -211,6 +250,7 @@ export const adminSaveQuiz = onCall({ cors: true }, async (request) => {
   return {
     success: true,
     quizId,
+    published: Boolean(quiz.published),
   };
 });
 

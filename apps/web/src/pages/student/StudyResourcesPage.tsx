@@ -36,6 +36,7 @@ export const StudyResourcesPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [previewResource, setPreviewResource] = useState<StudyResource | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -51,6 +52,10 @@ export const StudyResourcesPage: React.FC = () => {
         ]);
         setSubjects(subjs);
         setResources(resList);
+        setLoadError(null);
+      } catch (err: any) {
+        console.error('Failed to load study resources:', err);
+        setLoadError(err?.message || 'Failed to load study resources.');
       } finally {
         setIsLoading(false);
       }
@@ -86,6 +91,15 @@ export const StudyResourcesPage: React.FC = () => {
           Discover verified lecture slides, practice sheets, and exploratory material categorized by course boundaries.
         </p>
       </div>
+
+      {loadError && (
+        <div
+          role="alert"
+          className="p-4 rounded-xl border border-red-500/30 bg-red-950/20 text-red-200 text-xs sm:text-sm flex items-center justify-between"
+        >
+          <span>{loadError}</span>
+        </div>
+      )}
 
       {/* Filter Toolbar */}
       <Card className="p-4 sm:p-5 space-y-4">

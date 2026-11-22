@@ -34,6 +34,7 @@ export const AcademicDashboardPage: React.FC = () => {
   const [recentResources, setRecentResources] = useState<StudyResource[]>([]);
   const [upcomingQuizzes, setUpcomingQuizzes] = useState<Quiz[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadData() {
@@ -49,8 +50,10 @@ export const AcademicDashboardPage: React.FC = () => {
         setTimeline(tl);
         setRecentResources(resList.slice(0, 4));
         setUpcomingQuizzes(quizzes.slice(0, 3));
-      } catch (err) {
+        setLoadError(null);
+      } catch (err: any) {
         console.error('Failed to load academic dashboard data:', err);
+        setLoadError(err?.message || 'Failed to synchronize academic records.');
       } finally {
         setIsLoading(false);
       }
@@ -96,6 +99,15 @@ export const AcademicDashboardPage: React.FC = () => {
           </Link>
         </div>
       </div>
+
+      {loadError && (
+        <div
+          role="alert"
+          className="p-4 rounded-xl border border-red-500/30 bg-red-950/20 text-red-200 text-xs sm:text-sm flex items-center justify-between"
+        >
+          <span>{loadError}</span>
+        </div>
+      )}
 
       {/* Curriculum Banner with Real Dynamic Progress */}
       <div className="p-5 rounded-2xl bg-gradient-to-r from-blue-900/20 via-slate-900 to-indigo-900/20 border border-blue-500/20 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-6">

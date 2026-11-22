@@ -63,27 +63,15 @@ export const SettingsPage: React.FC = () => {
           </div>
         </Card>
 
-        {/* Privacy & Demo Sandbox Controls */}
+        {/* Security & Access */}
         <Card className="p-6 space-y-4">
           <h3 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-2">
-            <Shield className="w-4 h-4 text-amber-500" />
-            Demo Session Controls
+            <Shield className="w-4 h-4 text-emerald-500" />
+            Security &amp; Account Status
           </h3>
           <p className="text-xs text-slate-600 dark:text-slate-400">
-            During Phase 1, local demo ticket submissions are saved in browser storage. You can reset your session cache here.
+            Account authenticated securely via Firebase Identity Platform. Role and access permissions are managed directly by campus administrators.
           </p>
-          <div className="pt-2 flex gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                localStorage.removeItem('solvesphere_local_tickets');
-                alert('Local ticket demo store reset to initial fixtures.');
-              }}
-            >
-              Reset Local Ticket Store
-            </Button>
-          </div>
         </Card>
       </div>
     </div>

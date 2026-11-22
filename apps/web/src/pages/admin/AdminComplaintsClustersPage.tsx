@@ -33,16 +33,43 @@ export const AdminComplaintsClustersPage: React.FC = () => {
   const [statusNote, setStatusNote] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsubClusters = CampusService.subscribeClusters(setClusters);
-    const unsubTickets = CampusService.subscribeTickets(setTickets);
-    const unsubDepts = CampusService.subscribeDepartments((depts) => {
-      setDepartments(depts.filter((d) => d.isActive));
-      if (depts.length > 0 && !newDepartment) {
-        setNewDepartment(depts[0].name);
+    const unsubClusters = CampusService.subscribeClusters(
+      (data) => {
+        setClusters(data);
+        setLoadError(null);
+      },
+      (err) => {
+        console.error('Failed to subscribe to clusters:', err);
+        setLoadError('Failed to synchronize incident clusters.');
       }
-    });
+    );
+    const unsubTickets = CampusService.subscribeTickets(
+      (data) => {
+        setTickets(data);
+        setLoadError(null);
+      },
+      undefined,
+      (err) => {
+        console.error('Failed to subscribe to tickets:', err);
+        setLoadError('Failed to synchronize campus complaints.');
+      }
+    );
+    const unsubDepts = CampusService.subscribeDepartments(
+      (depts) => {
+        setDepartments(depts.filter((d) => d.isActive));
+        if (depts.length > 0 && !newDepartment) {
+          setNewDepartment(depts[0].name);
+        }
+        setLoadError(null);
+      },
+      (err) => {
+        console.error('Failed to subscribe to departments:', err);
+        setLoadError('Failed to synchronize campus departments.');
+      }
+    );
 
     return () => {
       unsubClusters();
@@ -106,6 +133,13 @@ export const AdminComplaintsClustersPage: React.FC = () => {
           Assign tickets to campus maintenance departments, manage status transitions, and inspect semantic duplicate clusters.
         </p>
       </div>
+
+      {loadError && (
+        <div role="alert" className="p-4 rounded-2xl bg-rose-950/60 border border-rose-800 text-xs text-rose-300 flex items-center gap-2 font-semibold animate-in zoom-in-95">
+          <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+          <span>{loadError}</span>
+        </div>
+      )}
 
       {actionSuccess && (
         <div className="p-4 rounded-2xl bg-emerald-950/60 border border-emerald-800 text-xs text-emerald-300 flex items-center gap-2 font-semibold animate-in zoom-in-95">

@@ -22,12 +22,26 @@ export const StudyMateService = {
    * Calls the secure server-side Cloud Function askStudyMateAi
    */
   async askStudyMate(request: AskStudyMateRequest): Promise<AskStudyMateResponse> {
-    const askFn = httpsCallable<AskStudyMateRequest, AskStudyMateResponse>(
-      functions,
-      'askStudyMateAi'
-    );
-    const result = await askFn(request);
-    return result.data;
+    try {
+      const askFn = httpsCallable<AskStudyMateRequest, AskStudyMateResponse>(
+        functions,
+        'askStudyMateAi'
+      );
+      const result = await askFn(request);
+      return result.data;
+    } catch (err: any) {
+      if (
+        err.code === 'functions/not-found' ||
+        err.code === 'functions/unavailable' ||
+        err.message?.includes('NOT_FOUND') ||
+        err.message?.includes('Failed to fetch')
+      ) {
+        throw new Error(
+          'StudyMate AI backend is currently offline (serverless Cloud Functions require Blaze plan deployment). Please consult your syllabus and faculty coordinator.'
+        );
+      }
+      throw err;
+    }
   },
 
   /**

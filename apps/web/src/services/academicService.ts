@@ -28,12 +28,6 @@ import {
   StudentStudyProgress,
   TopicStatus,
 } from '@solvesphere/shared';
-import {
-  FIXTURE_SUBJECTS,
-  FIXTURE_TOPICS,
-  FIXTURE_RESOURCES,
-  FIXTURE_PRACTICE_MODULES,
-} from '@/fixtures/academicFixtures';
 
 export interface TimelineGroup {
   completed: SyllabusTopic[];
@@ -79,9 +73,10 @@ export const AcademicService = {
           });
       }
     } catch (err) {
-      console.warn('Using fixture fallback for subjects:', err);
+      console.error('Failed to fetch live subjects:', err);
+      throw err;
     }
-    return FIXTURE_SUBJECTS;
+    return [];
   },
 
   async getSubjectById(subjectId: string): Promise<SubjectSummary | undefined> {
@@ -112,25 +107,20 @@ export const AcademicService = {
         };
       }
     } catch (err) {
-      console.warn('Using fixture fallback for timeline:', err);
+      console.error('Failed to fetch live syllabus timeline:', err);
+      throw err;
     }
-
-    let topics = FIXTURE_TOPICS;
-    if (subjectId && subjectId !== 'ALL') {
-      topics = topics.filter((t) => t.subjectId === subjectId);
-    }
-
-    return {
-      completed: topics.filter((t) => t.status === 'COMPLETED'),
-      ongoing: topics.filter((t) => t.status === 'ONGOING'),
-      upcoming: topics.filter((t) => t.status === 'UPCOMING'),
-    };
+    return { completed: [], ongoing: [], upcoming: [] };
   },
 
   /**
    * Real-time subscription to syllabus topic pacing changes.
    */
-  subscribeToTopics(subjectId: string | undefined, callback: (topics: SyllabusTopic[]) => void): Unsubscribe {
+  subscribeToTopics(
+    subjectId: string | undefined,
+    callback: (topics: SyllabusTopic[]) => void,
+    onError?: (error: Error) => void
+  ): Unsubscribe {
     const topicsCol = collection(db, 'syllabusTopics');
     let q = query(topicsCol, orderBy('order', 'asc'));
     if (subjectId && subjectId !== 'ALL') {
@@ -147,7 +137,8 @@ export const AcademicService = {
       },
       (error) => {
         console.error('Error listening to topics:', error);
-        callback(FIXTURE_TOPICS);
+        if (onError) onError(error as Error);
+        callback([]);
       }
     );
   },
@@ -175,20 +166,10 @@ export const AcademicService = {
         return snap.docs.map((d) => ({ id: d.id, ...d.data() } as StudyResource));
       }
     } catch (err) {
-      console.warn('Falling back to resource fixtures:', err);
+      console.error('Failed to fetch live resources:', err);
+      throw err;
     }
-
-    let resources = FIXTURE_RESOURCES;
-    if (filter?.subjectId && filter.subjectId !== 'ALL') {
-      resources = resources.filter((r) => r.subjectId === filter.subjectId);
-    }
-    if (filter?.scope && filter.scope !== 'ALL') {
-      resources = resources.filter((r) => r.scope === filter.scope);
-    }
-    if (filter?.topicId) {
-      resources = resources.filter((r) => r.topicId === filter.topicId);
-    }
-    return resources;
+    return [];
   },
 
   /**
@@ -280,104 +261,34 @@ export const AcademicService = {
         return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Quiz));
       }
     } catch (err) {
-      console.warn('Falling back to quiz fixtures:', err);
+      console.error('Failed to fetch live quizzes:', err);
+      throw err;
     }
-
-    return FIXTURE_PRACTICE_MODULES.map((m) => ({
-      id: m.id,
-      subjectId: m.subjectId,
-      title: m.title,
-      description: m.description,
-      type: m.type,
-      durationMinutes: m.durationMinutes,
-      difficulty: m.difficulty,
-      published: true,
-      questionsCount: m.questionCount || 5,
-      createdAt: new Date().toISOString(),
-    }));
+    return [];
   },
 
   /**
    * Fetches questions for a quiz securely via Cloud Function (strips answer keys).
    */
   async getQuizQuestions(quizId: string): Promise<{ quizId: string; title: string; durationMinutes: number; questions: SanitizedQuizQuestion[] }> {
-    try {
-      const getQuestionsFn = httpsCallable<{ quizId: string }, { quizId: string; title: string; durationMinutes: number; questions: SanitizedQuizQuestion[] }>(
-        functions,
-        'getQuizQuestions'
-      );
-      const res = await getQuestionsFn({ quizId });
-      if (res.data?.questions && res.data.questions.length > 0) {
-        return res.data;
-      }
-    } catch (err) {
-      console.warn('Cloud function getQuizQuestions failed, falling back:', err);
+    const getQuestionsFn = httpsCallable<{ quizId: string }, { quizId: string; title: string; durationMinutes: number; questions: SanitizedQuizQuestion[] }>(functions, 'getQuizQuestions');
+    const result = await getQuestionsFn({ quizId });
+    if (!result.data?.questions || result.data.questions.length === 0) {
+      throw new Error('This quiz does not currently have published questions.');
     }
-
-    // Fallback questions for interactive testing
-    return {
-      quizId,
-      title: 'Practice Assessment',
-      durationMinutes: 15,
-      questions: [
-        {
-          id: 'q-demo-1',
-          quizId,
-          questionText: 'In a synchronous counter designed using JK flip-flops, why is the toggle condition (J=1, K=1) used for state transitions?',
-          options: [
-            'A) Because it forces the output Q to 0 asynchronously',
-            'B) Because it inverts the stored output bit on each active clock edge',
-            'C) Because it resets clock propagation delay',
-            'D) Because it prevents static-1 timing hazards',
-          ],
-        },
-        {
-          id: 'q-demo-2',
-          quizId,
-          questionText: 'Which non-linear activation function prevents vanishing gradients by maintaining an identity gradient for positive values?',
-          options: ['A) Sigmoid', 'B) Tanh', 'C) Rectified Linear Unit (ReLU)', 'D) Softmax'],
-        },
-      ],
-    };
+    return result.data;
   },
 
   /**
    * Submits answers to trusted Cloud Function for server-side score calculation and persistence.
    */
   async submitQuiz(quizId: string, answers: QuizAnswerSubmission[]): Promise<{ attempt: QuizAttempt }> {
-    try {
-      const submitFn = httpsCallable<{ quizId: string; answers: QuizAnswerSubmission[] }, { success: boolean; attempt: QuizAttempt }>(
-        functions,
-        'submitQuiz'
-      );
-      const res = await submitFn({ quizId, answers });
-      return { attempt: res.data.attempt };
-    } catch (err) {
-      console.error('Server-side quiz grading error:', err);
-      // Fallback mock grading if emulators are offline
-      const mockAttempt: QuizAttempt = {
-        id: `att-${Date.now()}`,
-        userId: 'student-demo',
-        studentName: 'Aarav Sharma',
-        quizId,
-        quizTitle: 'Practice Assessment',
-        subjectId: 'subj-cs101',
-        score: answers.length,
-        totalQuestions: answers.length,
-        percentage: 100,
-        answers: answers.map((a) => ({
-          questionId: a.questionId,
-          questionText: 'Sample assessment question',
-          options: ['Option A', 'Option B', 'Option C', 'Option D'],
-          selectedOptionIndex: a.selectedOptionIndex,
-          correctOptionIndex: a.selectedOptionIndex,
-          isCorrect: true,
-          explanation: 'Verified conceptual rationale.',
-        })),
-        completedAt: new Date().toISOString(),
-      };
-      return { attempt: mockAttempt };
+    const submitFn = httpsCallable<{ quizId: string; answers: QuizAnswerSubmission[] }, { success: boolean; attempt: QuizAttempt }>(functions, 'submitQuiz');
+    const result = await submitFn({ quizId, answers });
+    if (!result.data?.success || !result.data.attempt) {
+      throw new Error('Quiz submission could not be verified by the server.');
     }
+    return { attempt: result.data.attempt };
   },
 
   /**
@@ -486,24 +397,32 @@ export const AcademicService = {
   },
 
   async updateTopicStatus(topicId: string, status: TopicStatus, completedAt?: string): Promise<void> {
-    try {
-      const updateFn = httpsCallable<{ topicId: string; status: TopicStatus; completedAt?: string }, { success: boolean }>(
-        functions,
-        'adminUpdateTopicStatus'
-      );
-      await updateFn({ topicId, status, completedAt });
-    } catch {
-      // Fallback direct write
-      await updateDoc(doc(db, 'syllabusTopics', topicId), {
-        status,
-        completedAt: status === 'COMPLETED' ? completedAt || new Date().toISOString().split('T')[0] : null,
-        isCurrent: status === 'ONGOING',
-        updatedAt: new Date().toISOString(),
-      });
-    }
+    const updateFn = httpsCallable<{ topicId: string; status: TopicStatus; completedAt?: string }, { success: boolean }>(functions, 'adminUpdateTopicStatus');
+    const result = await updateFn({ topicId, status, completedAt });
+    if (!result.data?.success) throw new Error('Server did not confirm syllabus status change.');
   },
 
   async deleteTopic(topicId: string): Promise<void> {
     await deleteDoc(doc(db, 'syllabusTopics', topicId));
+  },
+
+  async deleteSubject(subjectId: string): Promise<void> {
+    await deleteDoc(doc(db, 'subjects', subjectId));
+  },
+
+  async saveQuiz(quiz: Partial<Quiz>, questions: any[]): Promise<{ quizId: string }> {
+    const saveFn = httpsCallable<{ quiz: Partial<Quiz>; questions: any[] }, { success: boolean; quizId: string }>(
+      functions,
+      'adminSaveQuiz'
+    );
+    const result = await saveFn({ quiz, questions });
+    if (!result.data?.success) throw new Error('Server did not confirm quiz publication.');
+    return { quizId: result.data.quizId };
+  },
+
+  async deleteQuiz(quizId: string): Promise<void> {
+    const deleteFn = httpsCallable<{ quizId: string }, { success: boolean }>(functions, 'adminDeleteQuiz');
+    const result = await deleteFn({ quizId });
+    if (!result.data?.success) throw new Error('Server did not confirm quiz deletion.');
   },
 };

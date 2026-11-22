@@ -8,7 +8,7 @@ const read=(p)=>fs.readFileSync(path.join(root,p),'utf8');
 test('all required product routes remain registered',()=>{
   const app=read('App.tsx');
   for(const route of [
-    '/auth/login','/auth/register','/auth/admin-login','/portal','/admin',
+    '/auth/login','/auth/register','/auth/complete-profile','/auth/admin-login','/portal','/admin',
     'overview','academic','subjects','timeline','resources','studymate','practice',
     'campus','report','tickets','speak-freely','clubs','profile','settings',
     'dashboard','complaints','clusters','analytics'
