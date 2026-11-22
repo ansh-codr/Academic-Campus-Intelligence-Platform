@@ -1831,9 +1831,17 @@ async function runTests() {
   });
   assert.ok(acComp1Res.data?.success);
   const acComp1Id = acComp1Res.data.data.id;
+  assert.ok(acComp1Res.data?.data?.referenceNumber);
+  assert.strictEqual(acComp1Res.data?.data?.status, 'SUBMITTED');
+  assert.ok(['PENDING', 'PROCESSING', 'COMPLETED'].includes(acComp1Res.data?.data?.clusteringStatus));
 
-  // Verify embedding record stored with full metadata
-  const embDoc = await db.collection('complaintEmbeddings').doc(acComp1Id).get();
+  // Poll for background embedding generation for comp1
+  let embDoc;
+  for (let attempt = 0; attempt < 30; attempt++) {
+    embDoc = await db.collection('complaintEmbeddings').doc(acComp1Id).get();
+    if (embDoc.exists) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
   assert.ok(embDoc.exists, 'Complaint embedding record must exist in complaintEmbeddings');
   const embData = embDoc.data();
   assert.strictEqual(embData.source, 'TEST', 'Test environment embedding source must be TEST');
@@ -1843,11 +1851,11 @@ async function runTests() {
   assert.ok(['READY', 'SUCCESS'].includes(embData.status), 'status must indicate ready or success');
 
   // Verify cosineSimilarity rejects cross-model and cross-source comparisons
-  const { cosineSimilarity } = await import('../functions/lib/campusCare.js');
+  const { cosineSimilarity, getGeminiEmbeddingModel } = await import('../functions/lib/campusCare.js');
   const dummyGeminiEmb = {
     values: new Array(768).fill(0.05),
     source: 'GEMINI',
-    model: 'text-embedding-004',
+    model: getGeminiEmbeddingModel(),
     dimensions: 768,
     textHash: 'hash-gemini',
   };
@@ -1877,9 +1885,15 @@ async function runTests() {
   assert.ok(acComp2Res.data?.success);
   const acComp2Id = acComp2Res.data.data.id;
 
-  // Check that second complaint was grouped into an issueCluster
-  const acComp2Doc = await db.collection('complaints').doc(acComp2Id).get();
-  const clusterId = acComp2Doc.data()?.clusterId;
+  // Poll for background clustering completion
+  let acComp2Doc;
+  let clusterId;
+  for (let attempt = 0; attempt < 30; attempt++) {
+    acComp2Doc = await db.collection('complaints').doc(acComp2Id).get();
+    clusterId = acComp2Doc.data()?.clusterId;
+    if (clusterId && acComp2Doc.data()?.clusteringStatus === 'COMPLETED') break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
   assert.ok(clusterId, 'Second semantically similar complaint must be assigned a clusterId');
 
   const clusterDoc = await db.collection('issueClusters').doc(clusterId).get();
@@ -2121,8 +2135,14 @@ async function runTests() {
   assert.ok(ruleComp1.data?.success);
   assert.ok(ruleComp2.data?.success);
 
-  const ruleComp2Doc = await db.collection('complaints').doc(ruleComp2.data.data.id).get();
-  const ruleClusterId = ruleComp2Doc.data()?.clusterId;
+  let ruleComp2Doc;
+  let ruleClusterId;
+  for (let attempt = 0; attempt < 30; attempt++) {
+    ruleComp2Doc = await db.collection('complaints').doc(ruleComp2.data.data.id).get();
+    ruleClusterId = ruleComp2Doc.data()?.clusterId;
+    if (ruleClusterId && ruleComp2Doc.data()?.clusteringStatus === 'COMPLETED') break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
   assert.ok(ruleClusterId, 'Rule-based location proximity should assign a clusterId');
 
   const ruleClusterDoc = await db.collection('issueClusters').doc(ruleClusterId).get();
@@ -2132,6 +2152,75 @@ async function runTests() {
   assert.strictEqual(ruleClusterData.similarityScore, undefined, 'Rule-based clusters must omit arbitrary numerical similarityScore');
   assert.ok(ruleClusterData.confidenceBasis?.includes('Heuristic identical room & category match'));
   console.log(`✓ Test 43 Passed: Rule-based location proximity verified without false numerical similarity scores.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 44: Legacy Embedding Invalidation, Incompatible Vectors & Idempotency
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 44] Verifying Legacy Cache Invalidation, Vector Safety & Idempotency...`);
+  const { getOrCreateComplaintEmbedding } = await import('../functions/lib/campusCare.js');
+  const { runComplaintClustering } = await import('../functions/lib/complaints.js');
+
+  // 1. Invalidation of legacy text-embedding-004 cache record
+  const legacyCompId = 'legacy-test-complaint-id';
+  await db.collection('complaintEmbeddings').doc(legacyCompId).set({
+    complaintId: legacyCompId,
+    embedding: new Array(768).fill(0.123),
+    source: 'GEMINI',
+    model: 'text-embedding-004', // Discontinued legacy model
+    dimensions: 768,
+    textHash: 'legacy-hash',
+    status: 'SUCCESS',
+    createdAt: new Date().toISOString(),
+  });
+
+  const refreshedEmb = await getOrCreateComplaintEmbedding(
+    db,
+    legacyCompId,
+    'AC cooling unit is freezing up and creating frost'
+  );
+  assert.ok(refreshedEmb);
+  assert.notStrictEqual(refreshedEmb.model, 'text-embedding-004', 'Legacy text-embedding-004 model must be invalidated');
+  assert.strictEqual(refreshedEmb.source, 'TEST');
+  assert.strictEqual(refreshedEmb.dimensions, 64);
+
+  // 2. Invalidation of corrupted non-number vector cache
+  const corruptCompId = 'corrupt-test-complaint-id';
+  await db.collection('complaintEmbeddings').doc(corruptCompId).set({
+    complaintId: corruptCompId,
+    embedding: [NaN, 0.5, Infinity, null],
+    source: 'TEST',
+    model: 'deterministic-test-projector',
+    dimensions: 4,
+    textHash: 'corrupt-hash',
+    status: 'SUCCESS',
+    createdAt: new Date().toISOString(),
+  });
+
+  const cleanEmb = await getOrCreateComplaintEmbedding(
+    db,
+    corruptCompId,
+    'Pipe leak in second floor bathroom'
+  );
+  assert.ok(cleanEmb);
+  assert.strictEqual(cleanEmb.dimensions, 64);
+  assert.ok(cleanEmb.embedding.every((v) => typeof v === 'number' && !isNaN(v) && isFinite(v)));
+
+  // 3. Incompatible vector comparisons safely return 0
+  assert.strictEqual(cosineSimilarity([0.1, 0.2], [0.1, NaN]), 0, 'Vector with NaN must return 0');
+  assert.strictEqual(cosineSimilarity({ values: [0.1], dimensions: 1, model: 'A' }, { values: [0.1], dimensions: 1, model: 'B' }), 0, 'Model mismatch must return 0');
+
+  // 4. Idempotency: repeating runComplaintClustering on an already-clustered complaint
+  const clusterSnapBefore = await db.collection('issueClusters').doc(clusterId).get();
+  const ticketCountBefore = clusterSnapBefore.data().ticketCount;
+
+  const repeatRun = await runComplaintClustering(db, acComp2Id);
+  assert.ok(repeatRun.success);
+  assert.strictEqual(repeatRun.status, 'ALREADY_CLUSTERED');
+  assert.strictEqual(repeatRun.clusterId, clusterId);
+
+  const clusterSnapAfter = await db.collection('issueClusters').doc(clusterId).get();
+  assert.strictEqual(clusterSnapAfter.data().ticketCount, ticketCountBefore, 'Ticket count must not be incremented on retry');
+  console.log(`✓ Test 44 Passed: Legacy embedding cache invalidated, vector safety confirmed, and background idempotency verified.`);
 
   // --------------------------------------------------------------------------
   // TEST 19: Security Scan - Zero API Keys in Client Bundles
@@ -2154,7 +2243,7 @@ async function runTests() {
   console.log(`✓ Test 19 Passed: Client distribution verified free of exposed API keys.`);
 
   console.log(`\n======================================================`);
-  console.log(`  ALL 43 INTEGRATION, AI & SECURITY TESTS PASSED!`);
+  console.log(`  ALL 44 INTEGRATION, AI & SECURITY TESTS PASSED!`);
   console.log(`======================================================\n`);
   process.exit(0);
 }

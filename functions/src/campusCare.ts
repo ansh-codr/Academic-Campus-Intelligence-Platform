@@ -13,6 +13,7 @@ import {
   ComplaintEmbeddingRecord,
   AskCampusCareSchema,
   AiAssistComplaintSchema,
+  AiAssistGeminiResponseSchema,
   TicketCategory,
   TicketPriority,
 } from '@solvesphere/shared';
@@ -209,6 +210,10 @@ export function cosineSimilarity(
   }
 
   if (!vecA || !vecB || vecA.length !== vecB.length || vecA.length === 0) return 0;
+  // Ensure all values are finite numbers
+  if (!vecA.every((v) => typeof v === 'number' && !isNaN(v) && isFinite(v))) return 0;
+  if (!vecB.every((v) => typeof v === 'number' && !isNaN(v) && isFinite(v))) return 0;
+
   let dot = 0;
   let normA = 0;
   let normB = 0;
@@ -221,6 +226,27 @@ export function cosineSimilarity(
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
+/**
+ * Configurable Gemini Embedding Model
+ * Defaults to 'gemini-embedding-2' per Google Gemini Developer API recommendations.
+ */
+export function getGeminiEmbeddingModel(): string {
+  return process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2';
+}
+
+/**
+ * Expected vector dimensions for the configured embedding model.
+ * Defaults to 768 for gemini-embedding-2 (using MRL outputDimensionality)
+ * or 64 for the deterministic test double projector.
+ */
+export function getExpectedEmbeddingDimensions(model: string): number {
+  if (model === 'deterministic-test-projector') {
+    return 64;
+  }
+  const envDim = parseInt(process.env.GEMINI_EMBEDDING_DIMENSIONS || '768', 10);
+  return isNaN(envDim) ? 768 : envDim;
+}
+
 export interface GeneratedEmbedding {
   values: number[];
   source: 'GEMINI' | 'TEST';
@@ -230,7 +256,7 @@ export interface GeneratedEmbedding {
 }
 
 /**
- * Generates an embedding vector for complaint text using Gemini text-embedding-004
+ * Generates an embedding vector for complaint text using Gemini gemini-embedding-2
  * or a deterministic semantic projection in test/emulator environments.
  * In production without a Gemini API key, returns null (never fake embeddings).
  */
@@ -240,26 +266,36 @@ export async function generateComplaintEmbedding(
 ): Promise<GeneratedEmbedding | null> {
   const clean = text.trim();
   const textHash = computeTextHash(clean);
+  const activeModel = getGeminiEmbeddingModel();
+  const targetDimensions = getExpectedEmbeddingDimensions(activeModel);
 
   if (apiKey) {
     try {
       const ai = new GoogleGenAI({ apiKey });
       const resp = await ai.models.embedContent({
-        model: 'text-embedding-004',
+        model: activeModel,
         contents: clean,
+        config: {
+          outputDimensionality: targetDimensions,
+        },
       });
       const values = resp.embeddings?.[0]?.values;
-      if (values && values.length > 0) {
+      if (
+        values &&
+        Array.isArray(values) &&
+        values.length === targetDimensions &&
+        values.every((v) => typeof v === 'number' && !isNaN(v) && isFinite(v))
+      ) {
         return {
           values,
           source: 'GEMINI',
-          model: 'text-embedding-004',
+          model: activeModel,
           dimensions: values.length,
           textHash,
         };
       }
     } catch (err) {
-      console.warn('Gemini embedding API call failed, evaluating test double fallback:', err);
+      console.warn(`[CampusCare] Gemini embedding call to ${activeModel} failed:`, err);
     }
   }
 
@@ -322,6 +358,7 @@ export async function generateComplaintEmbedding(
 /**
  * Caches and retrieves complaint embeddings from Firestore to minimize AI embedding calls.
  * Stores source, model, dimension, and fingerprint metadata.
+ * Safely invalidates outdated (e.g. legacy text-embedding-004), mismatched, or corrupted vectors.
  */
 export async function getOrCreateComplaintEmbedding(
   db: admin.firestore.Firestore,
@@ -331,24 +368,59 @@ export async function getOrCreateComplaintEmbedding(
 ): Promise<ComplaintEmbeddingRecord | null> {
   const embedRef = db.collection('complaintEmbeddings').doc(complaintId);
   const existing = await embedRef.get();
+  const clean = text.trim();
+  const currentTextHash = computeTextHash(clean);
+
+  const activeModel = apiKey
+    ? getGeminiEmbeddingModel()
+    : (isEmulatorOrTestEnvironment() ? 'deterministic-test-projector' : getGeminiEmbeddingModel());
+  const expectedSource: 'GEMINI' | 'TEST' = apiKey
+    ? 'GEMINI'
+    : (isEmulatorOrTestEnvironment() ? 'TEST' : 'GEMINI');
+  const expectedDimensions = apiKey
+    ? getExpectedEmbeddingDimensions(activeModel)
+    : (isEmulatorOrTestEnvironment() ? 64 : getExpectedEmbeddingDimensions(activeModel));
+
   if (existing.exists) {
     const data = existing.data();
-    if (data?.embedding && Array.isArray(data.embedding)) {
+    // Cache Validation Criteria:
+    // 1. Valid numbers array
+    const isValidValues =
+      Array.isArray(data?.embedding) &&
+      data.embedding.length > 0 &&
+      data.embedding.every((v: any) => typeof v === 'number' && !isNaN(v) && isFinite(v));
+
+    // 2. Exact match of source, model, dimensions, and text fingerprint
+    const isSourceMatch = data?.source === expectedSource;
+    const isModelMatch = data?.model === activeModel;
+    const isDimMatch = (data?.dimensions || data?.embedding?.length) === expectedDimensions && data?.embedding?.length === expectedDimensions;
+    const isHashMatch = data?.textHash === currentTextHash;
+    const isNotLegacy = data?.model !== 'text-embedding-004';
+
+    if (isValidValues && isSourceMatch && isModelMatch && isDimMatch && isHashMatch && isNotLegacy) {
       return {
         complaintId,
         embedding: data.embedding,
-        source: data.source || 'TEST',
-        model: data.model || 'deterministic-test-projector',
-        dimensions: data.dimensions || data.embedding.length,
-        textHash: data.textHash || computeTextHash(text),
-        textSnippet: data.textSnippet || text.slice(0, 200),
+        source: data.source,
+        model: data.model,
+        dimensions: data.dimensions,
+        textHash: data.textHash,
+        textSnippet: data.textSnippet || clean.slice(0, 200),
         createdAt: data.createdAt || new Date().toISOString(),
         status: data.status || 'SUCCESS',
       };
+    } else {
+      // Invalidate outdated / legacy record
+      console.log(
+        `[EmbeddingCache] Invalidating outdated or mismatched embedding cache for complaint ${complaintId} ` +
+        `(cached: model=${data?.model}, source=${data?.source}, dim=${data?.embedding?.length}; ` +
+        `expected: model=${activeModel}, source=${expectedSource}, dim=${expectedDimensions})`
+      );
+      await embedRef.delete();
     }
   }
 
-  const generated = await generateComplaintEmbedding(text, apiKey);
+  const generated = await generateComplaintEmbedding(clean, apiKey);
   if (!generated) {
     return null;
   }
@@ -360,7 +432,7 @@ export async function getOrCreateComplaintEmbedding(
     model: generated.model,
     dimensions: generated.dimensions,
     textHash: generated.textHash,
-    textSnippet: text.slice(0, 200),
+    textSnippet: clean.slice(0, 200),
     createdAt: new Date().toISOString(),
     status: 'SUCCESS',
   };
@@ -720,15 +792,23 @@ Return JSON strictly matching this schema:
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0]);
-          return {
-            suggestedTitle: parsed.suggestedTitle || 'Campus Maintenance Report',
-            suggestedCategory: parsed.suggestedCategory || smartDept.departmentCategory,
-            enhancedDescription: parsed.enhancedDescription || rawInput,
-            suggestedDepartment: parsed.suggestedDepartment || smartDept.departmentName,
-            suggestedPriority: (parsed.suggestedPriority as TicketPriority) || 'MEDIUM',
-            missingInfo: Array.isArray(parsed.missingInfo) ? parsed.missingInfo : undefined,
-            isMock: false,
-          };
+          const validationResult = AiAssistGeminiResponseSchema.safeParse(parsed);
+          if (validationResult.success) {
+            const valid = validationResult.data;
+            return {
+              suggestedTitle: valid.suggestedTitle,
+              suggestedCategory: valid.suggestedCategory,
+              enhancedDescription: valid.enhancedDescription,
+              suggestedDepartment: valid.suggestedDepartment,
+              suggestedPriority: valid.suggestedPriority,
+              missingInfo: valid.missingInfo,
+              isMock: false,
+              provider: 'GEMINI_2_5_FLASH',
+              enhancementSource: 'GEMINI_AI',
+            };
+          } else {
+            console.warn('[aiAssistComplaint] Gemini JSON schema validation failed:', validationResult.error.format());
+          }
         }
       } catch (err) {
         console.warn('Gemini assist complaint error, falling back to rule heuristic:', err);
@@ -757,15 +837,16 @@ Return JSON strictly matching this schema:
     if (!data.building) missingInfo.push('Exact building or campus block');
     if (!data.room) missingInfo.push('Specific room or floor location');
 
+    const isTest = isEmulatorOrTestEnvironment();
     return {
       suggestedTitle: `${titlePrefix}${data.room ? ` - ${data.room}` : ''}`,
       suggestedCategory: smartDept.departmentCategory,
-      enhancedDescription: `[Rule-Based Enhancement] Technician attention requested: ${rawInput}. Student reports ongoing malfunction impacting student facilities.`,
+      enhancedDescription: `[Rule-Based ${isTest ? 'Enhancement' : 'Fallback'}] Technician attention requested: ${rawInput}. Student reports ongoing malfunction impacting student facilities.`,
       suggestedDepartment: smartDept.departmentName,
       suggestedPriority: (smartDept.departmentCategory === 'AC_HVAC' || smartDept.departmentCategory === 'WATER_SUPPLY') ? 'HIGH' : 'MEDIUM',
       missingInfo: missingInfo.length > 0 ? missingInfo : undefined,
-      isMock: true,
-      provider: 'TEST_DOUBLE_HEURISTIC',
+      isMock: isTest,
+      provider: isTest ? 'TEST_DOUBLE_HEURISTIC' : 'RULE_BASED_FALLBACK',
       enhancementSource: 'RULE_BASED_ASSISTANCE',
     };
   }

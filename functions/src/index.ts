@@ -1,5 +1,10 @@
 import admin from 'firebase-admin';
-import { createComplaint, reopenTicket } from './complaints.js';
+import {
+  createComplaint,
+  reopenTicket,
+  runComplaintClustering,
+  onComplaintCreatedClustering,
+} from './complaints.js';
 import {
   updateTicketStatus,
   assignTicketDepartment,
@@ -26,6 +31,8 @@ if (!admin.apps.length) {
 export {
   createComplaint,
   reopenTicket,
+  runComplaintClustering,
+  onComplaintCreatedClustering,
   updateTicketStatus,
   assignTicketDepartment,
   adminManageDepartment,

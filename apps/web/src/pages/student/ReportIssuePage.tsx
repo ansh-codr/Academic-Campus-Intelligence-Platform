@@ -334,11 +334,24 @@ export const ReportIssuePage: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-cyan-700 dark:text-cyan-300 flex items-center gap-1.5">
                     <Sparkles className="w-4 h-4 text-cyan-500" />
-                    AI Enhancement Suggestion
+                    {aiSuggestion.provider === 'GEMINI_2_5_FLASH' || (!aiSuggestion.isMock && aiSuggestion.enhancementSource === 'GEMINI_AI')
+                      ? 'Gemini 2.5 AI Assistant'
+                      : 'Rule-Based Maintenance Suggestion'}
                   </span>
-                  <Badge variant="cyan" size="sm">
-                    {aiSuggestion.suggestedCategory}
-                  </Badge>
+                  <div className="flex items-center gap-1.5">
+                    {aiSuggestion.isMock || aiSuggestion.enhancementSource === 'RULE_BASED_ASSISTANCE' ? (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300/60">
+                        Rule-Based Assist
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300/60">
+                        Gemini AI Active
+                      </span>
+                    )}
+                    <Badge variant="cyan" size="sm">
+                      {aiSuggestion.suggestedCategory}
+                    </Badge>
+                  </div>
                 </div>
 
                 <div className="space-y-2 text-xs text-slate-700 dark:text-slate-200">

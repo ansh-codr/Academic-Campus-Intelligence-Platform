@@ -49,3 +49,14 @@ export const AdminReviewClusterSchema = z.object({
 });
 
 export type AdminReviewClusterInput = z.infer<typeof AdminReviewClusterSchema>;
+
+export const AiAssistGeminiResponseSchema = z.object({
+  suggestedTitle: z.string().trim().min(1).max(120),
+  suggestedCategory: TicketCategoryEnum,
+  enhancedDescription: z.string().trim().min(5).max(3000),
+  suggestedDepartment: z.string().trim().min(1).max(150),
+  suggestedPriority: TicketPriorityEnum,
+  missingInfo: z.array(z.string().trim().max(200)).optional(),
+});
+
+export type AiAssistGeminiResponse = z.infer<typeof AiAssistGeminiResponseSchema>;
