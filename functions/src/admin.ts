@@ -672,6 +672,16 @@ export const adminRejectEnrollment = onCall({ cors: true }, async (request) => {
         throw new HttpsError('not-found', `Enrollment request for user ${requestId} does not exist.`);
       }
       const reqData = reqSnap.data()!;
+      // Rejection is a review decision for PENDING applications only.
+      // A VERIFIED enrollment must use a separate authorized revocation workflow;
+      // silently rejecting it here would orphan its reserved roll number and audit state.
+      if (reqData.status !== 'PENDING') {
+        throw new HttpsError(
+          'failed-precondition',
+          `Cannot reject enrollment request with status "${reqData.status}". Only PENDING requests can be rejected.`
+        );
+      }
+
 
       const userSnap = await transaction.get(userRef);
       if (!userSnap.exists) {
