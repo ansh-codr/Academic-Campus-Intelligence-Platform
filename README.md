@@ -14,10 +14,11 @@ SolveSphere AI bridges two essential university systems into a single, cohesive 
 - **Module B: Campus Intelligence**: Streamlines student issue reporting for HVAC, Wi-Fi, electrical, and hostel infrastructure. Features transparent ticket lifecycle auditing, semantic AI issue clustering (grouping duplicate complaints into single root-cause work orders), privacy-first sensitive concerns (Speak Freely), and campus club directories.
 - **Administrative Command**: Centralized oversight for department workload triage, cluster reviews, topic progression approvals, and enrollment metrics.
 
-### Backend Platform Migration (Phase 2)
+### Backend Platform Migration & Live Development Hosting
 The backend architecture runs on **Google Firebase**:
-- **Firebase Authentication**: Email/password authentication, session management, and cryptographically verified custom claims (`{ role: 'ADMIN' }`).
-- **Cloud Firestore**: Real-time NoSQL database with strict Security Rules, denormalized collections, and atomic transactional sequence generation (`SS-2026-XXXX`).
+- **Live Development Hosting**: [https://solvesphere-ai-dev-2026.web.app](https://solvesphere-ai-dev-2026.web.app) (Firebase Hosting, Spark tier).
+- **Firebase Authentication**: Email/password authentication, **Continue with Google** OAuth (`GoogleAuthProvider`), student onboarding (`/auth/complete-profile`), session management, and cryptographically verified custom claims (`{ role: 'ADMIN' }`).
+- **Cloud Firestore**: Real-time NoSQL database (`asia-south1`) with strict Security Rules, denormalized collections, composite query indexes, and atomic transactional sequence generation (`SS-2026-XXXX`).
 - **Firebase Cloud Storage**: Secure object storage for ticket attachments with type and size enforcement.
 - **Cloud Functions for Firebase (TypeScript, Node 20 LTS)**: Privileged server-side ticket creation, status validation, and department dispatch.
 - **Firebase Emulator Suite**: Complete local development and test environment running Auth, Firestore, Functions, and Storage.

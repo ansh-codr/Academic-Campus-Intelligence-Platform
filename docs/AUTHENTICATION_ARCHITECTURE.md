@@ -70,7 +70,32 @@ SolveSphere AI authenticates users using **Firebase Authentication** backed by C
 
 ---
 
-## 4. Email Verification
+## 4. Google Sign-In & Student Onboarding
+
+SolveSphere AI supports **Continue with Google** via the Firebase JavaScript SDK (`GoogleAuthProvider`):
+
+1. **Authentication Dispatch**:
+   - `signInWithPopup(auth, provider)` initiates the OAuth prompt.
+   - If popup is blocked by the browser, the client gracefully falls back to `signInWithRedirect(auth, provider)`.
+   - On redirect return, `getRedirectResult(auth)` completes session hydration without lost state.
+2. **First-Time Provisioning**:
+   - If no profile exists in `users/{uid}`, an initial minimal profile is created with `role: 'STUDENT'`, verified Google email, display name, and avatar URL.
+   - No fictitious or synthetic enrollment IDs are generated.
+3. **Profile Completion (`/auth/complete-profile`)**:
+   - If a student signs in via Google for the first time, `needsProfileCompletion: true` guides them to `/auth/complete-profile`.
+   - The student provides their authentic university-issued Student ID, academic department, and current semester.
+   - An explicit notice clarifies that self-submitted student credentials remain pending official roster synchronization.
+4. **Student ID Immutability**:
+   - `firestore.rules` allows setting `studentId` once during initial profile completion (`!('studentId' in resource.data) || resource.data.studentId == null`).
+   - Once set, `studentId` becomes strictly immutable by the client and cannot be modified.
+5. **Admin Privilege Isolation**:
+   - Google Sign-In **never** confers administrative authority.
+   - Administrative command requires trusted, cryptographically signed custom claim `{ role: 'ADMIN' }` provisioned via server-side Admin SDK (`scripts/bootstrap-admin.js`).
+   - Email address or institutional domain matching never escalates privileges.
+
+---
+
+## 5. Email Verification
 
 - Verification links are dispatched via Firebase Authentication upon registration and on demand via the user's Profile page.
 - Status is tracked via `user.emailVerified` directly from the authenticated Firebase User record.

@@ -138,7 +138,35 @@ When accessing Firebase Authentication for a newly created project via API or SD
 
 ---
 
-## 8. Deploying Rules and Functions
+## 8. Live Hosted Development Application
+
+The development frontend is officially deployed to Firebase Hosting under the Spark tier:
+
+- **Hosted URL**: [https://solvesphere-ai-dev-2026.web.app](https://solvesphere-ai-dev-2026.web.app)
+- **Firebase Hosting Custom Domain**: `solvesphere-ai-dev-2026.firebaseapp.com`
+- **Security Headers & CSP**: Configured in `firebase.json` with HSTS preload, no-cache `index.html`, and strict CSP permitting Google Identity Toolkit, Google OAuth, and Firestore Native endpoints.
+- **SPA Rewriting**: Active (`** -> /index.html`).
+
+---
+
+## 9. Blaze Plan Prerequisites for Full Backend Deployment
+
+The application frontend and Cloud Firestore rules run on the no-cost Spark tier. However, deploying the server-side microservices requires upgrading the development or staging project to **Blaze (Pay-as-you-go)**:
+
+| Service / Feature | Why Blaze is Required | Cost Risk / Mitigation |
+|---|---|---|
+| **Cloud Functions (Node 20 LTS)** | Google Cloud Run & Cloud Build engines require a linked billing account. | Free tier covers 2M invocations/month. Set Cloud Run `maxInstances: 10`. |
+| **Outbound Gemini API Invocations** | Spark blocks outbound network calls from Cloud Functions to external APIs. | Token pricing for `gemini-2.5-flash` ($0.075 / 1M input tokens). |
+| **Google Cloud Secret Manager** | Secure storage and runtime injection of `GEMINI_API_KEY`. | 6 active secret versions free; negligible cost. |
+| **Ticket Attachment Storage** | Cloud Storage default bucket creation requires project billing. | 5 GB free storage; enforce 5MB client upload limit. |
+| **Scheduled Worker (`recoverStaleComplaintLeases`)** | Cloud Scheduler and Pub/Sub require billing enablement. | 3 free Cloud Scheduler jobs/month. |
+
+> [!WARNING]
+> **Budget Alert Warning:** Firebase and Google Cloud budget alerts send notification emails when estimated charges reach thresholds (e.g. $10, $50), but **DO NOT automatically cap billing or terminate instances**. Administrators must configure strict Cloud Run instance limits and Gemini API quota caps in Google Cloud Console.
+
+---
+
+## 10. Deploying Rules, Indexes and Functions
 
 When authorized to deploy to your verified project:
 

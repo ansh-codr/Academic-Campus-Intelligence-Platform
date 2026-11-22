@@ -1018,97 +1018,97 @@ export const reopenTicket = onCall(
     maxInstances: 10,
   },
   async (request) => {
-  if (!request.auth) {
-    throw new HttpsError('unauthenticated', 'User must be authenticated to reopen a ticket.');
-  }
-
-  const { ticketId, reason } = request.data || {};
-  if (!ticketId || typeof ticketId !== 'string') {
-    throw new HttpsError('invalid-argument', 'ticketId is required.');
-  }
-  if (!reason || typeof reason !== 'string' || reason.trim().length < 5) {
-    throw new HttpsError('invalid-argument', 'A valid reason (at least 5 characters) is required to reopen a ticket.');
-  }
-
-  const db = admin.firestore();
-  const uid = request.auth.uid;
-  const isAdmin = request.auth.token.role === 'ADMIN';
-  const ticketRef = db.collection('complaints').doc(ticketId);
-  const now = new Date().toISOString();
-
-  let submitterName = request.auth.token.name || request.auth.token.email || 'Student';
-  const userDoc = await db.collection('users').doc(uid).get();
-  if (userDoc.exists) {
-    const userData = userDoc.data();
-    if (userData?.fullName) {
-      submitterName = `${userData.fullName} (${userData.studentId || ''})`.trim();
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'User must be authenticated to reopen a ticket.');
     }
-  }
 
-  try {
-    const result = await db.runTransaction(async (transaction) => {
-      const snap = await transaction.get(ticketRef);
-      if (!snap.exists) {
-        throw new HttpsError('not-found', `Ticket ${ticketId} not found.`);
+    const { ticketId, reason } = request.data || {};
+    if (!ticketId || typeof ticketId !== 'string') {
+      throw new HttpsError('invalid-argument', 'ticketId is required.');
+    }
+    if (!reason || typeof reason !== 'string' || reason.trim().length < 5) {
+      throw new HttpsError('invalid-argument', 'A valid reason (at least 5 characters) is required to reopen a ticket.');
+    }
+
+    const db = admin.firestore();
+    const uid = request.auth.uid;
+    const isAdmin = request.auth.token.role === 'ADMIN';
+    const ticketRef = db.collection('complaints').doc(ticketId);
+    const now = new Date().toISOString();
+
+    let submitterName = request.auth.token.name || request.auth.token.email || 'Student';
+    const userDoc = await db.collection('users').doc(uid).get();
+    if (userDoc.exists) {
+      const userData = userDoc.data();
+      if (userData?.fullName) {
+        submitterName = `${userData.fullName} (${userData.studentId || ''})`.trim();
       }
+    }
 
-      const ticketData = snap.data();
-      if (!isAdmin && ticketData?.submittedById !== uid) {
-        throw new HttpsError('permission-denied', 'You do not have permission to reopen this ticket.');
-      }
+    try {
+      const result = await db.runTransaction(async (transaction) => {
+        const snap = await transaction.get(ticketRef);
+        if (!snap.exists) {
+          throw new HttpsError('not-found', `Ticket ${ticketId} not found.`);
+        }
 
-      const currentStatus = ticketData?.status;
-      if (currentStatus !== 'RESOLVED' && currentStatus !== 'CLOSED') {
-        throw new HttpsError(
-          'failed-precondition',
-          `Only RESOLVED or CLOSED tickets can be reopened. Current status: ${currentStatus}`
-        );
-      }
+        const ticketData = snap.data();
+        if (!isAdmin && ticketData?.submittedById !== uid) {
+          throw new HttpsError('permission-denied', 'You do not have permission to reopen this ticket.');
+        }
 
-      transaction.update(ticketRef, {
-        status: 'REOPENED',
-        updatedAt: now,
+        const currentStatus = ticketData?.status;
+        if (currentStatus !== 'RESOLVED' && currentStatus !== 'CLOSED') {
+          throw new HttpsError(
+            'failed-precondition',
+            `Only RESOLVED or CLOSED tickets can be reopened. Current status: ${currentStatus}`
+          );
+        }
+
+        transaction.update(ticketRef, {
+          status: 'REOPENED',
+          updatedAt: now,
+        });
+
+        const eventRef = ticketRef.collection('timeline').doc();
+        const eventData = {
+          id: eventRef.id,
+          ticketId,
+          status: 'REOPENED',
+          note: `Ticket reopened: ${reason.trim()}`,
+          updatedBy: submitterName,
+          timestamp: now,
+        };
+        transaction.set(eventRef, eventData);
+
+        return {
+          ticket: { ...ticketData, status: 'REOPENED', updatedAt: now },
+          referenceNumber: ticketData?.referenceNumber || ticketId,
+          ownerId: ticketData?.submittedById,
+          eventId: eventRef.id,
+        };
       });
 
-      const eventRef = ticketRef.collection('timeline').doc();
-      const eventData = {
-        id: eventRef.id,
-        ticketId,
-        status: 'REOPENED',
-        note: `Ticket reopened: ${reason.trim()}`,
-        updatedBy: submitterName,
-        timestamp: now,
-      };
-      transaction.set(eventRef, eventData);
+      if (result.ownerId) {
+        await sendInAppNotification(db, {
+          userId: result.ownerId,
+          ticketId,
+          referenceNumber: result.referenceNumber,
+          type: 'REOPENED',
+          title: 'Ticket Reopened',
+          message: `Ticket ${result.referenceNumber} has been reopened: ${reason.trim()}`,
+          eventId: result.eventId,
+        });
+      }
 
       return {
-        ticket: { ...ticketData, status: 'REOPENED', updatedAt: now },
-        referenceNumber: ticketData?.referenceNumber || ticketId,
-        ownerId: ticketData?.submittedById,
-        eventId: eventRef.id,
+        success: true,
+        message: 'Ticket reopened successfully.',
+        data: result.ticket,
       };
-    });
-
-    if (result.ownerId) {
-      await sendInAppNotification(db, {
-        userId: result.ownerId,
-        ticketId,
-        referenceNumber: result.referenceNumber,
-        type: 'REOPENED',
-        title: 'Ticket Reopened',
-        message: `Ticket ${result.referenceNumber} has been reopened: ${reason.trim()}`,
-        eventId: result.eventId,
-      });
+    } catch (error: any) {
+      console.error('Error reopening ticket:', error);
+      if (error instanceof HttpsError) throw error;
+      throw new HttpsError('internal', error.message || 'Failed to reopen ticket.');
     }
-
-    return {
-      success: true,
-      message: 'Ticket reopened successfully.',
-      data: result.ticket,
-    };
-  } catch (error: any) {
-    console.error('Error reopening ticket:', error);
-    if (error instanceof HttpsError) throw error;
-    throw new HttpsError('internal', error.message || 'Failed to reopen ticket.');
-  }
-});
+  });

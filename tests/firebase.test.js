@@ -3093,8 +3093,86 @@ async function runTests() {
 
   console.log(`✓ Test 53 Passed: Student registration, email verification dispatch, profile ownership, role escalation protection, and admin RBAC verified.`);
 
+  // --------------------------------------------------------------------------
+  // TEST 54: Verifying Google Sign-In Provisioning, Onboarding & Immutability
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 54] Verifying Google Sign-In Provisioning, Profile Completion & Student ID Immutability...`);
+
+  // Sign out admin
+  await signOut(clientAuth);
+
+  // 1. Simulate Google Auth user creation (Auth identity with verified email from Google)
+  const googleEmail = `google.student.${Date.now()}@university.edu`;
+  const googleUserRecord = await auth.createUser({
+    email: googleEmail,
+    emailVerified: true,
+    displayName: 'Priyanshu Google Student',
+    password: 'GoogleUser@Pass2026',
+  });
+  const googleUid = googleUserRecord.uid;
+
+  // 2. Sign in as the Google authenticated student
+  const googleCred = await signInWithEmailAndPassword(clientAuth, googleEmail, 'GoogleUser@Pass2026');
+  const googleToken = await googleCred.user.getIdTokenResult(true);
+
+  // 3. Verify Google sign-in grants NO admin claim by default (must be STUDENT role)
+  assert.strictEqual(googleToken.claims.role || 'STUDENT', 'STUDENT', 'Google sign-in must not grant admin custom claim');
+
+  // 4. Initial profile created without studentId (simulating first-time Google sign-in)
+  const initialGoogleProfile = {
+    id: googleUid,
+    email: googleEmail,
+    fullName: 'Priyanshu Google Student',
+    role: 'STUDENT',
+    emailVerified: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  await setDoc(doc(clientDb, 'users', googleUid), initialGoogleProfile);
+
+  // 5. Initial profile completion: student provisions their authentic Student ID & Department
+  await updateDoc(doc(clientDb, 'users', googleUid), {
+    studentId: 'STU-2026-CS-099',
+    department: 'Computer Science & Engineering',
+    semester: 2,
+    updatedAt: new Date().toISOString(),
+  });
+
+  const completedProfileSnap = await getDoc(doc(clientDb, 'users', googleUid));
+  assert.strictEqual(completedProfileSnap.data().studentId, 'STU-2026-CS-099', 'Student ID must be successfully set during initial profile completion');
+  assert.strictEqual(completedProfileSnap.data().department, 'Computer Science & Engineering');
+  assert.strictEqual(completedProfileSnap.data().semester, 2);
+
+  // 6. Security Rule check: student CANNOT alter their student ID once set
+  await assert.rejects(
+    async () => {
+      await updateDoc(doc(clientDb, 'users', googleUid), {
+        studentId: 'STU-FORGED-ID-777',
+        updatedAt: new Date().toISOString(),
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission|denied/i.test(err.message),
+    'Attempt to change studentId after initial registration must be rejected with permission-denied'
+  );
+
+  // 7. Security Rule check: student CANNOT elevate role to ADMIN
+  await assert.rejects(
+    async () => {
+      await updateDoc(doc(clientDb, 'users', googleUid), {
+        role: 'ADMIN',
+        updatedAt: new Date().toISOString(),
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission|denied/i.test(err.message),
+    'Attempt to escalate role to ADMIN must be rejected with permission-denied'
+  );
+
+  // Clean up: sign out
+  await signOut(clientAuth);
+  console.log(`✓ Test 54 Passed: Google user provisioning, initial student ID completion, and subsequent immutability verified.`);
+
   console.log(`\n======================================================`);
-  console.log(`  ALL 53 INTEGRATION, AI & SECURITY TESTS PASSED!`);
+  console.log(`  ALL 54 INTEGRATION, AI & SECURITY TESTS PASSED!`);
   console.log(`======================================================\n`);
   process.exit(0);
 }

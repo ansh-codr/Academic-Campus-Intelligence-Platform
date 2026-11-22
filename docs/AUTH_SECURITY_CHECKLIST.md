@@ -5,11 +5,13 @@ This checklist verifies that production authentication and authorization standar
 ---
 
 ## Access Control & RBAC
-- [x] Public registration only grants `{ role: 'STUDENT' }`.
+- [x] Public registration and Google Sign-In only grant `{ role: 'STUDENT' }`.
+- [x] Google accounts never automatically receive administrative authority; custom claims required.
 - [x] Client cannot self-assign `{ role: 'ADMIN' }` on registration or profile update.
 - [x] Administrative authority relies strictly on cryptographically verified custom claims (`request.auth.token.role == 'ADMIN'`).
 - [x] Student profiles in `users/{uid}` cannot be modified by other students (`isOwner(userId)`).
-- [x] Sensitive fields (`id`, `role`, `email`, `studentId`, `emailVerified`) are immutable by client writes.
+- [x] Sensitive fields (`id`, `role`, `email`, `emailVerified`) are immutable by client writes.
+- [x] Student ID can only be set once during initial profile completion (`!('studentId' in resource.data)`); immutable once set.
 - [x] Route guards (`<RequireAuth>`, `<RequireAdmin>`) prevent unauthenticated and unauthorized access.
 
 ## Credential & Data Protection

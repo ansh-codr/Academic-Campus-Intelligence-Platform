@@ -7,6 +7,10 @@ import {
   sendPasswordResetEmail,
   sendEmailVerification,
   updateProfile as updateFirebaseProfile,
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  GoogleAuthProvider,
   User as FirebaseUser,
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
@@ -22,6 +26,7 @@ interface AuthContextType {
   authError: string | null;
   profileError: string | null;
   login: (email: string, password: string) => Promise<UserProfile>;
+  loginWithGoogle: () => Promise<{ profile: UserProfile; isNewUser: boolean; needsProfileCompletion: boolean }>;
   registerStudent: (input: StudentRegisterInput) => Promise<UserProfile>;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
@@ -122,6 +127,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     return () => unsubscribe();
+  }, []);
+
+  // Check for Google Redirect Result on initial mount
+  useEffect(() => {
+    getRedirectResult(auth)
+      .then(async (cred) => {
+        if (!cred || !cred.user) return;
+        const firebaseUser = cred.user;
+        const userDocRef = doc(db, 'users', firebaseUser.uid);
+        const userDocSnap = await getDoc(userDocRef);
+        if (!userDocSnap.exists()) {
+          const now = new Date().toISOString();
+          const profile: UserProfile = {
+            id: firebaseUser.uid,
+            email: firebaseUser.email || '',
+            fullName: firebaseUser.displayName || 'University Student',
+            role: 'STUDENT',
+            emailVerified: firebaseUser.emailVerified,
+            avatarUrl: firebaseUser.photoURL || undefined,
+            createdAt: now,
+            updatedAt: now,
+          };
+          try {
+            await setDoc(userDocRef, profile);
+            setUser(profile);
+            setRole('STUDENT');
+          } catch (e) {
+            console.warn('Could not auto-create profile from Google redirect:', e);
+          }
+        }
+      })
+      .catch((err: any) => {
+        console.warn('Google redirect result error:', err);
+      });
   }, []);
 
   // Reload current Firebase user to refresh verification status and claims
@@ -264,6 +303,99 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // Google Sign-In (Firebase Auth SDK)
+  const loginWithGoogle = async (): Promise<{ profile: UserProfile; isNewUser: boolean; needsProfileCompletion: boolean }> => {
+    setIsLoading(true);
+    setAuthError(null);
+    setProfileError(null);
+
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+
+    try {
+      let cred;
+      try {
+        cred = await signInWithPopup(auth, provider);
+      } catch (popupErr: any) {
+        if (popupErr.code === 'auth/popup-blocked') {
+          console.warn('Popup blocked by browser, falling back to redirect:', popupErr);
+          await signInWithRedirect(auth, provider);
+          return null as any;
+        }
+        throw popupErr;
+      }
+
+      const firebaseUser = cred.user;
+      const tokenResult = await firebaseUser.getIdTokenResult();
+      const customRole = (tokenResult.claims.role as UserRole) || 'STUDENT';
+      setIsEmailVerified(firebaseUser.emailVerified);
+
+      const userDocRef = doc(db, 'users', firebaseUser.uid);
+      const userDocSnap = await getDoc(userDocRef);
+
+      let profile: UserProfile;
+      let isNewUser = false;
+      let needsProfileCompletion = false;
+
+      if (userDocSnap.exists()) {
+        const raw = userDocSnap.data();
+        profile = {
+          ...raw,
+          id: firebaseUser.uid,
+          email: firebaseUser.email || raw.email || '',
+          fullName: raw.fullName || firebaseUser.displayName || 'University User',
+          role: customRole,
+          emailVerified: firebaseUser.emailVerified,
+          createdAt: raw.createdAt || firebaseUser.metadata.creationTime || new Date().toISOString(),
+        } as UserProfile;
+        needsProfileCompletion = !profile.studentId && customRole !== 'ADMIN';
+      } else {
+        isNewUser = true;
+        needsProfileCompletion = customRole !== 'ADMIN';
+        const now = new Date().toISOString();
+        profile = {
+          id: firebaseUser.uid,
+          email: firebaseUser.email || '',
+          fullName: firebaseUser.displayName || 'University Student',
+          role: 'STUDENT',
+          emailVerified: firebaseUser.emailVerified,
+          avatarUrl: firebaseUser.photoURL || undefined,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        try {
+          await setDoc(userDocRef, profile);
+        } catch (setErr: any) {
+          console.error('Failed to create initial Google student profile in Firestore:', setErr);
+          setProfileError('Failed to initialize profile in Firestore. You can complete setup in profile settings.');
+        }
+      }
+
+      setUser(profile);
+      setRole(customRole);
+      return { profile, isNewUser, needsProfileCompletion };
+    } catch (err: any) {
+      console.error('Google sign-in error:', err);
+      let userFriendlyMsg = 'Google sign-in failed. Please try again.';
+      if (err.code === 'auth/popup-closed-by-user') {
+        userFriendlyMsg = 'Sign in was cancelled (window was closed before finishing).';
+      } else if (err.code === 'auth/account-exists-with-different-credential') {
+        userFriendlyMsg = 'An account already exists with this email using a different sign-in method. Please sign in with your email and password.';
+      } else if (err.code === 'auth/unauthorized-domain') {
+        userFriendlyMsg = 'This domain is not authorized for Google Sign-In in Firebase Console.';
+      } else if (err.code === 'auth/cancelled-popup-request') {
+        userFriendlyMsg = 'Only one Google sign-in window can be open at a time.';
+      } else if (err.code === 'auth/network-request-failed') {
+        userFriendlyMsg = 'Network failure during Google sign-in. Please check your internet connection.';
+      }
+      setAuthError(userFriendlyMsg);
+      throw new Error(userFriendlyMsg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Sign Out
   const logout = async () => {
     await signOut(auth);
@@ -286,20 +418,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await sendEmailVerification(auth.currentUser);
   };
 
-  // Update Permitted Profile Fields (Department, Semester, Bio)
+  // Update Permitted Profile Fields (Department, Semester, Bio, and initial Student ID)
   const updateProfile = async (data: Partial<UserProfile>) => {
     if (!user || !auth.currentUser) throw new Error('Not authenticated');
 
     // Prevent modifying immutable or privileged fields from client
-    const { role: _r, id: _id, email: _e, emailVerified: _ev, studentId: _sid, ...safeUpdates } = data;
+    const { role: _r, id: _id, email: _e, emailVerified: _ev, ...safeUpdates } = data;
 
     const userDocRef = doc(db, 'users', user.id);
-    const updatesWithTimestamp = {
+    const updatesWithTimestamp: Record<string, any> = {
       ...safeUpdates,
       updatedAt: new Date().toISOString(),
     };
-    await updateDoc(userDocRef, updatesWithTimestamp);
 
+    // If student already has a registered studentId, do not allow changing it from client
+    if (user.studentId && updatesWithTimestamp.studentId && updatesWithTimestamp.studentId !== user.studentId) {
+      delete updatesWithTimestamp.studentId;
+    }
+
+    await updateDoc(userDocRef, updatesWithTimestamp);
     setUser((prev) => (prev ? { ...prev, ...updatesWithTimestamp } : null));
   };
 
@@ -314,6 +451,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         authError,
         profileError,
         login,
+        loginWithGoogle,
         registerStudent,
         logout,
         resetPassword,

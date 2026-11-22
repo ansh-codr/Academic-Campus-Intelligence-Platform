@@ -16,14 +16,19 @@ service cloud.firestore {
     }
 
     // Students can only update non-privileged profile fields.
-    // Registered student ID, account ID, role, email, and authorization claims are immutable.
+    // Initial student ID can be provisioned once during profile completion (e.g. after Google sign-in);
+    // once set, student ID, account ID, role, email, and authorization claims are strictly immutable.
     function isAllowedProfileUpdate() {
+      let canSetStudentId = !('studentId' in resource.data) || resource.data.studentId == null || resource.data.studentId == '';
+      let allowedKeys = canSetStudentId 
+        ? ['displayName', 'fullName', 'phoneNumber', 'photoURL', 'avatarUrl', 'bio', 'department', 'semester', 'studentId', 'updatedAt']
+        : ['displayName', 'fullName', 'phoneNumber', 'photoURL', 'avatarUrl', 'bio', 'department', 'semester', 'updatedAt'];
       let affected = request.resource.data.diff(resource.data).affectedKeys();
-      return affected.hasOnly(['displayName', 'fullName', 'phoneNumber', 'photoURL', 'avatarUrl', 'bio', 'department', 'semester', 'updatedAt'])
+      return affected.hasOnly(allowedKeys)
         && request.resource.data.role == resource.data.role
         && request.resource.data.id == resource.data.id
         && request.resource.data.email == resource.data.email
-        && (!('studentId' in resource.data) || request.resource.data.studentId == resource.data.studentId)
+        && (!('studentId' in resource.data) || resource.data.studentId == null || resource.data.studentId == '' || request.resource.data.studentId == resource.data.studentId)
         && !('customClaims' in request.resource.data);
     }
 

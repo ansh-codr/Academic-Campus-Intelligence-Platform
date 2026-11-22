@@ -14,6 +14,7 @@ const LandingPage = React.lazy(() => import('@/pages/landing/LandingPage').then(
 // Auth Pages
 const StudentLoginPage = React.lazy(() => import('@/pages/auth/StudentLoginPage').then((module) => ({ default: module.StudentLoginPage })));
 const StudentRegisterPage = React.lazy(() => import('@/pages/auth/StudentRegisterPage').then((module) => ({ default: module.StudentRegisterPage })));
+const CompleteProfilePage = React.lazy(() => import('@/pages/auth/CompleteProfilePage').then((module) => ({ default: module.CompleteProfilePage })));
 const ForgotPasswordPage = React.lazy(() => import('@/pages/auth/ForgotPasswordPage').then((module) => ({ default: module.ForgotPasswordPage })));
 const AdminLoginPage = React.lazy(() => import('@/pages/auth/AdminLoginPage').then((module) => ({ default: module.AdminLoginPage })));
 
@@ -44,7 +45,7 @@ import { ShieldAlert } from 'lucide-react';
 
 // Protected Route Guard: Requires Authenticated Student or Admin
 const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { user, role, isAuthenticated, isLoading } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -60,6 +61,11 @@ const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   if (!isAuthenticated) {
     return <Navigate to="/auth/login" state={{ from: location }} replace />;
+  }
+
+  // If a student signed in via Google and lacks an enrollment number, guide them to complete onboarding
+  if (role === 'STUDENT' && user && !user.studentId && location.pathname !== '/auth/complete-profile') {
+    return <Navigate to="/auth/complete-profile" replace />;
   }
 
   return <>{children}</>;
@@ -146,6 +152,7 @@ export function App() {
                 <Route path="/" element={<LandingPage />} />
                 <Route path="/auth/login" element={<StudentLoginPage />} />
                 <Route path="/auth/register" element={<StudentRegisterPage />} />
+                <Route path="/auth/complete-profile" element={<CompleteProfilePage />} />
                 <Route path="/auth/forgot-password" element={<ForgotPasswordPage />} />
                 <Route path="/auth/admin-login" element={<AdminLoginPage />} />
                 <Route path="*" element={<NotFoundPage />} />
