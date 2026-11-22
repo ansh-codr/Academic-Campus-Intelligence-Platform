@@ -19,6 +19,8 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isEmailVerified: boolean;
   isLoading: boolean;
+  authError: string | null;
+  profileError: string | null;
   login: (email: string, password: string) => Promise<UserProfile>;
   registerStudent: (input: StudentRegisterInput) => Promise<UserProfile>;
   logout: () => Promise<void>;
@@ -26,6 +28,7 @@ interface AuthContextType {
   updateProfile: (data: Partial<UserProfile>) => Promise<void>;
   sendVerificationEmail: () => Promise<void>;
   reloadUser: () => Promise<void>;
+  clearErrors: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -35,6 +38,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<UserRole | null>(null);
   const [isEmailVerified, setIsEmailVerified] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
+
+  const clearErrors = useCallback(() => {
+    setAuthError(null);
+    setProfileError(null);
+  }, []);
 
   // Synchronize Firebase Auth state and Firestore profile
   useEffect(() => {
@@ -43,6 +53,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
         setRole(null);
         setIsEmailVerified(false);
+        setAuthError(null);
+        setProfileError(null);
         setIsLoading(false);
         return;
       }
@@ -72,9 +84,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             department: raw.department,
             semester: raw.semester,
             avatarUrl: raw.avatarUrl,
-            createdAt: raw.createdAt || new Date().toISOString(),
+            createdAt: raw.createdAt || firebaseUser.metadata.creationTime || new Date().toISOString(),
             updatedAt: raw.updatedAt,
           };
+          setProfileError(null);
         } else {
           // Minimal profile reflecting authenticated account without fictitious department/semester
           profileData = {
@@ -83,15 +96,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             fullName: firebaseUser.displayName || 'University User',
             role: customRole,
             emailVerified: firebaseUser.emailVerified,
-            createdAt: new Date().toISOString(),
+            createdAt: firebaseUser.metadata.creationTime || new Date().toISOString(),
           };
         }
 
         setUser(profileData);
         setRole(customRole);
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error synchronizing user profile from Firestore:', err);
-        // Fallback minimal authenticated profile
+        // Distinguish profile load error from auth identity error
+        setProfileError('Unable to synchronize profile from Cloud Firestore. Using authenticated identity.');
         const customRole: UserRole = 'STUDENT';
         setUser({
           id: firebaseUser.uid,
@@ -99,7 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           fullName: firebaseUser.displayName || 'University User',
           role: customRole,
           emailVerified: firebaseUser.emailVerified,
-          createdAt: new Date().toISOString(),
+          createdAt: firebaseUser.metadata.creationTime || new Date().toISOString(),
         });
         setRole(customRole);
       } finally {
@@ -113,15 +127,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Reload current Firebase user to refresh verification status and claims
   const reloadUser = useCallback(async () => {
     if (!auth.currentUser) return;
-    await auth.currentUser.reload();
-    const refreshed = auth.currentUser;
-    setIsEmailVerified(refreshed.emailVerified);
+    try {
+      await auth.currentUser.reload();
+      const refreshed = auth.currentUser;
+      setIsEmailVerified(refreshed.emailVerified);
 
-    const tokenResult = await refreshed.getIdTokenResult(true);
-    const customRole = (tokenResult.claims.role as UserRole) || 'STUDENT';
-    setRole(customRole);
+      const tokenResult = await refreshed.getIdTokenResult(true);
+      const customRole = (tokenResult.claims.role as UserRole) || 'STUDENT';
+      setRole(customRole);
 
-    setUser((prev) => (prev ? { ...prev, emailVerified: refreshed.emailVerified, role: customRole } : null));
+      setUser((prev) => (prev ? { ...prev, emailVerified: refreshed.emailVerified, role: customRole } : null));
+    } catch (err: any) {
+      console.warn('Failed to reload Firebase user:', err);
+      setAuthError(err.message || 'Could not refresh user session.');
+    }
   }, []);
 
   // Real Email / Password Student Registration
@@ -130,34 +149,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     StudentRegisterSchema.parse(input);
 
     setIsLoading(true);
-    let createdFirebaseUser: FirebaseUser | null = null;
+    setAuthError(null);
+    setProfileError(null);
 
     try {
-      const userCred = await createUserWithEmailAndPassword(auth, input.email, input.password);
-      createdFirebaseUser = userCred.user;
+      const userCred = await createUserWithEmailAndPassword(auth, input.email.trim(), input.password);
 
       // Update Firebase Auth displayName
       try {
         await updateFirebaseProfile(userCred.user, {
-          displayName: input.fullName,
+          displayName: input.fullName.trim(),
         });
       } catch (profileErr) {
         console.warn('Could not update Firebase Auth displayName:', profileErr);
       }
 
-      // Send email verification
+      // Send email verification with clear recovery state if it fails
       try {
         await sendEmailVerification(userCred.user);
-      } catch (verifyErr) {
-        console.warn('Could not dispatch verification email:', verifyErr);
+      } catch (verifyErr: any) {
+        console.warn('Verification email dispatch deferred:', verifyErr);
+        // Non-fatal: user can resend from profile or verification banner
       }
 
       const now = new Date().toISOString();
       const newProfile: UserProfile = {
         id: userCred.user.uid,
-        email: input.email,
-        fullName: input.fullName,
-        studentId: input.studentId,
+        email: input.email.trim(),
+        fullName: input.fullName.trim(),
+        studentId: input.studentId.trim(),
         role: 'STUDENT',
         emailVerified: false,
         createdAt: now,
@@ -165,21 +185,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
 
       // Persist genuine profile in `users/{uid}`
-      await setDoc(doc(db, 'users', userCred.user.uid), newProfile);
+      try {
+        await setDoc(doc(db, 'users', userCred.user.uid), newProfile);
+      } catch (firestoreErr: any) {
+        console.error('Firestore profile persistence failed:', firestoreErr);
+        setProfileError('Account created, but initial profile initialization encountered a network issue. Please sign in to retry.');
+        // Do NOT delete the genuine Firebase Auth account after ambiguous network errors
+      }
 
       setUser(newProfile);
       setRole('STUDENT');
       setIsEmailVerified(false);
       return newProfile;
     } catch (err: any) {
-      // If Firestore profile write failed after Auth creation, clean up orphaned Auth account
-      if (createdFirebaseUser && err.code !== 'auth/email-already-in-use') {
-        try {
-          await createdFirebaseUser.delete();
-        } catch {
-          // Ignore cleanup errors
-        }
-      }
+      setAuthError(err.message || 'Registration failed.');
       throw err;
     } finally {
       setIsLoading(false);
@@ -189,6 +208,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Real Email / Password Sign In
   const login = async (email: string, password: string): Promise<UserProfile> => {
     setIsLoading(true);
+    setAuthError(null);
+    setProfileError(null);
+
     try {
       const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
       const tokenResult = await cred.user.getIdTokenResult();
@@ -197,22 +219,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsEmailVerified(cred.user.emailVerified);
 
       const userDocRef = doc(db, 'users', cred.user.uid);
-      const userDocSnap = await getDoc(userDocRef);
+      let profile: UserProfile;
 
-      const profile: UserProfile = userDocSnap.exists()
-        ? ({ ...userDocSnap.data(), emailVerified: cred.user.emailVerified, role: userRole } as UserProfile)
-        : {
+      try {
+        const userDocSnap = await getDoc(userDocRef);
+        if (userDocSnap.exists()) {
+          profile = {
+            ...userDocSnap.data(),
+            emailVerified: cred.user.emailVerified,
+            role: userRole,
+          } as UserProfile;
+        } else {
+          // Genuine account without existing profile document
+          profile = {
             id: cred.user.uid,
             email: cred.user.email || email,
             fullName: cred.user.displayName || 'University User',
             role: userRole,
             emailVerified: cred.user.emailVerified,
-            createdAt: new Date().toISOString(),
+            createdAt: cred.user.metadata.creationTime || new Date().toISOString(),
           };
+        }
+      } catch (readErr: any) {
+        console.warn('Could not read user profile from Firestore:', readErr);
+        setProfileError('Failed to read profile details from Firestore. Displaying authenticated session.');
+        profile = {
+          id: cred.user.uid,
+          email: cred.user.email || email,
+          fullName: cred.user.displayName || 'University User',
+          role: userRole,
+          emailVerified: cred.user.emailVerified,
+          createdAt: cred.user.metadata.creationTime || new Date().toISOString(),
+        };
+      }
 
       setUser(profile);
       setRole(userRole);
       return profile;
+    } catch (err: any) {
+      setAuthError(err.message || 'Login failed.');
+      throw err;
     } finally {
       setIsLoading(false);
     }
@@ -224,6 +270,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setRole(null);
     setIsEmailVerified(false);
+    setAuthError(null);
+    setProfileError(null);
   };
 
   // Password Reset (Real Firebase Auth)
@@ -240,7 +288,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Update Permitted Profile Fields (Department, Semester, Bio)
   const updateProfile = async (data: Partial<UserProfile>) => {
-    if (!user) throw new Error('Not authenticated');
+    if (!user || !auth.currentUser) throw new Error('Not authenticated');
 
     // Prevent modifying immutable or privileged fields from client
     const { role: _r, id: _id, email: _e, emailVerified: _ev, studentId: _sid, ...safeUpdates } = data;
@@ -263,6 +311,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated: !!user,
         isEmailVerified,
         isLoading,
+        authError,
+        profileError,
         login,
         registerStudent,
         logout,
@@ -270,6 +320,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         updateProfile,
         sendVerificationEmail,
         reloadUser,
+        clearErrors,
       }}
     >
       {children}

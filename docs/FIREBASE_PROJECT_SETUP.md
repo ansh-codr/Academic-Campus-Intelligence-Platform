@@ -99,17 +99,46 @@ Or edit [.firebaserc](file:///Users/havocerebus/Documents/Current_Project_Workin
 ```json
 {
   "projects": {
-    "default": "solvesphere-ai-dev",
-    "development": "solvesphere-ai-dev",
-    "staging": "solvesphere-staging-project-id",
-    "production": "solvesphere-prod-project-id"
+    "default": "solvesphere-ai-dev-2026",
+    "development": "solvesphere-ai-dev-2026",
+    "staging": "<YOUR_STAGING_FIREBASE_PROJECT_ID>",
+    "production": "<YOUR_PRODUCTION_FIREBASE_PROJECT_ID>"
   }
 }
 ```
 
 ---
 
-## 7. Deploying Rules and Functions
+## 7. Verified Development Project Details
+
+The development project is verified and actively linked via the Antigravity Firebase MCP Server and Firebase CLI:
+
+| Property | Value |
+|---|---|
+| **Project Display Name** | `SolveSphere AI Dev` |
+| **Firebase Project ID** | `solvesphere-ai-dev-2026` |
+| **Google Cloud Project Number** | `445610047961` |
+| **Pricing Plan** | **Spark** (Free tier, billing disabled) |
+| **Firestore Database Mode** | `FIRESTORE_NATIVE` |
+| **Firestore Region** | `asia-south1` (Mumbai) |
+| **Registered Web App** | `SolveSphere AI Web Dev` |
+| **Web App ID** | `1:445610047961:web:068cf60c3d2d01c16e81c8` |
+| **Console URL** | [console.firebase.google.com/project/solvesphere-ai-dev-2026/overview](https://console.firebase.google.com/project/solvesphere-ai-dev-2026/overview) |
+
+### Initializing Firebase Authentication in Console
+
+When accessing Firebase Authentication for a newly created project via API or SDK before the provider is initialized, Firebase returns `400 CONFIGURATION_NOT_FOUND`. To enable authentication:
+
+1. Open [Firebase Console Authentication](https://console.firebase.google.com/project/solvesphere-ai-dev-2026/authentication).
+2. Click **Get Started**.
+3. Under **Sign-in method**, select **Email/Password**.
+4. Enable **Email/Password** (leave Email link / passwordless disabled unless required).
+5. Click **Save**.
+6. Under **Authorized domains**, verify `localhost` and `solvesphere-ai-dev-2026.firebaseapp.com` are listed.
+
+---
+
+## 8. Deploying Rules and Functions
 
 When authorized to deploy to your verified project:
 

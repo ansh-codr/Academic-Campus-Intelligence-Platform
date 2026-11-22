@@ -66,7 +66,7 @@ SolveSphere AI authenticates users using **Firebase Authentication** backed by C
    - `role`: `'STUDENT'` (immutable by client)
    - `emailVerified`: false
    - `createdAt`: ISO 8601 timestamp
-7. If Firestore write fails, the newly created Auth user is cleaned up to prevent orphaned accounts.
+7. Profile document write: The Firestore client SDK creates the initial profile in `users/{uid}`. If initial profile synchronization encounters a transient network issue, authentication errors (`authError`) and profile synchronization errors (`profileError`) are cleanly isolated. The user's genuine Auth identity is safely retained, and a dedicated retry mechanism is provided without deleting the Auth account on ambiguous network conditions.
 
 ---
 
