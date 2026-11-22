@@ -38,6 +38,8 @@ const SettingsPage = React.lazy(() => import('@/pages/student/SettingsPage').the
 const AdminDashboardPage = React.lazy(() => import('@/pages/admin/AdminDashboardPage').then((module) => ({ default: module.AdminDashboardPage })));
 const AdminAcademicManagementPage = React.lazy(() => import('@/pages/admin/AdminAcademicManagementPage').then((module) => ({ default: module.AdminAcademicManagementPage })));
 const AdminComplaintsClustersPage = React.lazy(() => import('@/pages/admin/AdminComplaintsClustersPage').then((module) => ({ default: module.AdminComplaintsClustersPage })));
+const AdminDepartmentsPage = React.lazy(() => import('@/pages/admin/AdminDepartmentsPage').then((module) => ({ default: module.AdminDepartmentsPage })));
+const AdminClubsPage = React.lazy(() => import('@/pages/admin/AdminClubsPage').then((module) => ({ default: module.AdminClubsPage })));
 import { ShieldAlert } from 'lucide-react';
 
 // Protected Route Guard: Requires Authenticated Student or Admin
@@ -194,9 +196,9 @@ export function App() {
                 <Route path="complaints" element={<AdminComplaintsClustersPage />} />
                 <Route path="clusters" element={<AdminComplaintsClustersPage />} />
                 <Route path="assignments" element={<AdminComplaintsClustersPage />} />
-                <Route path="departments" element={<AdminDashboardPage />} />
+                <Route path="departments" element={<AdminDepartmentsPage />} />
                 <Route path="anonymous-reports" element={<AdminComplaintsClustersPage />} />
-                <Route path="clubs" element={<AdminDashboardPage />} />
+                <Route path="clubs" element={<AdminClubsPage />} />
                 <Route path="analytics" element={<AdminDashboardPage />} />
                 <Route path="settings" element={<AdminDashboardPage />} />
               </Route>

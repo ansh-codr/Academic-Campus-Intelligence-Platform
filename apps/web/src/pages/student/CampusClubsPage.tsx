@@ -19,9 +19,20 @@ export const CampusClubsPage: React.FC = () => {
   const [clubs, setClubs] = useState<CampusClub[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    CampusService.getClubs().then(setClubs);
+    const unsub = CampusService.subscribeClubs(
+      (loaded) => {
+        setClubs(loaded);
+        setLoadError(null);
+      },
+      (err) => {
+        console.error('Failed to subscribe to clubs:', err);
+        setLoadError('Failed to load campus clubs.');
+      }
+    );
+    return () => unsub();
   }, []);
 
   const filteredClubs = clubs.filter((c) => {
@@ -51,6 +62,15 @@ export const CampusClubsPage: React.FC = () => {
           Discover student-led engineering chapters, AI clubs, robotics teams, design circles, and debate unions.
         </p>
       </div>
+
+      {loadError && (
+        <div
+          role="alert"
+          className="p-4 rounded-xl border border-red-500/30 bg-red-950/20 text-red-200 text-xs sm:text-sm flex items-center justify-between"
+        >
+          <span>{loadError}</span>
+        </div>
+      )}
 
       {/* Search & Category Filter */}
       <Card className="p-4 sm:p-5 space-y-4">

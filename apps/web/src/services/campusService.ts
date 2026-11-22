@@ -138,7 +138,8 @@ export const CampusService = {
    */
   subscribeTickets(
     callback: (tickets: CampusTicket[]) => void,
-    userId?: string
+    userId?: string,
+    onError?: (error: Error) => void
   ): () => void {
     const complaintsCol = collection(db, 'complaints');
     let q = query(complaintsCol);
@@ -172,6 +173,7 @@ export const CampusService = {
       },
       (error) => {
         console.error('Live complaints subscription failed:', error);
+        if (onError) onError(error as Error);
         callback([]);
       }
     );
@@ -216,7 +218,10 @@ export const CampusService = {
   /**
    * Real-time Firestore Subscription for Departments
    */
-  subscribeDepartments(callback: (departments: CampusDepartment[]) => void): () => void {
+  subscribeDepartments(
+    callback: (departments: CampusDepartment[]) => void,
+    onError?: (error: Error) => void
+  ): () => void {
     return onSnapshot(
       collection(db, 'departments'),
       (snap) => {
@@ -227,7 +232,10 @@ export const CampusService = {
           callback([]);
         }
       },
-      () => callback([])
+      (err) => {
+        if (onError) onError(err as Error);
+        callback([]);
+      }
     );
   },
 
@@ -249,7 +257,10 @@ export const CampusService = {
   /**
    * Real-time Firestore Subscription for Issue Clusters (Admin Only)
    */
-  subscribeClusters(callback: (clusters: IssueCluster[]) => void): () => void {
+  subscribeClusters(
+    callback: (clusters: IssueCluster[]) => void,
+    onError?: (error: Error) => void
+  ): () => void {
     return onSnapshot(
       collection(db, 'issueClusters'),
       (snap) => {
@@ -262,6 +273,7 @@ export const CampusService = {
       },
       (err) => {
         console.warn('issueClusters subscription notice (Admin role required):', err.message);
+        if (onError) onError(err as Error);
         callback([]);
       }
     );
@@ -271,7 +283,10 @@ export const CampusService = {
    * Real-time Firestore Subscription for Sanitized Public Campus Incidents (Student Safe)
    * Exposes only verified, privacy-reviewed maintenance incidents without student IDs or individual complaint references.
    */
-  subscribePublicIncidents(callback: (incidents: PublicCampusIncident[]) => void): () => void {
+  subscribePublicIncidents(
+    callback: (incidents: PublicCampusIncident[]) => void,
+    onError?: (error: Error) => void
+  ): () => void {
     return onSnapshot(
       collection(db, 'publicIncidents'),
       (snap) => {
@@ -284,6 +299,7 @@ export const CampusService = {
       },
       (err) => {
         console.warn('publicIncidents subscription notice:', err.message);
+        if (onError) onError(err as Error);
         callback([]);
       }
     );
@@ -307,7 +323,10 @@ export const CampusService = {
   /**
    * Real-time Firestore Subscription for Campus Clubs
    */
-  subscribeClubs(callback: (clubs: CampusClub[]) => void): () => void {
+  subscribeClubs(
+    callback: (clubs: CampusClub[]) => void,
+    onError?: (error: Error) => void
+  ): () => void {
     return onSnapshot(
       collection(db, 'campusClubs'),
       (snap) => {
@@ -318,7 +337,11 @@ export const CampusService = {
           callback([]);
         }
       },
-      () => callback([])
+      (err) => {
+        console.warn('Campus clubs subscription failed:', err.message);
+        if (onError) onError(err as Error);
+        callback([]);
+      }
     );
   },
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -29,4 +29,8 @@ test('privileged admin mutations use Firebase callable Cloud Functions', () => {
 test('legacy seeded club membership and admin preview are absent', () => {
   assert.doesNotMatch(read('apps/web/src/pages/student/CampusClubsPage.tsx'), /joinedClubIds|Join Society Roster|Leave Club \(Demo\)/);
   assert.doesNotMatch(read('apps/web/src/pages/admin/AdminDashboardPage.tsx'), /Phase 1 Full-Stack Notice/);
+});
+
+test('fixtures directory is absent from production client source tree', () => {
+  assert.equal(existsSync(new URL('../apps/web/src/fixtures', import.meta.url)), false, 'apps/web/src/fixtures must not exist in client source tree');
 });

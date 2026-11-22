@@ -116,7 +116,11 @@ export const AcademicService = {
   /**
    * Real-time subscription to syllabus topic pacing changes.
    */
-  subscribeToTopics(subjectId: string | undefined, callback: (topics: SyllabusTopic[]) => void): Unsubscribe {
+  subscribeToTopics(
+    subjectId: string | undefined,
+    callback: (topics: SyllabusTopic[]) => void,
+    onError?: (error: Error) => void
+  ): Unsubscribe {
     const topicsCol = collection(db, 'syllabusTopics');
     let q = query(topicsCol, orderBy('order', 'asc'));
     if (subjectId && subjectId !== 'ALL') {
@@ -133,6 +137,7 @@ export const AcademicService = {
       },
       (error) => {
         console.error('Error listening to topics:', error);
+        if (onError) onError(error as Error);
         callback([]);
       }
     );
@@ -399,5 +404,25 @@ export const AcademicService = {
 
   async deleteTopic(topicId: string): Promise<void> {
     await deleteDoc(doc(db, 'syllabusTopics', topicId));
+  },
+
+  async deleteSubject(subjectId: string): Promise<void> {
+    await deleteDoc(doc(db, 'subjects', subjectId));
+  },
+
+  async saveQuiz(quiz: Partial<Quiz>, questions: any[]): Promise<{ quizId: string }> {
+    const saveFn = httpsCallable<{ quiz: Partial<Quiz>; questions: any[] }, { success: boolean; quizId: string }>(
+      functions,
+      'adminSaveQuiz'
+    );
+    const result = await saveFn({ quiz, questions });
+    if (!result.data?.success) throw new Error('Server did not confirm quiz publication.');
+    return { quizId: result.data.quizId };
+  },
+
+  async deleteQuiz(quizId: string): Promise<void> {
+    const deleteFn = httpsCallable<{ quizId: string }, { success: boolean }>(functions, 'adminDeleteQuiz');
+    const result = await deleteFn({ quizId });
+    if (!result.data?.success) throw new Error('Server did not confirm quiz deletion.');
   },
 };

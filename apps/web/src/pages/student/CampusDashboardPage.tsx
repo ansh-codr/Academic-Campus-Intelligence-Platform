@@ -23,10 +23,28 @@ import {
 export const CampusDashboardPage: React.FC = () => {
   const [tickets, setTickets] = useState<CampusTicket[]>([]);
   const [incidents, setIncidents] = useState<PublicCampusIncident[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsubTickets = CampusService.subscribeTickets(setTickets);
-    const unsubIncidents = CampusService.subscribePublicIncidents(setIncidents);
+    const unsubTickets = CampusService.subscribeTickets(
+      (t) => {
+        setTickets(t);
+        setLoadError(null);
+      },
+      undefined,
+      (err) => {
+        console.error('Tickets subscription error:', err);
+        setLoadError('Failed to synchronize campus tickets.');
+      }
+    );
+    const unsubIncidents = CampusService.subscribePublicIncidents(
+      (inc) => {
+        setIncidents(inc);
+      },
+      (err) => {
+        console.error('Public incidents subscription error:', err);
+      }
+    );
 
     return () => {
       unsubTickets();
@@ -78,6 +96,15 @@ export const CampusDashboardPage: React.FC = () => {
           </Link>
         </div>
       </div>
+
+      {loadError && (
+        <div
+          role="alert"
+          className="p-4 rounded-xl border border-red-500/30 bg-red-950/20 text-red-200 text-xs sm:text-sm flex items-center justify-between"
+        >
+          <span>{loadError}</span>
+        </div>
+      )}
 
       {/* Metrics Row */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">

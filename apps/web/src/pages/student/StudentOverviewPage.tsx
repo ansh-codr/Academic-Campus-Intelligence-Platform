@@ -28,6 +28,7 @@ export const StudentOverviewPage: React.FC = () => {
   const [tickets, setTickets] = useState<CampusTicket[]>([]);
   const [ongoingTopics, setOngoingTopics] = useState<SyllabusTopic[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadOverview() {
@@ -40,6 +41,10 @@ export const StudentOverviewPage: React.FC = () => {
         setSubjects(subjs);
         setTickets(tkts);
         setOngoingTopics(timeline.ongoing);
+        setLoadError(null);
+      } catch (err: any) {
+        console.error('Failed to load student overview:', err);
+        setLoadError(err?.message || 'Failed to load student overview data.');
       } finally {
         setIsLoading(false);
       }
@@ -91,13 +96,14 @@ export const StudentOverviewPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Illustrative Notice Pill */}
-      <div className="flex items-center gap-2 p-3 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 text-xs text-brand-blue dark:text-blue-300">
-        <Info className="w-4 h-4 shrink-0" />
-        <span>
-          <strong>Phase 1 Full-Stack Notice:</strong> Information may include sample records when remote data is unavailable; verify critical details with your institution.
-        </span>
-      </div>
+      {loadError && (
+        <div
+          role="alert"
+          className="p-4 rounded-xl border border-red-500/30 bg-red-950/20 text-red-200 text-xs sm:text-sm flex items-center justify-between"
+        >
+          <span>{loadError}</span>
+        </div>
+      )}
 
       {/* Primary KPI Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

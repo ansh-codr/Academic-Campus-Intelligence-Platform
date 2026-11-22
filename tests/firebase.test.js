@@ -2618,8 +2618,160 @@ async function runTests() {
   }
   console.log(`✓ Test 19 Passed: Client distribution verified free of exposed API keys.`);
 
+  // --------------------------------------------------------------------------
+  // TEST 51: Phase 8 End-to-End Real Data Visibility: Admin-Created Records
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 51] Verifying Phase 8 Admin-to-Student Real Data Visibility & Key Protection...`);
+
+  // Switch to Admin
+  await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+
+  // 1. Admin creates accredited subject
+  const realSubjId = 'subj-algorithms-real';
+  const subjNow = new Date().toISOString();
+  await setDoc(doc(clientDb, 'subjects', realSubjId), {
+    id: realSubjId,
+    code: 'CS204',
+    name: 'Design and Analysis of Algorithms',
+    instructor: 'Prof. Ananya Sen',
+    department: 'Computer Science & AI',
+    credits: 4,
+    category: 'CORE',
+    description: 'Asymptotic notation, divide-and-conquer, greedy algorithms, and dynamic programming.',
+    semester: 2,
+    academicYear: '2026-2027',
+    totalTopics: 1,
+    completedTopics: 0,
+    progressPercentage: 0,
+    createdAt: subjNow,
+    updatedAt: subjNow,
+    isArchived: false,
+  });
+
+  // 2. Admin creates syllabus topic
+  const realTopicId = 'topic-strassen-mult';
+  await setDoc(doc(clientDb, 'syllabusTopics', realTopicId), {
+    id: realTopicId,
+    subjectId: realSubjId,
+    unit: 1,
+    title: 'Divide and Conquer: Strassen Matrix Multiplication',
+    description: 'Recurrence analysis and sub-cubic matrix algebra.',
+    estimatedHours: 4,
+    order: 1,
+    status: 'ONGOING',
+    isCurrent: true,
+    createdAt: subjNow,
+    updatedAt: subjNow,
+    isArchived: false,
+  });
+
+  // 3. Admin creates quiz with protected question keys via adminSaveQuiz Cloud Function
+  const adminSaveQuizCallable = httpsCallable(clientFunctions, 'adminSaveQuiz');
+  const saveQuizRes = await adminSaveQuizCallable({
+    quiz: {
+      subjectId: realSubjId,
+      title: 'Algorithms Unit 1 Diagnostic Assessment',
+      description: 'Master Theorem and Recurrence Analysis.',
+      durationMinutes: 20,
+      difficulty: 'INTERMEDIATE',
+      type: 'QUIZ',
+      published: true,
+    },
+    questions: [
+      {
+        questionText: 'What is the runtime of Strassens matrix multiplication algorithm?',
+        options: ['O(n^2)', 'O(n^2.81)', 'O(n^3)', 'O(n log n)'],
+        correctOptionIndex: 1,
+        explanation: 'Strassens algorithm achieves roughly O(n^2.807) operations using 7 multiplications.',
+        order: 1,
+      },
+    ],
+  });
+  assert.ok(saveQuizRes.data?.success);
+  const realQuizId = saveQuizRes.data?.quizId;
+  assert.ok(realQuizId);
+
+  // 4. Admin creates campus department via adminManageDepartment
+  const manageDeptCallable51 = httpsCallable(clientFunctions, 'adminManageDepartment');
+  const createDeptRes51 = await manageDeptCallable51({
+    action: 'create',
+    data: {
+      name: 'Advanced Computing Infrastructure Division',
+      code: 'ACI-FACILITY',
+      category: 'GENERAL_INFRASTRUCTURE',
+      headName: 'Dr. Vikram Chandra',
+      contactEmail: 'aci-ops@campus.edu',
+      isActive: true,
+    },
+  });
+  assert.ok(createDeptRes51.data?.success);
+  const realDeptId = createDeptRes51.data?.department?.id;
+  assert.ok(realDeptId);
+
+  // 5. Admin creates campus club via adminManageClub
+  const manageClubCallable51 = httpsCallable(clientFunctions, 'adminManageClub');
+  const createClubRes51 = await manageClubCallable51({
+    action: 'create',
+    data: {
+      name: 'Competitive Algorithmic Thinkers Society',
+      category: 'TECHNOLOGY',
+      leadName: 'Priya Sundaram',
+      description: 'ACM-ICPC and algorithmic contest problem solvers.',
+      memberCount: 50,
+      meetingSchedule: 'Fridays at 5 PM',
+      tags: ['Algorithms', 'ICPC', 'CompetitiveProgramming'],
+    },
+  });
+  assert.ok(createClubRes51.data?.success);
+  const realClubId = createClubRes51.data?.club?.id;
+  assert.ok(realClubId);
+
+  // Switch to Student
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+
+  // Verify Student can read the newly created real Subject
+  const studentSubjSnap = await getDoc(doc(clientDb, 'subjects', realSubjId));
+  assert.ok(studentSubjSnap.exists(), 'Student must be able to view admin-created subject');
+  assert.strictEqual(studentSubjSnap.data().name, 'Design and Analysis of Algorithms');
+  assert.strictEqual(studentSubjSnap.data().code, 'CS204');
+  assert.strictEqual(studentSubjSnap.data().credits, 4);
+
+  // Verify Student can read the newly created Syllabus Topic
+  const studentTopicSnap = await getDoc(doc(clientDb, 'syllabusTopics', realTopicId));
+  assert.ok(studentTopicSnap.exists(), 'Student must be able to view admin-created topic');
+  assert.strictEqual(studentTopicSnap.data().title, 'Divide and Conquer: Strassen Matrix Multiplication');
+  assert.strictEqual(studentTopicSnap.data().status, 'ONGOING');
+
+  // Verify Student can read the published Quiz metadata
+  const studentQuizSnap = await getDoc(doc(clientDb, 'quizzes', realQuizId));
+  assert.ok(studentQuizSnap.exists(), 'Student must be able to view published quiz');
+  assert.strictEqual(studentQuizSnap.data().title, 'Algorithms Unit 1 Diagnostic Assessment');
+  assert.strictEqual(studentQuizSnap.data().questionsCount, 1);
+
+  // Verify Student accessing questions receives sanitized payloads (correctOptionIndex and explanation stripped)
+  const getQuizQuestionsCallable = httpsCallable(clientFunctions, 'getQuizQuestions');
+  const studentQuestionsRes = await getQuizQuestionsCallable({ quizId: realQuizId });
+  assert.ok(studentQuestionsRes.data?.questions?.length === 1);
+  const returnedQuestion = studentQuestionsRes.data.questions[0];
+  assert.strictEqual(returnedQuestion.questionText, 'What is the runtime of Strassens matrix multiplication algorithm?');
+  assert.strictEqual(returnedQuestion.correctOptionIndex, undefined, 'Answer key must be protected from student inspection');
+  assert.strictEqual(returnedQuestion.explanation, undefined, 'Explanation must be protected before grading');
+
+  // Verify Student can view newly created active department
+  const studentDeptSnap = await getDoc(doc(clientDb, 'departments', realDeptId));
+  assert.ok(studentDeptSnap.exists(), 'Student must be able to view active department');
+  assert.strictEqual(studentDeptSnap.data().name, 'Advanced Computing Infrastructure Division');
+  assert.strictEqual(studentDeptSnap.data().isActive, true);
+
+  // Verify Student can view newly created campus club
+  const studentClubSnap = await getDoc(doc(clientDb, 'campusClubs', realClubId));
+  assert.ok(studentClubSnap.exists(), 'Student must be able to view campus club');
+  assert.strictEqual(studentClubSnap.data().name, 'Competitive Algorithmic Thinkers Society');
+
+  console.log(`✓ Test 51 Passed: Admin-created academic subjects, syllabus topics, protected quizzes, campus departments, and clubs are fully visible to students with answer keys protected.`);
+
   console.log(`\n======================================================`);
-  console.log(`  ALL 50 INTEGRATION, AI & SECURITY TESTS PASSED!`);
+  console.log(`  ALL 51 INTEGRATION, AI & SECURITY TESTS PASSED!`);
   console.log(`======================================================\n`);
   process.exit(0);
 }
