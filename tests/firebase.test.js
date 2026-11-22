@@ -1125,7 +1125,20 @@ async function runTests() {
   const compRes2 = await createComplaintCallable(duplicateCompPayload);
   assert.ok(compRes2.data?.success);
   const comp2Data = compRes2.data?.data;
-  assert.ok(comp2Data?.clusterId, 'Duplicate ticket must be assigned a clusterId');
+  assert.ok(comp2Data?.id);
+  assert.strictEqual(comp2Data?.clusteringStatus, 'PENDING', 'createComplaint must return PENDING status immediately');
+
+  // Wait for Firestore background trigger (onComplaintCreatedClustering) to complete clustering
+  let comp2Doc;
+  let comp2ClusterId;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    comp2Doc = await db.collection('complaints').doc(comp2Data.id).get();
+    comp2ClusterId = comp2Doc.data()?.clusterId;
+    if (comp2ClusterId && comp2Doc.data()?.clusteringStatus === 'COMPLETED') break;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  assert.ok(comp2ClusterId, 'Duplicate ticket must be assigned a clusterId by background worker');
+  comp2Data.clusterId = comp2ClusterId;
 
   // Verify cluster in Firestore: must be created as unreviewed rule-based suggestion without invented scores
   const clusterSnap = await db.collection('issueClusters').doc(comp2Data.clusterId).get();
@@ -1888,11 +1901,11 @@ async function runTests() {
   // Poll for background clustering completion
   let acComp2Doc;
   let clusterId;
-  for (let attempt = 0; attempt < 30; attempt++) {
+  for (let attempt = 0; attempt < 50; attempt++) {
     acComp2Doc = await db.collection('complaints').doc(acComp2Id).get();
     clusterId = acComp2Doc.data()?.clusterId;
     if (clusterId && acComp2Doc.data()?.clusteringStatus === 'COMPLETED') break;
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 200));
   }
   assert.ok(clusterId, 'Second semantically similar complaint must be assigned a clusterId');
 
@@ -2137,11 +2150,11 @@ async function runTests() {
 
   let ruleComp2Doc;
   let ruleClusterId;
-  for (let attempt = 0; attempt < 30; attempt++) {
+  for (let attempt = 0; attempt < 50; attempt++) {
     ruleComp2Doc = await db.collection('complaints').doc(ruleComp2.data.data.id).get();
     ruleClusterId = ruleComp2Doc.data()?.clusterId;
     if (ruleClusterId && ruleComp2Doc.data()?.clusteringStatus === 'COMPLETED') break;
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 200));
   }
   assert.ok(ruleClusterId, 'Rule-based location proximity should assign a clusterId');
 
@@ -2223,6 +2236,115 @@ async function runTests() {
   console.log(`✓ Test 44 Passed: Legacy embedding cache invalidated, vector safety confirmed, and background idempotency verified.`);
 
   // --------------------------------------------------------------------------
+  // TEST 45: Concurrency Safety & Race Condition Prevention
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 45] Verifying Concurrency Safety & Race Condition Prevention...`);
+  const concurrencyCompId = 'concurrency-test-comp-1';
+  const concurrencyCompRef = db.collection('complaints').doc(concurrencyCompId);
+  const concNow = new Date().toISOString();
+  await concurrencyCompRef.set({
+    id: concurrencyCompId,
+    referenceNumber: 'SS-2026-9991',
+    title: 'Network switch rebooting intermittently',
+    category: 'IT_SUPPORT',
+    building: 'Engineering Block',
+    floor: '3rd Floor',
+    room: 'Server Room 301',
+    description: 'Core switch reboots every hour causing dropped SSH sessions.',
+    priority: 'HIGH',
+    status: 'SUBMITTED',
+    submittedById: testStudentUid,
+    submittedByName: 'Concurrency Tester',
+    submittedByEmail: studentEmail,
+    clusteringStatus: 'PENDING',
+    clusteringAttempt: 0,
+    createdAt: concNow,
+    submittedAt: concNow,
+    updatedAt: concNow,
+    timeline: [],
+  });
+
+  // Launch two concurrent worker executions simultaneously
+  const [worker1Res, worker2Res] = await Promise.all([
+    runComplaintClustering(db, concurrencyCompId, undefined, 'worker-alpha'),
+    runComplaintClustering(db, concurrencyCompId, undefined, 'worker-beta'),
+  ]);
+
+  // One worker must claim and succeed; the other must encounter LEASE_LOCKED or ALREADY_CLUSTERED
+  const statuses = [worker1Res.status, worker2Res.status];
+  assert.ok(
+    statuses.includes('COMPLETED') || statuses.includes('ALREADY_CLUSTERED'),
+    `At least one worker must complete processing (got: ${statuses.join(', ')})`
+  );
+  assert.ok(
+    statuses.includes('LEASE_LOCKED') || statuses.includes('ALREADY_CLUSTERED'),
+    `Concurrent worker must be safely locked out with LEASE_LOCKED or ALREADY_CLUSTERED (got: ${statuses.join(', ')})`
+  );
+
+  // Verify complaint state in Firestore
+  const concDoc = await concurrencyCompRef.get();
+  assert.strictEqual(concDoc.data().clusteringStatus, 'COMPLETED');
+  assert.strictEqual(concDoc.data().clusteringLeaseOwner, null, 'Lease owner must be released upon completion');
+  assert.strictEqual(concDoc.data().clusteringLeaseExpiry, null, 'Lease expiry must be cleared upon completion');
+
+  // Verify that if a cluster was created or joined, ticketIds contains no duplicates and ticketCount === ticketIds.length
+  if (concDoc.data().clusterId) {
+    const concClusterSnap = await db.collection('issueClusters').doc(concDoc.data().clusterId).get();
+    if (concClusterSnap.exists) {
+      const clusterData = concClusterSnap.data();
+      const uniqueIds = new Set(clusterData.ticketIds);
+      assert.strictEqual(clusterData.ticketIds.length, uniqueIds.size, 'Cluster ticketIds must not contain duplicate tickets');
+      assert.strictEqual(clusterData.ticketCount, uniqueIds.size, 'Cluster ticketCount must exactly match unique ticket count');
+    }
+  }
+  console.log(`✓ Test 45 Passed: Concurrency-safe atomic lease claiming and idempotent cluster counting verified.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 46: Stale Lease Expiry & Worker Crash Recovery
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 46] Verifying Stale Lease Expiry & Worker Crash Recovery...`);
+  const staleCompId = 'stale-lease-comp-1';
+  const staleCompRef = db.collection('complaints').doc(staleCompId);
+  const pastIso = new Date(Date.now() - 5000).toISOString(); // 5 seconds expired
+  await staleCompRef.set({
+    id: staleCompId,
+    referenceNumber: 'SS-2026-9992',
+    title: 'Water fountain filter clogged',
+    category: 'WATER_SUPPLY',
+    building: 'Engineering Block',
+    floor: '1st Floor',
+    room: 'Hallway 102',
+    description: 'Water pressure very low and red filter indicator blinking.',
+    priority: 'LOW',
+    status: 'SUBMITTED',
+    submittedById: testStudentUid,
+    submittedByName: 'Stale Lease Tester',
+    submittedByEmail: studentEmail,
+    clusteringStatus: 'PROCESSING',
+    clusteringAttempt: 1,
+    clusteringAttemptId: 'attempt_stale_12345',
+    clusteringLeaseOwner: 'crashed-worker-old',
+    clusteringLeaseExpiry: pastIso,
+    createdAt: new Date(Date.now() - 10000).toISOString(),
+    submittedAt: new Date(Date.now() - 10000).toISOString(),
+    updatedAt: pastIso,
+    timeline: [],
+  });
+
+  // Recovery worker runs on this complaint
+  const recoveryRes = await runComplaintClustering(db, staleCompId, undefined, 'recovery-worker-hero');
+  assert.ok(recoveryRes.success, 'Recovery worker must successfully claim expired lease');
+  assert.strictEqual(recoveryRes.status, 'COMPLETED');
+
+  // Verify complaint state after recovery
+  const recoveredSnap = await staleCompRef.get();
+  assert.strictEqual(recoveredSnap.data().clusteringStatus, 'COMPLETED');
+  assert.strictEqual(recoveredSnap.data().clusteringAttempt, 2, 'Clustering attempt should increment');
+  assert.strictEqual(recoveredSnap.data().clusteringLeaseOwner, null, 'Lease owner must be released');
+  assert.strictEqual(recoveredSnap.data().clusteringLeaseExpiry, null, 'Lease expiry must be cleared');
+  console.log(`✓ Test 46 Passed: Stale lease recovery and crashed worker takeover verified.`);
+
+  // --------------------------------------------------------------------------
   // TEST 19: Security Scan - Zero API Keys in Client Bundles
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 19] Verifying Zero Sensitive Keys or Secrets in Client Assets...`);
@@ -2243,7 +2365,7 @@ async function runTests() {
   console.log(`✓ Test 19 Passed: Client distribution verified free of exposed API keys.`);
 
   console.log(`\n======================================================`);
-  console.log(`  ALL 44 INTEGRATION, AI & SECURITY TESTS PASSED!`);
+  console.log(`  ALL 46 INTEGRATION, AI & SECURITY TESTS PASSED!`);
   console.log(`======================================================\n`);
   process.exit(0);
 }

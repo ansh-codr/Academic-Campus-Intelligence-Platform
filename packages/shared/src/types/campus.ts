@@ -81,8 +81,11 @@ export interface CampusTicket {
   clusterId?: string;
   clusteringStatus?: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'SKIPPED' | 'FAILED';
   clusteringAttempt?: number;
-  clusteringError?: string;
-  clusteringStartedAt?: string;
+  clusteringAttemptId?: string;
+  clusteringLeaseOwner?: string | null;
+  clusteringLeaseExpiry?: string | null;
+  clusteringError?: string | null;
+  clusteringStartedAt?: string | null;
   timeline: TicketEvent[];
 }
 

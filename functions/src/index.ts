@@ -4,6 +4,7 @@ import {
   reopenTicket,
   runComplaintClustering,
   onComplaintCreatedClustering,
+  recoverStaleComplaintLeases,
 } from './complaints.js';
 import {
   updateTicketStatus,
@@ -33,6 +34,7 @@ export {
   reopenTicket,
   runComplaintClustering,
   onComplaintCreatedClustering,
+  recoverStaleComplaintLeases,
   updateTicketStatus,
   assignTicketDepartment,
   adminManageDepartment,

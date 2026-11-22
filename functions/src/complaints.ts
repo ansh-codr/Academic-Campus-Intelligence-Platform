@@ -1,5 +1,6 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import admin from 'firebase-admin';
 import path from 'path';
 import { CreateTicketSchema, TicketStatus, ComplaintEmbeddingRecord } from '@solvesphere/shared';
@@ -355,26 +356,6 @@ export const createComplaint = onCall(
     const complaintId = newComplaint.id;
     const refNum = newComplaint.referenceNumber;
 
-    // --- Nonblocking / Bounded Fast Clustering Invocation ---
-    // Complaint creation succeeds independently of AI availability.
-    // If fast inline clustering completes within 1500ms, attach clusterId to the returned ticket.
-    // Otherwise, onComplaintCreatedClustering Firestore trigger guarantees idempotent background completion.
-    const apiKey = resolveGeminiApiKey();
-    try {
-      const clusterResult = await Promise.race([
-        runComplaintClustering(db, complaintId, apiKey),
-        new Promise<{ success: boolean; status: string; clusterId?: string }>((resolve) =>
-          setTimeout(() => resolve({ success: true, status: 'TIMEOUT_DEFERRED' }), 1500)
-        ),
-      ]);
-      if (clusterResult && clusterResult.clusterId) {
-        newComplaint.clusterId = clusterResult.clusterId;
-        newComplaint.clusteringStatus = 'COMPLETED';
-      }
-    } catch (clusterErr) {
-      console.warn(`[createComplaint] Inline clustering non-fatal warning for ${complaintId}:`, clusterErr);
-    }
-
     // --- Dispatch In-App Notification (Idempotent) ---
     try {
       await sendInAppNotification(db, {
@@ -402,44 +383,131 @@ export const createComplaint = onCall(
 });
 
 /**
- * Idempotent, bounded background worker for semantic embedding generation and issue clustering.
- * Enforces bounded retries, candidate limiting (25 docs), and status recording.
+ * Distinguishes retryable transient failures (rate limits, 503s, timeouts, network)
+ * from permanent non-retryable errors (schema failures, missing documents).
+ */
+export function isRetryableError(err: any): boolean {
+  if (!err) return false;
+  const msg = (err.message || '').toLowerCase();
+  const code = (err.code || '').toString().toLowerCase();
+  const status = err.status || err.httpErrorCode?.status;
+
+  if (status === 429 || status === 503 || status === 504) return true;
+  if (code.includes('resource-exhausted') || code.includes('unavailable') || code.includes('deadline-exceeded')) return true;
+  if (
+    msg.includes('rate limit') ||
+    msg.includes('quota') ||
+    msg.includes('timeout') ||
+    msg.includes('econnreset') ||
+    msg.includes('etimedout') ||
+    msg.includes('network')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+export interface ClusteringClaimResult {
+  claimed: boolean;
+  reason?: 'ALREADY_COMPLETED' | 'LEASE_LOCKED' | 'MAX_RETRIES_EXCEEDED' | 'NOT_FOUND';
+  attemptId?: string;
+  complaint?: Record<string, any>;
+}
+
+/**
+ * Atomically claims a processing lease using a Firestore transaction.
+ * Guarantees that two concurrent workers cannot process the same ticket simultaneously.
+ */
+async function claimClusteringLease(
+  db: admin.firestore.Firestore,
+  complaintRef: admin.firestore.DocumentReference,
+  workerId: string
+): Promise<ClusteringClaimResult> {
+  return db.runTransaction(async (transaction) => {
+    const snap = await transaction.get(complaintRef);
+    if (!snap.exists) {
+      return { claimed: false, reason: 'NOT_FOUND' };
+    }
+    const data = snap.data()!;
+
+    // 1. Idempotency Check: if already completed, do not re-process
+    if (data.clusteringStatus === 'COMPLETED') {
+      return { claimed: false, reason: 'ALREADY_COMPLETED', complaint: data };
+    }
+
+    const now = Date.now();
+    const leaseExpiryMs = data.clusteringLeaseExpiry ? new Date(data.clusteringLeaseExpiry).getTime() : 0;
+    const isLeaseActive = data.clusteringStatus === 'PROCESSING' && leaseExpiryMs > now;
+
+    if (isLeaseActive) {
+      // Another worker holds an active, unexpired lease
+      return { claimed: false, reason: 'LEASE_LOCKED', complaint: data };
+    }
+
+    // 2. Bounded Retries: Max 3 attempts
+    const currentAttempt = (data.clusteringAttempt || 0) + 1;
+    if (currentAttempt > 3) {
+      transaction.update(complaintRef, {
+        clusteringStatus: 'FAILED',
+        clusteringError: 'Max clustering attempts exceeded (bounded retry limit).',
+        clusteringLeaseOwner: null,
+        clusteringLeaseExpiry: null,
+        updatedAt: new Date(now).toISOString(),
+      });
+      return { claimed: false, reason: 'MAX_RETRIES_EXCEEDED', complaint: data };
+    }
+
+    const attemptId = `attempt_${now}_${Math.random().toString(36).slice(2, 8)}`;
+    const leaseDurationMs = 60 * 1000; // 60s lease window
+    const leaseExpiry = new Date(now + leaseDurationMs).toISOString();
+
+    transaction.update(complaintRef, {
+      clusteringStatus: 'PROCESSING',
+      clusteringAttempt: currentAttempt,
+      clusteringAttemptId: attemptId,
+      clusteringLeaseOwner: workerId,
+      clusteringLeaseExpiry: leaseExpiry,
+      clusteringStartedAt: new Date(now).toISOString(),
+    });
+
+    return {
+      claimed: true,
+      attemptId,
+      complaint: { ...data, clusteringAttempt: currentAttempt, clusteringAttemptId: attemptId },
+    };
+  });
+}
+
+/**
+ * Concurrency-safe, idempotent background worker for semantic embedding generation and issue clustering.
+ * Enforces atomic lease claiming, reconciliation in transactions, exact count calculation, and retry handling.
  */
 export async function runComplaintClustering(
   db: admin.firestore.Firestore,
   complaintId: string,
-  apiKey?: string
+  apiKey?: string,
+  workerId: string = `worker_${Math.random().toString(36).slice(2, 8)}`
 ): Promise<{ success: boolean; status: string; clusterId?: string }> {
   const complaintRef = db.collection('complaints').doc(complaintId);
-  const snap = await complaintRef.get();
-  if (!snap.exists) {
+
+  // Atomically claim processing lease inside transaction
+  const claim = await claimClusteringLease(db, complaintRef, workerId);
+  if (!claim.claimed) {
+    if (claim.reason === 'ALREADY_COMPLETED') {
+      return { success: true, status: 'ALREADY_CLUSTERED', clusterId: claim.complaint?.clusterId };
+    }
+    if (claim.reason === 'LEASE_LOCKED') {
+      return { success: false, status: 'LEASE_LOCKED' };
+    }
+    if (claim.reason === 'MAX_RETRIES_EXCEEDED') {
+      return { success: false, status: 'MAX_RETRIES_EXCEEDED' };
+    }
     return { success: false, status: 'NOT_FOUND' };
   }
-  const complaint = snap.data()!;
 
-  // 1. Idempotency Check: if already completed and linked to a cluster, do not re-process
-  if (complaint.clusteringStatus === 'COMPLETED' && complaint.clusterId) {
-    return { success: true, status: 'ALREADY_CLUSTERED', clusterId: complaint.clusterId };
-  }
-
-  // 2. Bounded Retries: Max 3 attempts
-  const currentAttempt = (complaint.clusteringAttempt || 0) + 1;
-  if (currentAttempt > 3) {
-    await complaintRef.update({
-      clusteringStatus: 'FAILED',
-      clusteringError: 'Max clustering attempts exceeded (bounded retry limit).',
-      updatedAt: new Date().toISOString(),
-    });
-    return { success: false, status: 'MAX_RETRIES_EXCEEDED' };
-  }
-
+  const complaint = claim.complaint!;
   const now = new Date().toISOString();
-  // Set processing lock
-  await complaintRef.update({
-    clusteringStatus: 'PROCESSING',
-    clusteringAttempt: currentAttempt,
-    clusteringStartedAt: now,
-  });
 
   try {
     const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
@@ -522,7 +590,7 @@ export async function runComplaintClustering(
       const candData = highestSemanticMatch.doc.data();
       semanticExplanation = `Semantic similarity analysis (${Math.round(highestSemanticMatch.similarity * 100)}% match) identified strongly correlated symptoms between "${candData.title}" and "${complaint.title}".`;
       aiMaintenanceSummary = newEmbedding.source === 'GEMINI'
-        ? `[Gemini Summary] Correlated ${complaint.category.replace(/_/g, ' ')} issues detected across ${complaint.building}. Submissions report related symptoms. Unified dispatch recommended.`
+        ? `[Gemini 2.5 Summary] Correlated ${complaint.category.replace(/_/g, ' ')} issues detected across ${complaint.building}. Submissions report related symptoms. Unified dispatch recommended.`
         : `[Deterministic Test Analysis] Correlated ${complaint.category.replace(/_/g, ' ')} issues detected across ${complaint.building}. Submissions report related symptoms.`;
     } else {
       // Fallback: rule-based location proximity (same building & room & category within 48h)
@@ -552,74 +620,127 @@ export async function runComplaintClustering(
       if (existingClusterDoc && existingClusterDoc.data().clusterId) {
         assignedClusterId = existingClusterDoc.data().clusterId;
         const clusterRef = db.collection('issueClusters').doc(assignedClusterId!);
-        const updateData: Record<string, any> = {
-          ticketIds: admin.firestore.FieldValue.arrayUnion(complaintId),
-          ticketCount: admin.firestore.FieldValue.increment(1),
-          clusteringMethod,
-          confidenceBasis: confidenceBasis || 'Heuristic match',
-          processingStatus: 'SUCCESS',
-          updatedAt: now,
-        };
-        if (similarityScore != null) updateData.similarityScore = similarityScore;
-        if (embeddingSource) updateData.embeddingSource = embeddingSource;
-        if (modelIdentifier) updateData.modelIdentifier = modelIdentifier;
-        if (vectorDimensions) updateData.vectorDimensions = vectorDimensions;
-        if (textFingerprint) updateData.textFingerprint = textFingerprint;
-        if (semanticExplanation) updateData.semanticExplanation = semanticExplanation;
-        if (aiMaintenanceSummary) updateData.aiMaintenanceSummary = aiMaintenanceSummary;
 
-        await clusterRef.update(updateData);
+        // Transactional reconciliation to prevent double-counting
+        await db.runTransaction(async (transaction) => {
+          const cSnap = await transaction.get(clusterRef);
+          if (!cSnap.exists) return;
+          const cData = cSnap.data()!;
+          const currentTicketIds: string[] = Array.isArray(cData.ticketIds) ? cData.ticketIds : [];
+          const updatedTicketIds = currentTicketIds.includes(complaintId)
+            ? currentTicketIds
+            : [...currentTicketIds, complaintId];
+
+          const updateData: Record<string, any> = {
+            ticketIds: updatedTicketIds,
+            ticketCount: updatedTicketIds.length,
+            clusteringMethod,
+            confidenceBasis: confidenceBasis || 'Heuristic match',
+            processingStatus: 'SUCCESS',
+            updatedAt: now,
+          };
+          if (similarityScore != null) updateData.similarityScore = similarityScore;
+          if (embeddingSource) updateData.embeddingSource = embeddingSource;
+          if (modelIdentifier) updateData.modelIdentifier = modelIdentifier;
+          if (vectorDimensions) updateData.vectorDimensions = vectorDimensions;
+          if (textFingerprint) updateData.textFingerprint = textFingerprint;
+          if (semanticExplanation) updateData.semanticExplanation = semanticExplanation;
+          if (aiMaintenanceSummary) updateData.aiMaintenanceSummary = aiMaintenanceSummary;
+
+          transaction.update(clusterRef, updateData);
+        });
       } else {
-        const clusterRef = db.collection('issueClusters').doc();
-        assignedClusterId = clusterRef.id;
-        const allTicketIds = [complaintId, ...matchedDocs.map((d) => d.id)];
+        // Check if an existing suggested incident already exists for this exact category and building
+        const existingClusterQuery = await db
+          .collection('issueClusters')
+          .where('category', '==', complaint.category)
+          .where('building', '==', complaint.building)
+          .where('status', '==', 'SUGGESTED_INCIDENT')
+          .limit(5)
+          .get();
 
-        const newClusterRecord: Record<string, any> = {
-          id: assignedClusterId,
-          title: `Suggested Incident: ${complaint.category.replace(/_/g, ' ')} at ${complaint.building}${complaint.room ? ` (${complaint.room})` : ''}`,
-          category: complaint.category,
-          affectedArea: `${complaint.building}${complaint.room ? `, Room ${complaint.room}` : ''}`,
-          building: complaint.building,
-          room: complaint.room || '',
-          ticketCount: allTicketIds.length,
-          ticketIds: allTicketIds,
-          clusteringMethod,
-          confidenceBasis: confidenceBasis || 'Heuristic match',
-          processingStatus: 'SUCCESS',
-          verifiedByAdmin: false,
-          status: 'SUGGESTED_INCIDENT',
-          suggestedAction: `Admin review required: confirm whether these ${allTicketIds.length} complaints share the same root cause before dispatching technicians.`,
-          createdAt: now,
-          updatedAt: now,
-        };
-        if (similarityScore != null) newClusterRecord.similarityScore = similarityScore;
-        if (embeddingSource) newClusterRecord.embeddingSource = embeddingSource;
-        if (modelIdentifier) newClusterRecord.modelIdentifier = modelIdentifier;
-        if (vectorDimensions) newClusterRecord.vectorDimensions = vectorDimensions;
-        if (textFingerprint) newClusterRecord.textFingerprint = textFingerprint;
-        if (semanticExplanation) newClusterRecord.semanticExplanation = semanticExplanation;
-        if (aiMaintenanceSummary) newClusterRecord.aiMaintenanceSummary = aiMaintenanceSummary;
+        const duplicateRoomMatch = existingClusterQuery.docs.find((cDoc) => {
+          const cData = cDoc.data();
+          return String(cData.room || '').trim().toLowerCase() === String(complaint.room || '').trim().toLowerCase();
+        });
 
-        await clusterRef.set(newClusterRecord);
+        if (duplicateRoomMatch) {
+          assignedClusterId = duplicateRoomMatch.id;
+          const clusterRef = db.collection('issueClusters').doc(assignedClusterId);
 
-        // Link cluster suggestion to earlier matching tickets
-        const batch = db.batch();
-        for (const d of matchedDocs) {
-          batch.update(d.ref, { clusterId: assignedClusterId });
+          await db.runTransaction(async (transaction) => {
+            const cSnap = await transaction.get(clusterRef);
+            if (!cSnap.exists) return;
+            const cData = cSnap.data()!;
+            const currentTicketIds: string[] = Array.isArray(cData.ticketIds) ? cData.ticketIds : [];
+            const updatedTicketIds = currentTicketIds.includes(complaintId)
+              ? currentTicketIds
+              : [...currentTicketIds, complaintId];
+
+            transaction.update(clusterRef, {
+              ticketIds: updatedTicketIds,
+              ticketCount: updatedTicketIds.length,
+              updatedAt: now,
+            });
+          });
+        } else {
+          const clusterRef = db.collection('issueClusters').doc();
+          assignedClusterId = clusterRef.id;
+          const allTicketIds = Array.from(new Set([complaintId, ...matchedDocs.map((d) => d.id)]));
+
+          const newClusterRecord: Record<string, any> = {
+            id: assignedClusterId,
+            title: `Suggested Incident: ${complaint.category.replace(/_/g, ' ')} at ${complaint.building}${complaint.room ? ` (${complaint.room})` : ''}`,
+            category: complaint.category,
+            affectedArea: `${complaint.building}${complaint.room ? `, Room ${complaint.room}` : ''}`,
+            building: complaint.building,
+            room: complaint.room || '',
+            ticketCount: allTicketIds.length,
+            ticketIds: allTicketIds,
+            clusteringMethod,
+            confidenceBasis: confidenceBasis || 'Heuristic match',
+            processingStatus: 'SUCCESS',
+            verifiedByAdmin: false,
+            status: 'SUGGESTED_INCIDENT',
+            suggestedAction: `Admin review required: confirm whether these ${allTicketIds.length} complaints share the same root cause before dispatching technicians.`,
+            createdAt: now,
+            updatedAt: now,
+          };
+          if (similarityScore != null) newClusterRecord.similarityScore = similarityScore;
+          if (embeddingSource) newClusterRecord.embeddingSource = embeddingSource;
+          if (modelIdentifier) newClusterRecord.modelIdentifier = modelIdentifier;
+          if (vectorDimensions) newClusterRecord.vectorDimensions = vectorDimensions;
+          if (textFingerprint) newClusterRecord.textFingerprint = textFingerprint;
+          if (semanticExplanation) newClusterRecord.semanticExplanation = semanticExplanation;
+          if (aiMaintenanceSummary) newClusterRecord.aiMaintenanceSummary = aiMaintenanceSummary;
+
+          await clusterRef.set(newClusterRecord);
+
+          // Link cluster suggestion to earlier matching tickets
+          const batch = db.batch();
+          for (const d of matchedDocs) {
+            batch.update(d.ref, { clusterId: assignedClusterId });
+          }
+          await batch.commit();
         }
-        await batch.commit();
       }
 
-      // Link complaint to cluster and mark completed
+      // Link complaint to cluster, mark completed, and release lease
       await complaintRef.update({
         clusterId: assignedClusterId,
         clusteringStatus: 'COMPLETED',
+        clusteringLeaseOwner: null,
+        clusteringLeaseExpiry: null,
+        clusteringError: null,
         updatedAt: now,
       });
     } else {
       // Unclustered individual issue
       await complaintRef.update({
         clusteringStatus: 'COMPLETED',
+        clusteringLeaseOwner: null,
+        clusteringLeaseExpiry: null,
+        clusteringError: null,
         updatedAt: now,
       });
     }
@@ -631,21 +752,37 @@ export async function runComplaintClustering(
     };
   } catch (err: any) {
     console.error(`[runComplaintClustering] Error processing clustering for ${complaintId}:`, err);
-    await complaintRef.update({
-      clusteringStatus: 'FAILED',
-      clusteringError: err.message || 'Clustering processing error',
-      updatedAt: now,
-    });
-    return {
-      success: false,
-      status: 'FAILED',
-    };
+    const retryable = isRetryableError(err);
+    const attempt = claim.complaint?.clusteringAttempt || 1;
+
+    if (retryable && attempt < 3) {
+      // Re-queue for scheduled retry worker
+      await complaintRef.update({
+        clusteringStatus: 'PENDING',
+        clusteringError: `[Retryable] ${err.message || 'Transient error'}`,
+        clusteringLeaseOwner: null,
+        clusteringLeaseExpiry: null,
+        updatedAt: now,
+      });
+      return { success: false, status: 'RETRYABLE_ERROR_SCHEDULED' };
+    } else {
+      // Permanent failure or max retries exceeded
+      await complaintRef.update({
+        clusteringStatus: 'FAILED',
+        clusteringError: `[${retryable ? 'Max Retries Exceeded' : 'Permanent Error'}] ${err.message || 'Clustering processing error'}`,
+        clusteringLeaseOwner: null,
+        clusteringLeaseExpiry: null,
+        updatedAt: now,
+      });
+      return { success: false, status: 'FAILED' };
+    }
   }
 }
 
 /**
  * Background Firestore Trigger: onComplaintCreatedClustering
  * Asynchronously and idempotently clusters complaints when a document is created in Firestore.
+ * This is the sole automatic entry point for clustering.
  */
 export const onComplaintCreatedClustering = onDocumentCreated(
   {
@@ -661,6 +798,55 @@ export const onComplaintCreatedClustering = onDocumentCreated(
     const apiKey = resolveGeminiApiKey();
     const db = admin.firestore();
     await runComplaintClustering(db, complaintId, apiKey);
+  }
+);
+
+/**
+ * Controlled Scheduled Background Worker: recoverStaleComplaintLeases
+ * Runs every 5 minutes (crontab: 'every 5 minutes').
+ * Scans for complaints stuck in 'PROCESSING' whose lease has expired (> 60s ago)
+ * or complaints in 'PENDING' that were not picked up, and retries clustering.
+ * Bounded to at most 10 stale documents per run to control Cloud Functions execution costs.
+ */
+export const recoverStaleComplaintLeases = onSchedule(
+  {
+    schedule: 'every 5 minutes',
+    secrets: [geminiApiKey],
+    timeoutSeconds: 120,
+    memory: '256MiB',
+    maxInstances: 1,
+  },
+  async () => {
+    const db = admin.firestore();
+    const apiKey = resolveGeminiApiKey();
+    const nowIso = new Date().toISOString();
+
+    // 1. Recover expired leases stuck in PROCESSING
+    const staleProcessingSnaps = await db
+      .collection('complaints')
+      .where('clusteringStatus', '==', 'PROCESSING')
+      .where('clusteringLeaseExpiry', '<', nowIso)
+      .limit(10)
+      .get();
+
+    for (const docSnap of staleProcessingSnaps.docs) {
+      console.log(`[LeaseRecovery] Recovering expired lease on complaint ${docSnap.id}`);
+      await runComplaintClustering(db, docSnap.id, apiKey);
+    }
+
+    // 2. Recover orphaned PENDING complaints older than 2 minutes
+    const twoMinutesAgoIso = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    const orphanedPendingSnaps = await db
+      .collection('complaints')
+      .where('clusteringStatus', '==', 'PENDING')
+      .where('submittedAt', '<', twoMinutesAgoIso)
+      .limit(10)
+      .get();
+
+    for (const docSnap of orphanedPendingSnaps.docs) {
+      console.log(`[LeaseRecovery] Processing orphaned PENDING complaint ${docSnap.id}`);
+      await runComplaintClustering(db, docSnap.id, apiKey);
+    }
   }
 );
 
