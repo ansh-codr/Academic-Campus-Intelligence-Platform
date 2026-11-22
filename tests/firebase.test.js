@@ -1802,12 +1802,23 @@ async function runTests() {
   assert.strictEqual(assistRes.data.suggestedDepartment, 'HVAC & Climate Control');
   assert.ok(assistRes.data.enhancedDescription, 'Must return enhanced description');
   assert.strictEqual(assistRes.data.isMock, true);
-  console.log(`✓ Test 38 Passed: aiAssistComplaint successfully enhanced student description into formal complaint suggestion.`);
+  assert.strictEqual(assistRes.data.provider, 'TEST_DOUBLE_HEURISTIC');
+  assert.strictEqual(assistRes.data.enhancementSource, 'RULE_BASED_ASSISTANCE');
+
+  // Input validation: rejecting rawInput under 3 characters
+  await assert.rejects(
+    async () => {
+      await aiAssistFn({ rawInput: 'ab' });
+    },
+    (err) => err.code?.includes('invalid-argument') || /validation/i.test(err.message),
+    'aiAssistComplaint with rawInput under 3 characters must be rejected with invalid-argument'
+  );
+  console.log(`✓ Test 38 Passed: aiAssistComplaint successfully enhanced student description and enforced input validation.`);
 
   // --------------------------------------------------------------------------
-  // TEST 39: Semantic Duplicate Complaint Detection & Automation
+  // TEST 39: Semantic Duplicate Complaint Detection, Metadata & Embedding Safety
   // --------------------------------------------------------------------------
-  console.log(`\n[TEST 39] Verifying Semantic Duplicate Detection & Issue Clustering...`);
+  console.log(`\n[TEST 39] Verifying Semantic Duplicate Detection, Metadata & Embedding Safety...`);
   // 1. Submit First Complaint
   const acComp1Res = await createComplaintCallable({
     title: 'Split AC blowing hot air',
@@ -1820,6 +1831,38 @@ async function runTests() {
   });
   assert.ok(acComp1Res.data?.success);
   const acComp1Id = acComp1Res.data.data.id;
+
+  // Verify embedding record stored with full metadata
+  const embDoc = await db.collection('complaintEmbeddings').doc(acComp1Id).get();
+  assert.ok(embDoc.exists, 'Complaint embedding record must exist in complaintEmbeddings');
+  const embData = embDoc.data();
+  assert.strictEqual(embData.source, 'TEST', 'Test environment embedding source must be TEST');
+  assert.strictEqual(embData.model, 'deterministic-test-projector');
+  assert.strictEqual(embData.dimensions, 64);
+  assert.ok(embData.textHash, 'textHash must be recorded');
+  assert.ok(['READY', 'SUCCESS'].includes(embData.status), 'status must indicate ready or success');
+
+  // Verify cosineSimilarity rejects cross-model and cross-source comparisons
+  const { cosineSimilarity } = await import('../functions/lib/campusCare.js');
+  const dummyGeminiEmb = {
+    values: new Array(768).fill(0.05),
+    source: 'GEMINI',
+    model: 'text-embedding-004',
+    dimensions: 768,
+    textHash: 'hash-gemini',
+  };
+  const testDoubleEmb = {
+    values: embData.embedding,
+    source: embData.source,
+    model: embData.model,
+    dimensions: embData.dimensions,
+    textHash: embData.textHash,
+  };
+  assert.strictEqual(
+    cosineSimilarity(dummyGeminiEmb, testDoubleEmb),
+    0,
+    'cosineSimilarity must return 0 when comparing incompatible models/sources'
+  );
 
   // 2. Submit Second Semantically Similar Complaint (Different Room, but strongly correlated symptoms)
   const acComp2Res = await createComplaintCallable({
@@ -1844,6 +1887,9 @@ async function runTests() {
   const semanticClusterData = clusterDoc.data();
   assert.ok(semanticClusterData.clusteringMethod === 'SEMANTIC_SIMILARITY' || semanticClusterData.clusteringMethod === 'HYBRID_SEMANTIC_PROXIMITY');
   assert.ok(semanticClusterData.similarityScore >= 0.80, `Similarity score must be >= 0.80 (actual: ${semanticClusterData.similarityScore})`);
+  assert.strictEqual(semanticClusterData.embeddingSource, 'TEST');
+  assert.strictEqual(semanticClusterData.modelIdentifier, 'deterministic-test-projector');
+  assert.strictEqual(semanticClusterData.vectorDimensions, 64);
   assert.ok(semanticClusterData.semanticExplanation, 'Semantic explanation must be recorded');
   assert.ok(semanticClusterData.aiMaintenanceSummary, 'AI maintenance summary must be generated');
   assert.strictEqual(semanticClusterData.status, 'SUGGESTED_INCIDENT');
@@ -1865,7 +1911,7 @@ async function runTests() {
   const plumbingCompId = plumbingCompRes.data.data.id;
   const plumbingDoc = await db.collection('complaints').doc(plumbingCompId).get();
   assert.notStrictEqual(plumbingDoc.data()?.clusterId, clusterId, 'Dissimilar complaint must not join the AC cluster');
-  console.log(`✓ Test 39 Passed: Semantic embeddings accurately clustered similar issues (score: ${semanticClusterData.similarityScore}) and isolated dissimilar complaints.`);
+  console.log(`✓ Test 39 Passed: Semantic embeddings accurately clustered similar issues (score: ${semanticClusterData.similarityScore}) and verified embedding metadata safety.`);
 
   // --------------------------------------------------------------------------
   // TEST 40: Admin Review Cluster Actions (Verify & Reject)
@@ -1888,6 +1934,16 @@ async function runTests() {
   assert.strictEqual(updatedClusterSnap.data().verifiedByAdmin, true);
   assert.ok(updatedClusterSnap.data().verifiedAt);
   assert.ok(updatedClusterSnap.data().verifiedBy);
+
+  // Verify sanitized publicIncidents document was automatically generated
+  const publicIncidentDoc = await db.collection('publicIncidents').doc(clusterId).get();
+  assert.ok(publicIncidentDoc.exists, 'Public incident record must be created when cluster is verified');
+  const pubData = publicIncidentDoc.data();
+  assert.strictEqual(pubData.status, 'ACTIVE_INCIDENT');
+  assert.strictEqual(pubData.ticketIds, undefined, 'Public incident must omit raw ticketIds');
+  assert.strictEqual(pubData.submittedById, undefined, 'Public incident must omit submitter identity');
+  assert.ok(pubData.title, 'Public incident must have title');
+  assert.ok(pubData.summary, 'Public incident must have summary');
 
   // 2. Admin rejects another cluster suggestion
   const dummyClusterRef = db.collection('issueClusters').doc();
@@ -1912,12 +1968,24 @@ async function runTests() {
   const rejectedClusterSnap = await dummyClusterRef.get();
   assert.strictEqual(rejectedClusterSnap.data().status, 'REJECTED');
   assert.strictEqual(rejectedClusterSnap.data().verifiedByAdmin, false);
-  console.log(`✓ Test 40 Passed: Admin cluster verify and reject actions confirmed.`);
+
+  // Negative test: invalid adminReviewCluster payload rejected
+  await assert.rejects(
+    async () => {
+      await reviewClusterCallable({
+        clusterId: '',
+        action: 'invalid_action',
+      });
+    },
+    (err) => err.code?.includes('invalid-argument') || /validation/i.test(err.message),
+    'Invalid cluster review parameters must be rejected with invalid-argument'
+  );
+  console.log(`✓ Test 40 Passed: Admin cluster verify, reject, and public incident synchronization confirmed.`);
 
   // --------------------------------------------------------------------------
-  // TEST 41: Firestore Security Rules for Campus Care & Embeddings
+  // TEST 41: Firestore Security Rules for Campus Care, Public Incidents & Embeddings
   // --------------------------------------------------------------------------
-  console.log(`\n[TEST 41] Verifying Security Rules for Campus Care & Embeddings...`);
+  console.log(`\n[TEST 41] Verifying Security Rules for Campus Care, Public Incidents & Embeddings...`);
   await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
   const student1ConvRef = doc(clientDb, 'campusCareConversations', careRes1.data.conversationId);
 
@@ -1948,6 +2016,32 @@ async function runTests() {
     'Direct client message creation must be rejected'
   );
 
+  // Raw issueClusters collection read is BLOCKED for ordinary students (Admin only)
+  await assert.rejects(
+    async () => {
+      await getDoc(doc(clientDb, 'issueClusters', clusterId));
+    },
+    /permission-denied/i,
+    'Ordinary student must NOT have read access to raw issueClusters'
+  );
+
+  // Sanitized publicIncidents collection read is ALLOWED for authenticated students
+  const studentPubSnap = await getDoc(doc(clientDb, 'publicIncidents', clusterId));
+  assert.ok(studentPubSnap.exists, 'Authenticated student must be able to read publicIncidents');
+  assert.strictEqual(studentPubSnap.data().ticketIds, undefined, 'Public incident must omit ticket IDs');
+
+  // Direct client write to publicIncidents is blocked
+  await assert.rejects(
+    async () => {
+      await setDoc(doc(clientDb, 'publicIncidents', 'forged-incident'), {
+        title: 'Forged Incident Title',
+        status: 'ACTIVE_INCIDENT',
+      });
+    },
+    /permission-denied/i,
+    'Direct client write to publicIncidents must be rejected'
+  );
+
   // Direct client write to complaintEmbeddings is blocked
   await assert.rejects(
     async () => {
@@ -1968,13 +2062,22 @@ async function runTests() {
     /permission-denied/i,
     'Client read from complaintEmbeddings must be rejected'
   );
-  console.log(`✓ Test 41 Passed: Campus Care chat privacy enforced; message and embedding forgery blocked.`);
+  console.log(`✓ Test 41 Passed: Campus Care chat privacy, cluster isolation & public incident access enforced.`);
 
   // --------------------------------------------------------------------------
-  // TEST 42: Production Mock Restrictions & Rate Limit Validation
+  // TEST 42: Production Mock Restrictions, Rate Limit & Schema Validation
   // --------------------------------------------------------------------------
-  console.log(`\n[TEST 42] Verifying Rate Limit Cooldown & Production Mock Restrictions...`);
+  console.log(`\n[TEST 42] Verifying Rate Limit Cooldown, Input Validation & Mock Restrictions...`);
   await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+
+  // Input validation: empty prompt must be rejected
+  await assert.rejects(
+    async () => {
+      await askCampusCareFn({ prompt: '' });
+    },
+    (err) => err.code?.includes('invalid-argument') || /validation/i.test(err.message),
+    'askCampusCareAi with empty prompt must be rejected with invalid-argument'
+  );
 
   // Calling askCampusCareAi immediately without 2s interval must trigger rate limit
   await assert.rejects(
@@ -1991,7 +2094,44 @@ async function runTests() {
   assert.strictEqual(typeof isEmulatorOrTestEnvironment, 'function');
   // In active emulator run, returns true
   assert.strictEqual(isEmulatorOrTestEnvironment(), true);
-  console.log(`✓ Test 42 Passed: AI rate limiting enforced and mock restrictions confirmed.`);
+  console.log(`✓ Test 42 Passed: AI rate limiting, schema validation and mock restrictions confirmed.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 43: Rule-Based Proximity Clustering & Similarity Score Omission
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 43] Verifying Rule-Based Location Proximity Clustering & Metadata...`);
+  const ruleComp1 = await createComplaintCallable({
+    title: 'Ceiling projector flickers violently',
+    category: 'ELECTRICAL',
+    building: 'Main Academic Block',
+    floor: '2nd Floor',
+    room: 'Lecture Hall 204',
+    description: 'The ceiling projector is flashing blue and green intermittently during lectures.',
+    priority: 'MEDIUM',
+  });
+  const ruleComp2 = await createComplaintCallable({
+    title: 'Power socket sparked near podium',
+    category: 'ELECTRICAL',
+    building: 'Main Academic Block',
+    floor: '2nd Floor',
+    room: 'Lecture Hall 204',
+    description: 'The wall outlet next to the professor podium sparked and stopped working.',
+    priority: 'HIGH',
+  });
+  assert.ok(ruleComp1.data?.success);
+  assert.ok(ruleComp2.data?.success);
+
+  const ruleComp2Doc = await db.collection('complaints').doc(ruleComp2.data.data.id).get();
+  const ruleClusterId = ruleComp2Doc.data()?.clusterId;
+  assert.ok(ruleClusterId, 'Rule-based location proximity should assign a clusterId');
+
+  const ruleClusterDoc = await db.collection('issueClusters').doc(ruleClusterId).get();
+  assert.ok(ruleClusterDoc.exists);
+  const ruleClusterData = ruleClusterDoc.data();
+  assert.strictEqual(ruleClusterData.clusteringMethod, 'RULE_BASED_LOCATION_PROXIMITY');
+  assert.strictEqual(ruleClusterData.similarityScore, undefined, 'Rule-based clusters must omit arbitrary numerical similarityScore');
+  assert.ok(ruleClusterData.confidenceBasis?.includes('Heuristic identical room & category match'));
+  console.log(`✓ Test 43 Passed: Rule-based location proximity verified without false numerical similarity scores.`);
 
   // --------------------------------------------------------------------------
   // TEST 19: Security Scan - Zero API Keys in Client Bundles
@@ -2014,7 +2154,7 @@ async function runTests() {
   console.log(`✓ Test 19 Passed: Client distribution verified free of exposed API keys.`);
 
   console.log(`\n======================================================`);
-  console.log(`  ALL 42 INTEGRATION, AI & SECURITY TESTS PASSED!`);
+  console.log(`  ALL 43 INTEGRATION, AI & SECURITY TESTS PASSED!`);
   console.log(`======================================================\n`);
   process.exit(0);
 }

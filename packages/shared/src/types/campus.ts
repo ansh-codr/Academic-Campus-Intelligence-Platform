@@ -93,6 +93,12 @@ export interface IssueCluster {
   ticketIds: string[];
   clusteringMethod?: 'RULE_BASED_LOCATION_PROXIMITY' | 'SEMANTIC_SIMILARITY' | 'HYBRID_SEMANTIC_PROXIMITY';
   similarityScore?: number;
+  embeddingSource?: 'GEMINI' | 'TEST';
+  modelIdentifier?: string;
+  vectorDimensions?: number;
+  textFingerprint?: string;
+  confidenceBasis?: string;
+  processingStatus?: 'SUCCESS' | 'SKIPPED' | 'FAILED';
   semanticExplanation?: string;
   aiMaintenanceSummary?: string;
   verifiedByAdmin?: boolean;
@@ -103,6 +109,18 @@ export interface IssueCluster {
   verifiedAt?: string;
   verifiedBy?: string;
   confidenceScore?: number;
+}
+
+export interface PublicCampusIncident {
+  id: string;
+  title: string;
+  category: TicketCategory;
+  affectedArea: string;
+  building?: string;
+  status: 'ACTIVE_INCIDENT' | 'RESOLVING' | 'RESOLVED';
+  summary: string;
+  ticketCount: number;
+  verifiedAt: string;
 }
 
 export interface CampusClub {

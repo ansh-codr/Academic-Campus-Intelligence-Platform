@@ -18,6 +18,7 @@ import { db, functions, auth, storage } from '@/lib/firebase';
 import {
   CampusTicket,
   IssueCluster,
+  PublicCampusIncident,
   CampusClub,
   CampusDepartment,
   CampusNotification,
@@ -252,7 +253,7 @@ export const CampusService = {
   },
 
   /**
-   * Real-time Firestore Subscription for Issue Clusters
+   * Real-time Firestore Subscription for Issue Clusters (Admin Only)
    */
   subscribeClusters(callback: (clusters: IssueCluster[]) => void): () => void {
     return onSnapshot(
@@ -265,7 +266,45 @@ export const CampusService = {
           callback(FIXTURE_CLUSTERS);
         }
       },
-      () => callback(FIXTURE_CLUSTERS)
+      (err) => {
+        console.warn('issueClusters subscription notice (Admin role required):', err.message);
+        callback(FIXTURE_CLUSTERS);
+      }
+    );
+  },
+
+  /**
+   * Real-time Firestore Subscription for Sanitized Public Campus Incidents (Student Safe)
+   * Exposes only verified, privacy-reviewed maintenance incidents without student IDs or individual complaint references.
+   */
+  subscribePublicIncidents(callback: (incidents: PublicCampusIncident[]) => void): () => void {
+    return onSnapshot(
+      collection(db, 'publicIncidents'),
+      (snap) => {
+        if (!snap.empty) {
+          const incidents = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PublicCampusIncident));
+          callback(incidents);
+        } else {
+          // Fall back to sanitized fixture clusters
+          callback(
+            FIXTURE_CLUSTERS.map((c) => ({
+              id: c.id,
+              title: c.title,
+              category: c.category,
+              affectedArea: c.affectedArea,
+              building: c.building,
+              status: c.status === 'ACTIVE_INCIDENT' ? 'ACTIVE_INCIDENT' : 'RESOLVING',
+              summary: c.suggestedAction,
+              ticketCount: c.ticketCount,
+              verifiedAt: c.createdAt,
+            }))
+          );
+        }
+      },
+      (err) => {
+        console.warn('publicIncidents subscription notice:', err.message);
+        callback([]);
+      }
     );
   },
 

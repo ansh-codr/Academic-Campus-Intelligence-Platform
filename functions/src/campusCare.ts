@@ -1,6 +1,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import admin from 'firebase-admin';
+import crypto from 'crypto';
 import { GoogleGenAI } from '@google/genai';
 import {
   AskCampusCareRequest,
@@ -9,18 +10,28 @@ import {
   AiAssistComplaintResponse,
   RelevantTicketSnippet,
   ComplaintDraftSuggestion,
+  ComplaintEmbeddingRecord,
+  AskCampusCareSchema,
+  AiAssistComplaintSchema,
   TicketCategory,
   TicketPriority,
 } from '@solvesphere/shared';
 import { isEmulatorOrTestEnvironment } from './studymate.js';
 
 // Define Firebase Secret Manager parameter for production deployments
-const geminiApiKey = defineSecret('GEMINI_API_KEY');
+export const geminiApiKey = defineSecret('GEMINI_API_KEY');
+
+/**
+ * Computes deterministic SHA-256 fingerprint for complaint text.
+ */
+export function computeTextHash(text: string): string {
+  return crypto.createHash('sha256').update(text.trim().toLowerCase()).digest('hex').slice(0, 16);
+}
 
 /**
  * Safely resolves the Gemini API key from Firebase Secret Manager or environment variable.
  */
-function resolveGeminiApiKey(): string | undefined {
+export function resolveGeminiApiKey(): string | undefined {
   if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()) {
     return process.env.GEMINI_API_KEY.trim();
   }
@@ -166,8 +177,37 @@ export function getSmartDepartmentRecommendation(
 
 /**
  * Computes standard Cosine Similarity between two numeric vectors.
+ * Rejects cross-model, cross-source, or dimension-incompatible comparisons.
  */
-export function cosineSimilarity(vecA: number[], vecB: number[]): number {
+export function cosineSimilarity(
+  itemA: number[] | { embedding?: number[]; values?: number[]; model?: string; dimensions?: number; source?: string },
+  itemB: number[] | { embedding?: number[]; values?: number[]; model?: string; dimensions?: number; source?: string }
+): number {
+  if (!itemA || !itemB) return 0;
+  const isObjA = typeof itemA === 'object' && !Array.isArray(itemA);
+  const isObjB = typeof itemB === 'object' && !Array.isArray(itemB);
+
+  const vecA: number[] = isObjA ? ((itemA as any).embedding || (itemA as any).values || []) : (itemA as number[]);
+  const vecB: number[] = isObjB ? ((itemB as any).embedding || (itemB as any).values || []) : (itemB as number[]);
+
+  // Reject cross-model or incompatible dimension comparisons
+  if (isObjA && isObjB) {
+    const a = itemA as any;
+    const b = itemB as any;
+    if (a.model && b.model && a.model !== b.model) {
+      console.warn(`Rejecting cross-model comparison: ${a.model} vs ${b.model}`);
+      return 0;
+    }
+    if (a.source && b.source && a.source !== b.source) {
+      console.warn(`Rejecting cross-source comparison: ${a.source} vs ${b.source}`);
+      return 0;
+    }
+    if (a.dimensions && b.dimensions && a.dimensions !== b.dimensions) {
+      console.warn(`Rejecting dimension mismatch: ${a.dimensions} vs ${b.dimensions}`);
+      return 0;
+    }
+  }
+
   if (!vecA || !vecB || vecA.length !== vecB.length || vecA.length === 0) return 0;
   let dot = 0;
   let normA = 0;
@@ -181,15 +221,26 @@ export function cosineSimilarity(vecA: number[], vecB: number[]): number {
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
+export interface GeneratedEmbedding {
+  values: number[];
+  source: 'GEMINI' | 'TEST';
+  model: string;
+  dimensions: number;
+  textHash: string;
+}
+
 /**
  * Generates an embedding vector for complaint text using Gemini text-embedding-004
  * or a deterministic semantic projection in test/emulator environments.
+ * In production without a Gemini API key, returns null (never fake embeddings).
  */
 export async function generateComplaintEmbedding(
   text: string,
   apiKey?: string
-): Promise<number[]> {
+): Promise<GeneratedEmbedding | null> {
   const clean = text.trim();
+  const textHash = computeTextHash(clean);
+
   if (apiKey) {
     try {
       const ai = new GoogleGenAI({ apiKey });
@@ -199,82 +250,123 @@ export async function generateComplaintEmbedding(
       });
       const values = resp.embeddings?.[0]?.values;
       if (values && values.length > 0) {
-        return values;
+        return {
+          values,
+          source: 'GEMINI',
+          model: 'text-embedding-004',
+          dimensions: values.length,
+          textHash,
+        };
       }
     } catch (err) {
-      console.warn('Gemini embedding API call failed, falling back to local semantic projector:', err);
+      console.warn('Gemini embedding API call failed, evaluating test double fallback:', err);
     }
   }
 
-  // Deterministic 64-dimensional semantic concept projector for emulator / test execution
-  const vector = new Array(64).fill(0.01);
-  const words = clean.toLowerCase().split(/[\s,.-]+/);
+  // Deterministic 64-dimensional semantic concept projector strictly for emulator / test execution
+  if (isEmulatorOrTestEnvironment()) {
+    const vector = new Array(64).fill(0.01);
+    const words = clean.toLowerCase().split(/[\s,.-]+/);
 
-  // Concept clusters
-  const hvac = ['ac', 'air', 'conditioner', 'conditioning', 'cooling', 'cool', 'chiller', 'hvac', 'temperature', 'hot', 'heat', 'vent', 'ventilation'];
-  const plumbing = ['water', 'leak', 'leaking', 'pipe', 'tap', 'sink', 'flush', 'drain', 'plumbing', 'drip', 'dripping', 'flood'];
-  const network = ['wifi', 'wi-fi', 'internet', 'network', 'router', 'connection', 'offline', 'disconnect', 'signal', 'speed'];
-  const electrical = ['light', 'lightbulb', 'power', 'socket', 'plug', 'switch', 'wiring', 'electricity', 'voltage', 'spark', 'short'];
-  const sanitation = ['clean', 'cleanliness', 'dustbin', 'trash', 'garbage', 'smell', 'washroom', 'toilet', 'dirt', 'dirty'];
-  const hostel = ['hostel', 'room', 'bed', 'almirah', 'warden', 'mess', 'dorm', 'dormitory'];
+    // Concept clusters
+    const hvac = ['ac', 'air', 'conditioner', 'conditioning', 'cooling', 'cool', 'chiller', 'hvac', 'temperature', 'hot', 'heat', 'vent', 'ventilation'];
+    const plumbing = ['water', 'leak', 'leaking', 'pipe', 'tap', 'sink', 'flush', 'drain', 'plumbing', 'drip', 'dripping', 'flood'];
+    const network = ['wifi', 'wi-fi', 'internet', 'network', 'router', 'connection', 'offline', 'disconnect', 'signal', 'speed'];
+    const electrical = ['light', 'lightbulb', 'power', 'socket', 'plug', 'switch', 'wiring', 'electricity', 'voltage', 'spark', 'short'];
+    const sanitation = ['clean', 'cleanliness', 'dustbin', 'trash', 'garbage', 'smell', 'washroom', 'toilet', 'dirt', 'dirty'];
+    const hostel = ['hostel', 'room', 'bed', 'almirah', 'warden', 'mess', 'dorm', 'dormitory'];
 
-  // Weight concept dimensions
-  for (const w of words) {
-    if (hvac.includes(w)) {
-      for (let i = 0; i < 8; i++) vector[i] += 0.45;
+    // Weight concept dimensions
+    for (const w of words) {
+      if (hvac.includes(w)) {
+        for (let i = 0; i < 8; i++) vector[i] += 0.45;
+      }
+      if (plumbing.includes(w)) {
+        for (let i = 8; i < 16; i++) vector[i] += 0.45;
+      }
+      if (network.includes(w)) {
+        for (let i = 16; i < 24; i++) vector[i] += 0.45;
+      }
+      if (electrical.includes(w)) {
+        for (let i = 24; i < 32; i++) vector[i] += 0.45;
+      }
+      if (sanitation.includes(w)) {
+        for (let i = 32; i < 40; i++) vector[i] += 0.45;
+      }
+      if (hostel.includes(w)) {
+        for (let i = 40; i < 48; i++) vector[i] += 0.45;
+      }
+      // Location / Room hash in dims 48-63
+      let hash = 0;
+      for (let c = 0; c < w.length; c++) hash = (hash * 31 + w.charCodeAt(c)) % 16;
+      vector[48 + hash] += 0.2;
     }
-    if (plumbing.includes(w)) {
-      for (let i = 8; i < 16; i++) vector[i] += 0.45;
-    }
-    if (network.includes(w)) {
-      for (let i = 16; i < 24; i++) vector[i] += 0.45;
-    }
-    if (electrical.includes(w)) {
-      for (let i = 24; i < 32; i++) vector[i] += 0.45;
-    }
-    if (sanitation.includes(w)) {
-      for (let i = 32; i < 40; i++) vector[i] += 0.45;
-    }
-    if (hostel.includes(w)) {
-      for (let i = 40; i < 48; i++) vector[i] += 0.45;
-    }
-    // Location / Room hash in dims 48-63
-    let hash = 0;
-    for (let c = 0; c < w.length; c++) hash = (hash * 31 + w.charCodeAt(c)) % 16;
-    vector[48 + hash] += 0.2;
+
+    // Normalize to unit vector
+    let norm = 0;
+    for (let i = 0; i < 64; i++) norm += vector[i] * vector[i];
+    norm = Math.sqrt(norm) || 1;
+    return {
+      values: vector.map((v) => v / norm),
+      source: 'TEST',
+      model: 'deterministic-test-projector',
+      dimensions: 64,
+      textHash,
+    };
   }
 
-  // Normalize to unit vector
-  let norm = 0;
-  for (let i = 0; i < 64; i++) norm += vector[i] * vector[i];
-  norm = Math.sqrt(norm) || 1;
-  return vector.map((v) => v / norm);
+  // In production without valid credentials, never claim heuristic vectors are genuine embeddings
+  return null;
 }
 
 /**
  * Caches and retrieves complaint embeddings from Firestore to minimize AI embedding calls.
+ * Stores source, model, dimension, and fingerprint metadata.
  */
 export async function getOrCreateComplaintEmbedding(
   db: admin.firestore.Firestore,
   complaintId: string,
   text: string,
   apiKey?: string
-): Promise<number[]> {
+): Promise<ComplaintEmbeddingRecord | null> {
   const embedRef = db.collection('complaintEmbeddings').doc(complaintId);
   const existing = await embedRef.get();
-  if (existing.exists && existing.data()?.embedding) {
-    return existing.data()?.embedding;
+  if (existing.exists) {
+    const data = existing.data();
+    if (data?.embedding && Array.isArray(data.embedding)) {
+      return {
+        complaintId,
+        embedding: data.embedding,
+        source: data.source || 'TEST',
+        model: data.model || 'deterministic-test-projector',
+        dimensions: data.dimensions || data.embedding.length,
+        textHash: data.textHash || computeTextHash(text),
+        textSnippet: data.textSnippet || text.slice(0, 200),
+        createdAt: data.createdAt || new Date().toISOString(),
+        status: data.status || 'SUCCESS',
+      };
+    }
   }
 
-  const embedding = await generateComplaintEmbedding(text, apiKey);
-  await embedRef.set({
+  const generated = await generateComplaintEmbedding(text, apiKey);
+  if (!generated) {
+    return null;
+  }
+
+  const record: ComplaintEmbeddingRecord = {
     complaintId,
-    embedding,
+    embedding: generated.values,
+    source: generated.source,
+    model: generated.model,
+    dimensions: generated.dimensions,
+    textHash: generated.textHash,
     textSnippet: text.slice(0, 200),
-    model: 'text-embedding-004',
     createdAt: new Date().toISOString(),
-  });
-  return embedding;
+    status: 'SUCCESS',
+  };
+
+  await embedRef.set(record);
+  return record;
 }
 
 /**
@@ -293,19 +385,15 @@ export const askCampusCareAi = onCall(
     }
 
     const uid = request.auth.uid;
-    const data = request.data as AskCampusCareRequest;
-
-    if (!data || typeof data !== 'object') {
-      throw new HttpsError('invalid-argument', 'Request body must be an object.');
+    const parseResult = AskCampusCareSchema.safeParse(request.data);
+    if (!parseResult.success) {
+      throw new HttpsError(
+        'invalid-argument',
+        `Invalid request: ${parseResult.error.errors.map((e) => e.message).join(', ')}`
+      );
     }
-
-    const trimmedPrompt = (data.prompt || '').trim();
-    if (!trimmedPrompt) {
-      throw new HttpsError('invalid-argument', 'A prompt string is required.');
-    }
-    if (trimmedPrompt.length > 1500) {
-      throw new HttpsError('invalid-argument', 'Prompt exceeds maximum allowed length of 1500 characters.');
-    }
+    const data = parseResult.data;
+    const trimmedPrompt = data.prompt;
 
     const db = admin.firestore();
 
@@ -579,19 +667,15 @@ export const aiAssistComplaint = onCall(
     }
 
     const uid = request.auth.uid;
-    const data = request.data as AiAssistComplaintRequest;
-
-    if (!data || typeof data !== 'object') {
-      throw new HttpsError('invalid-argument', 'Request body must be an object.');
+    const parseResult = AiAssistComplaintSchema.safeParse(request.data);
+    if (!parseResult.success) {
+      throw new HttpsError(
+        'invalid-argument',
+        `Invalid request: ${parseResult.error.errors.map((e) => e.message).join(', ')}`
+      );
     }
-
-    const rawInput = (data.rawInput || '').trim();
-    if (!rawInput) {
-      throw new HttpsError('invalid-argument', 'Issue description is required.');
-    }
-    if (rawInput.length > 1500) {
-      throw new HttpsError('invalid-argument', 'Input description exceeds 1500 characters.');
-    }
+    const data = parseResult.data;
+    const rawInput = data.rawInput;
 
     const db = admin.firestore();
     await enforceAiUsageLimits(db, uid);
@@ -676,11 +760,13 @@ Return JSON strictly matching this schema:
     return {
       suggestedTitle: `${titlePrefix}${data.room ? ` - ${data.room}` : ''}`,
       suggestedCategory: smartDept.departmentCategory,
-      enhancedDescription: `Technician attention requested: ${rawInput}. Student reports ongoing malfunction impacting student facilities.`,
+      enhancedDescription: `[Rule-Based Enhancement] Technician attention requested: ${rawInput}. Student reports ongoing malfunction impacting student facilities.`,
       suggestedDepartment: smartDept.departmentName,
       suggestedPriority: (smartDept.departmentCategory === 'AC_HVAC' || smartDept.departmentCategory === 'WATER_SUPPLY') ? 'HIGH' : 'MEDIUM',
       missingInfo: missingInfo.length > 0 ? missingInfo : undefined,
       isMock: true,
+      provider: 'TEST_DOUBLE_HEURISTIC',
+      enhancementSource: 'RULE_BASED_ASSISTANCE',
     };
   }
 );

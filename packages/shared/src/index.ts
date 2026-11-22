@@ -5,3 +5,4 @@ export * from './types/campusCare.js';
 export * from './types/admin.js';
 export * from './schemas/auth.schema.js';
 export * from './schemas/ticket.schema.js';
+export * from './schemas/campusCare.schema.js';

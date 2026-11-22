@@ -1,9 +1,11 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import admin from 'firebase-admin';
 import path from 'path';
-import { CreateTicketSchema, TicketStatus } from '@solvesphere/shared';
+import { CreateTicketSchema, TicketStatus, ComplaintEmbeddingRecord } from '@solvesphere/shared';
 import { sendInAppNotification } from './notifications.js';
 import {
+  geminiApiKey,
+  resolveGeminiApiKey,
   getOrCreateComplaintEmbedding,
   cosineSimilarity,
   getSmartDepartmentRecommendation,
@@ -249,9 +251,14 @@ async function verifyAndResolveAttachment(
  * Callable Cloud Function: createComplaint
  * Securely creates a complaint with atomic sequence numbering (SS-2026-XXXX)
  * Enforces ownership from context.auth.uid
- * Validates attachment ownership, implements rule-based heuristic clustering, and idempotent notification
+ * Validates attachment ownership, implements scalable semantic duplicate clustering, and idempotent notification
  */
-export const createComplaint = onCall({ cors: true }, async (request) => {
+export const createComplaint = onCall(
+  {
+    cors: true,
+    secrets: [geminiApiKey],
+  },
+  async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to submit a complaint.');
   }
@@ -346,147 +353,195 @@ export const createComplaint = onCall({ cors: true }, async (request) => {
     const complaintId = newComplaint.id;
     const refNum = newComplaint.referenceNumber;
 
-    // --- Semantic Duplicate Issue Grouping & Smart Clustering ---
+    // --- Scalable Semantic Duplicate Issue Grouping & Smart Clustering ---
+    let clusteringStatus: 'COMPLETED' | 'SKIPPED' | 'FAILED' = 'SKIPPED';
     try {
-      const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-      const complaintText = `${data.title}. ${data.description}. Category: ${data.category}. Location: ${data.building} ${data.room}`;
-      const newEmbedding = await getOrCreateComplaintEmbedding(db, complaintId, complaintText);
+      await Promise.race([
+        (async () => {
+          const apiKey = resolveGeminiApiKey();
+          const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+          const complaintText = `${data.title}. ${data.description}. Category: ${data.category}. Location: ${data.building} ${data.room}`;
+          const newEmbedding = await getOrCreateComplaintEmbedding(db, complaintId, complaintText, apiKey);
 
-      // Query active candidate complaints in same category in the last 48 hours
-      const candidateSnaps = await db
-        .collection('complaints')
-        .where('category', '==', data.category)
-        .get();
+          // Bounded candidate query: limit to 25 recent active complaints in the same category
+          const candidateSnaps = await db
+            .collection('complaints')
+            .where('category', '==', data.category)
+            .limit(25)
+            .get();
 
-      const candidateDocs = candidateSnaps.docs.filter((docSnap) => {
-        const item = docSnap.data();
-        if (docSnap.id === complaintId) return false;
-        if (item.status === 'CLOSED' || item.status === 'RESOLVED') return false;
-        if (item.submittedAt && item.submittedAt < fortyEightHoursAgo) return false;
-        return true;
-      });
-
-      let highestSemanticMatch: {
-        doc: admin.firestore.QueryDocumentSnapshot;
-        similarity: number;
-        sameLocation: boolean;
-      } | null = null;
-
-      const semanticMatchingDocs: {
-        doc: admin.firestore.QueryDocumentSnapshot;
-        similarity: number;
-        sameLocation: boolean;
-      }[] = [];
-
-      for (const candDoc of candidateDocs) {
-        const candData = candDoc.data();
-        const candText = `${candData.title}. ${candData.description}. Category: ${candData.category}. Location: ${candData.building} ${candData.room}`;
-        const candEmbedding = await getOrCreateComplaintEmbedding(db, candDoc.id, candText);
-        const sim = cosineSimilarity(newEmbedding, candEmbedding);
-
-        const sameLocation =
-          candData.building === data.building &&
-          String(candData.room || '').trim().toLowerCase() === String(data.room || '').trim().toLowerCase();
-
-        if (sim >= 0.80) {
-          semanticMatchingDocs.push({ doc: candDoc, similarity: sim, sameLocation });
-          if (!highestSemanticMatch || sim > highestSemanticMatch.similarity) {
-            highestSemanticMatch = { doc: candDoc, similarity: sim, sameLocation };
-          }
-        }
-      }
-
-      // Check if we have semantic match >= 0.80, or fall back to location proximity
-      let clusteringMethod: 'RULE_BASED_LOCATION_PROXIMITY' | 'SEMANTIC_SIMILARITY' | 'HYBRID_SEMANTIC_PROXIMITY' | null = null;
-      let matchedDocs: admin.firestore.QueryDocumentSnapshot[] = [];
-      let similarityScore: number | undefined = undefined;
-      let semanticExplanation: string | undefined = undefined;
-      let aiMaintenanceSummary: string | undefined = undefined;
-
-      if (highestSemanticMatch) {
-        matchedDocs = semanticMatchingDocs.map((m) => m.doc);
-        similarityScore = Math.round(highestSemanticMatch.similarity * 100) / 100;
-        clusteringMethod = highestSemanticMatch.sameLocation
-          ? 'HYBRID_SEMANTIC_PROXIMITY'
-          : 'SEMANTIC_SIMILARITY';
-        const candData = highestSemanticMatch.doc.data();
-        semanticExplanation = `Semantic similarity analysis (${Math.round(highestSemanticMatch.similarity * 100)}% match) identified strongly correlated symptoms between "${candData.title}" and "${data.title}".`;
-        aiMaintenanceSummary = `AI Maintenance Analysis: Correlated ${data.category.replace(/_/g, ' ')} issues detected across ${data.building}. Students describe matching equipment or utility anomalies. Unified dispatch recommended.`;
-      } else {
-        // Fallback: rule-based location proximity (same building & room & category within 48h)
-        const locationMatches = candidateDocs.filter((docSnap) => {
-          const item = docSnap.data();
-          return (
-            item.building === data.building &&
-            String(item.room || '').trim().toLowerCase() === String(data.room || '').trim().toLowerCase()
-          );
-        });
-
-        if (locationMatches.length > 0) {
-          matchedDocs = locationMatches;
-          clusteringMethod = 'RULE_BASED_LOCATION_PROXIMITY';
-          similarityScore = 0.75;
-          semanticExplanation = `Rule-based location proximity heuristic matched identical category and room within 48 hours.`;
-          aiMaintenanceSummary = `Location Cluster: Multiple incidents reported in ${data.building} (${data.room}). Requires technician inspection for localized fault.`;
-        }
-      }
-
-      if (matchedDocs.length > 0 && clusteringMethod) {
-        const existingClusterDoc = matchedDocs.find((docSnap) => docSnap.data().clusterId);
-        let targetClusterId: string;
-
-        if (existingClusterDoc && existingClusterDoc.data().clusterId) {
-          targetClusterId = existingClusterDoc.data().clusterId;
-          const clusterRef = db.collection('issueClusters').doc(targetClusterId);
-          await clusterRef.update({
-            ticketIds: admin.firestore.FieldValue.arrayUnion(complaintId),
-            ticketCount: admin.firestore.FieldValue.increment(1),
-            clusteringMethod,
-            similarityScore: similarityScore || 0.85,
-            semanticExplanation: semanticExplanation || '',
-            aiMaintenanceSummary: aiMaintenanceSummary || '',
-            updatedAt: now,
-          });
-        } else {
-          const clusterRef = db.collection('issueClusters').doc();
-          targetClusterId = clusterRef.id;
-          const allTicketIds = [complaintId, ...matchedDocs.map((d) => d.id)];
-
-          await clusterRef.set({
-            id: targetClusterId,
-            title: `Suggested Incident: ${data.category.replace(/_/g, ' ')} at ${data.building}${data.room ? ` (${data.room})` : ''}`,
-            category: data.category,
-            affectedArea: `${data.building}${data.room ? `, Room ${data.room}` : ''}`,
-            building: data.building,
-            room: data.room || '',
-            ticketCount: allTicketIds.length,
-            ticketIds: allTicketIds,
-            clusteringMethod,
-            similarityScore,
-            semanticExplanation,
-            aiMaintenanceSummary,
-            verifiedByAdmin: false,
-            status: 'SUGGESTED_INCIDENT',
-            suggestedAction: `Admin review required: confirm whether these ${allTicketIds.length} complaints share the same root cause before dispatching technicians.`,
-            createdAt: now,
-            updatedAt: now,
+          const candidateDocs = candidateSnaps.docs.filter((docSnap) => {
+            const item = docSnap.data();
+            if (docSnap.id === complaintId) return false;
+            if (item.status === 'CLOSED' || item.status === 'RESOLVED') return false;
+            if (item.submittedAt && item.submittedAt < fortyEightHoursAgo) return false;
+            return true;
           });
 
-          // Link cluster suggestion to earlier matching tickets
-          const batch = db.batch();
-          for (const d of matchedDocs) {
-            batch.update(d.ref, { clusterId: targetClusterId });
-          }
-          await batch.commit();
-        }
+          let highestSemanticMatch: {
+            doc: admin.firestore.QueryDocumentSnapshot;
+            similarity: number;
+            sameLocation: boolean;
+          } | null = null;
 
-        // Link new complaint to the cluster
-        await db.collection('complaints').doc(complaintId).update({ clusterId: targetClusterId });
-        newComplaint.clusterId = targetClusterId;
-      }
+          const semanticMatchingDocs: {
+            doc: admin.firestore.QueryDocumentSnapshot;
+            similarity: number;
+            sameLocation: boolean;
+          }[] = [];
+
+          if (newEmbedding) {
+            for (const candDoc of candidateDocs) {
+              const candData = candDoc.data();
+              const candText = `${candData.title}. ${candData.description}. Category: ${candData.category}. Location: ${candData.building} ${candData.room}`;
+              const candEmbedding = await getOrCreateComplaintEmbedding(db, candDoc.id, candText, apiKey);
+              if (!candEmbedding) continue;
+
+              const sim = cosineSimilarity(newEmbedding, candEmbedding);
+              const sameLocation =
+                candData.building === data.building &&
+                String(candData.room || '').trim().toLowerCase() === String(data.room || '').trim().toLowerCase();
+
+              if (sim >= 0.80) {
+                semanticMatchingDocs.push({ doc: candDoc, similarity: sim, sameLocation });
+                if (!highestSemanticMatch || sim > highestSemanticMatch.similarity) {
+                  highestSemanticMatch = { doc: candDoc, similarity: sim, sameLocation };
+                }
+              }
+            }
+          }
+
+          // Check if we have semantic match >= 0.80, or fall back to rule-based location proximity
+          let clusteringMethod: 'RULE_BASED_LOCATION_PROXIMITY' | 'SEMANTIC_SIMILARITY' | 'HYBRID_SEMANTIC_PROXIMITY' | null = null;
+          let matchedDocs: admin.firestore.QueryDocumentSnapshot[] = [];
+          let similarityScore: number | undefined = undefined;
+          let confidenceBasis: string | undefined = undefined;
+          let embeddingSource: 'GEMINI' | 'TEST' | undefined = undefined;
+          let modelIdentifier: string | undefined = undefined;
+          let vectorDimensions: number | undefined = undefined;
+          let textFingerprint: string | undefined = undefined;
+          let semanticExplanation: string | undefined = undefined;
+          let aiMaintenanceSummary: string | undefined = undefined;
+
+          if (highestSemanticMatch && newEmbedding) {
+            matchedDocs = semanticMatchingDocs.map((m) => m.doc);
+            similarityScore = Math.round(highestSemanticMatch.similarity * 100) / 100;
+            clusteringMethod = highestSemanticMatch.sameLocation
+              ? 'HYBRID_SEMANTIC_PROXIMITY'
+              : 'SEMANTIC_SIMILARITY';
+            embeddingSource = newEmbedding.source;
+            modelIdentifier = newEmbedding.model;
+            vectorDimensions = newEmbedding.dimensions;
+            textFingerprint = newEmbedding.textHash;
+            confidenceBasis = `Vector cosine similarity (${similarityScore}) using ${newEmbedding.model}`;
+
+            const candData = highestSemanticMatch.doc.data();
+            semanticExplanation = `Semantic similarity analysis (${Math.round(highestSemanticMatch.similarity * 100)}% match) identified strongly correlated symptoms between "${candData.title}" and "${data.title}".`;
+            aiMaintenanceSummary = newEmbedding.source === 'GEMINI'
+              ? `[Gemini 2.5 Summary] Correlated ${data.category.replace(/_/g, ' ')} issues detected across ${data.building}. Submissions report related symptoms. Unified dispatch recommended.`
+              : `[Deterministic Test Analysis] Correlated ${data.category.replace(/_/g, ' ')} issues detected across ${data.building}. Submissions report related symptoms.`;
+          } else {
+            // Fallback: rule-based location proximity (same building & room & category within 48h)
+            const locationMatches = candidateDocs.filter((docSnap) => {
+              const item = docSnap.data();
+              return (
+                item.building === data.building &&
+                String(item.room || '').trim().toLowerCase() === String(data.room || '').trim().toLowerCase()
+              );
+            });
+
+            if (locationMatches.length > 0) {
+              matchedDocs = locationMatches;
+              clusteringMethod = 'RULE_BASED_LOCATION_PROXIMITY';
+              // Explicitly omit fake similarityScore for purely rule-based location matches
+              similarityScore = undefined;
+              confidenceBasis = 'Heuristic identical room & category match within 48h';
+              semanticExplanation = `Rule-based location proximity heuristic matched identical category and room within 48 hours.`;
+              aiMaintenanceSummary = `[Deterministic Maintenance Analysis] Location Cluster: Multiple incidents reported in ${data.building} (${data.room}). Requires technician inspection for localized fault.`;
+            }
+          }
+
+          if (matchedDocs.length > 0 && clusteringMethod) {
+            const existingClusterDoc = matchedDocs.find((docSnap) => docSnap.data().clusterId);
+            let targetClusterId: string;
+
+            if (existingClusterDoc && existingClusterDoc.data().clusterId) {
+              targetClusterId = existingClusterDoc.data().clusterId;
+              const clusterRef = db.collection('issueClusters').doc(targetClusterId);
+              const updateData: Record<string, any> = {
+                ticketIds: admin.firestore.FieldValue.arrayUnion(complaintId),
+                ticketCount: admin.firestore.FieldValue.increment(1),
+                clusteringMethod,
+                confidenceBasis: confidenceBasis || 'Heuristic match',
+                processingStatus: 'SUCCESS',
+                updatedAt: now,
+              };
+              if (similarityScore != null) updateData.similarityScore = similarityScore;
+              if (embeddingSource) updateData.embeddingSource = embeddingSource;
+              if (modelIdentifier) updateData.modelIdentifier = modelIdentifier;
+              if (vectorDimensions) updateData.vectorDimensions = vectorDimensions;
+              if (textFingerprint) updateData.textFingerprint = textFingerprint;
+              if (semanticExplanation) updateData.semanticExplanation = semanticExplanation;
+              if (aiMaintenanceSummary) updateData.aiMaintenanceSummary = aiMaintenanceSummary;
+
+              await clusterRef.update(updateData);
+            } else {
+              const clusterRef = db.collection('issueClusters').doc();
+              targetClusterId = clusterRef.id;
+              const allTicketIds = [complaintId, ...matchedDocs.map((d) => d.id)];
+
+              const newClusterRecord: Record<string, any> = {
+                id: targetClusterId,
+                title: `Suggested Incident: ${data.category.replace(/_/g, ' ')} at ${data.building}${data.room ? ` (${data.room})` : ''}`,
+                category: data.category,
+                affectedArea: `${data.building}${data.room ? `, Room ${data.room}` : ''}`,
+                building: data.building,
+                room: data.room || '',
+                ticketCount: allTicketIds.length,
+                ticketIds: allTicketIds,
+                clusteringMethod,
+                confidenceBasis: confidenceBasis || 'Heuristic match',
+                processingStatus: 'SUCCESS',
+                verifiedByAdmin: false,
+                status: 'SUGGESTED_INCIDENT',
+                suggestedAction: `Admin review required: confirm whether these ${allTicketIds.length} complaints share the same root cause before dispatching technicians.`,
+                createdAt: now,
+                updatedAt: now,
+              };
+              if (similarityScore != null) newClusterRecord.similarityScore = similarityScore;
+              if (embeddingSource) newClusterRecord.embeddingSource = embeddingSource;
+              if (modelIdentifier) newClusterRecord.modelIdentifier = modelIdentifier;
+              if (vectorDimensions) newClusterRecord.vectorDimensions = vectorDimensions;
+              if (textFingerprint) newClusterRecord.textFingerprint = textFingerprint;
+              if (semanticExplanation) newClusterRecord.semanticExplanation = semanticExplanation;
+              if (aiMaintenanceSummary) newClusterRecord.aiMaintenanceSummary = aiMaintenanceSummary;
+
+              await clusterRef.set(newClusterRecord);
+
+              // Link cluster suggestion to earlier matching tickets
+              const batch = db.batch();
+              for (const d of matchedDocs) {
+                batch.update(d.ref, { clusterId: targetClusterId });
+              }
+              await batch.commit();
+            }
+
+            // Link new complaint to the cluster
+            await db.collection('complaints').doc(complaintId).update({ clusterId: targetClusterId });
+            newComplaint.clusterId = targetClusterId;
+          }
+          clusteringStatus = 'COMPLETED';
+        })(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Clustering execution timeout')), 4000)),
+      ]);
     } catch (groupingErr) {
-      console.warn('Issue grouping non-fatal warning:', groupingErr);
+      console.warn('Issue grouping non-fatal warning or timeout:', groupingErr);
+      clusteringStatus = 'SKIPPED';
     }
+
+    // Persist clustering status on complaint document
+    await db.collection('complaints').doc(complaintId).update({ clusteringStatus });
+    newComplaint.clusteringStatus = clusteringStatus;
 
     // --- Dispatch In-App Notification (Idempotent) ---
     try {

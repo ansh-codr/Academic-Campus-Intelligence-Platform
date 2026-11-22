@@ -53,6 +53,8 @@ export interface AiAssistComplaintResponse {
   suggestedPriority: TicketPriority;
   missingInfo?: string[];
   isMock?: boolean;
+  provider?: string;
+  enhancementSource?: string;
 }
 
 export interface CampusCareConversation {
@@ -75,4 +77,16 @@ export interface CampusCareMessage {
     draftComplaint?: ComplaintDraftSuggestion;
     ticketReferences?: string[];
   };
+}
+
+export interface ComplaintEmbeddingRecord {
+  complaintId: string;
+  embedding: number[];
+  source: 'GEMINI' | 'TEST';
+  model: string;
+  dimensions: number;
+  textHash: string;
+  textSnippet: string;
+  createdAt: string;
+  status: 'SUCCESS' | 'FAILED';
 }

@@ -166,8 +166,13 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // Issue Clusters (Semantic groupings)
+    // Issue Clusters (Raw internal operational clusters - restricted strictly to Admins)
     match /issueClusters/{clusterId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Public/Student Sanitized Active Campus Incidents (Contains no student IDs or individual complaint references)
+    match /publicIncidents/{incidentId} {
       allow read: if isAuthenticated();
       allow write: if isAdmin();
     }
