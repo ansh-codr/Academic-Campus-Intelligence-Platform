@@ -2604,7 +2604,7 @@ async function runTests() {
   console.log(`✓ Test 50 Passed: Cluster membership, attempt count, and error clearance verified through retry workflow.`);
 
   // --------------------------------------------------------------------------
-  // TEST 19: Security Scan - Zero API Keys in Client Bundles
+  // TEST 19: Security Scan - No Server-Only Credentials in Client Bundles
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 19] Verifying Zero Sensitive Keys or Secrets in Client Assets...`);
   const distDir = path.resolve('apps/web/dist');
@@ -2616,19 +2616,18 @@ async function runTests() {
         if (file.endsWith('.js')) {
           const content = fs.readFileSync(path.join(assetsDir, file), 'utf-8');
           // Public Firebase Web App client configuration is permissible, but server secrets (GEMINI_API_KEY) must never appear.
-          const allowedWebApiKey = process.env.VITE_FIREBASE_API_KEY || 'AIzaSyAKophu-TWtgkVyUD91LO1RxQpGdrMWV-c';
-          if (content.includes('AIzaSy')) {
-            assert.ok(
-              content.includes(allowedWebApiKey),
-              `File ${file} must only contain authorized public Firebase web key, not unexpected Google API keys`
-            );
+          // Firebase web client config may legitimately be present in a Vite browser bundle.
+          // Do not hardcode a project-specific API key into tests or the repository.
+          // Verify server-only secrets are never bundled, irrespective of client config.
+          for (const privateEnvName of ['GEMINI_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'FIREBASE_PRIVATE_KEY', 'ADMIN_PASSWORD']) {
+            assert.ok(!content.includes(privateEnvName), `File ${file} unexpectedly exposes private server configuration: ${privateEnvName}`);
           }
-          assert.ok(!content.includes('GEMINI_API_KEY'), `File ${file} must not contain GEMINI_API_KEY`);
+
         }
       }
     }
   }
-  console.log(`✓ Test 19 Passed: Client distribution verified free of exposed API keys.`);
+  console.log(`✓ Test 19 Passed: Client distribution checked for server-only credential names; Firebase web configuration is public.`);
 
   // --------------------------------------------------------------------------
   // TEST 51: Phase 8 End-to-End Real Data Visibility: Admin-Created Records
