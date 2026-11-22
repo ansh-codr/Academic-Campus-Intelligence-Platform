@@ -15,7 +15,14 @@ import {
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
-import { UserProfile, UserRole, StudentRegisterInput, StudentRegisterSchema } from '@solvesphere/shared';
+import {
+  UserProfile,
+  UserRole,
+  StudentRegisterInput,
+  StudentRegisterSchema,
+  EnrollmentStatus,
+  EnrollmentRequest,
+} from '@solvesphere/shared';
 
 interface AuthContextType {
   user: UserProfile | null;
@@ -23,11 +30,13 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isEmailVerified: boolean;
   isLoading: boolean;
+  verificationCooldown: number;
   authError: string | null;
   profileError: string | null;
   login: (email: string, password: string) => Promise<UserProfile>;
   loginWithGoogle: () => Promise<{ profile: UserProfile; isNewUser: boolean; needsProfileCompletion: boolean }>;
   registerStudent: (input: StudentRegisterInput) => Promise<UserProfile>;
+  submitEnrollmentRequest: (data: { studentId: string; department: string; semester: number; fullName?: string }) => Promise<void>;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   updateProfile: (data: Partial<UserProfile>) => Promise<void>;
@@ -43,6 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<UserRole | null>(null);
   const [isEmailVerified, setIsEmailVerified] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [verificationCooldown, setVerificationCooldown] = useState(0);
   const [authError, setAuthError] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
 
@@ -50,6 +60,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAuthError(null);
     setProfileError(null);
   }, []);
+
+  // Cooldown countdown for verification email resends
+  useEffect(() => {
+    if (verificationCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setVerificationCooldown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [verificationCooldown]);
 
   // Synchronize Firebase Auth state and Firestore profile
   useEffect(() => {
@@ -75,10 +100,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const userDocRef = doc(db, 'users', firebaseUser.uid);
         const userDocSnap = await getDoc(userDocRef);
 
+        // Also check enrollmentRequests/{uid} for review status
+        let enrollmentStatus: EnrollmentStatus = 'INCOMPLETE';
+        let rejectionReason: string | null = null;
+
+        try {
+          const reqSnap = await getDoc(doc(db, 'enrollmentRequests', firebaseUser.uid));
+          if (reqSnap.exists()) {
+            const reqData = reqSnap.data() as EnrollmentRequest;
+            enrollmentStatus = reqData.status;
+            rejectionReason = reqData.rejectionReason || null;
+          }
+        } catch (_reqErr) {
+          // Non-fatal if enrollmentRequests collection is unavailable
+        }
+
         let profileData: UserProfile;
 
         if (userDocSnap.exists()) {
           const raw = userDocSnap.data();
+          const finalStatus: EnrollmentStatus = raw.studentId && (raw.enrollmentStatus === 'VERIFIED' || !raw.enrollmentStatus)
+            ? 'VERIFIED'
+            : (raw.enrollmentStatus || enrollmentStatus);
+
           profileData = {
             id: firebaseUser.uid,
             email: firebaseUser.email || raw.email || '',
@@ -86,6 +130,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             studentId: raw.studentId,
             role: customRole,
             emailVerified: firebaseUser.emailVerified,
+            enrollmentStatus: customRole === 'ADMIN' ? 'VERIFIED' : finalStatus,
+            rejectionReason: raw.rejectionReason || rejectionReason,
             department: raw.department,
             semester: raw.semester,
             avatarUrl: raw.avatarUrl,
@@ -94,13 +140,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           };
           setProfileError(null);
         } else {
-          // Minimal profile reflecting authenticated account without fictitious department/semester
+          // Minimal profile reflecting authenticated account without fictitious data
           profileData = {
             id: firebaseUser.uid,
             email: firebaseUser.email || '',
             fullName: firebaseUser.displayName || 'University User',
             role: customRole,
             emailVerified: firebaseUser.emailVerified,
+            enrollmentStatus: customRole === 'ADMIN' ? 'VERIFIED' : enrollmentStatus,
             createdAt: firebaseUser.metadata.creationTime || new Date().toISOString(),
           };
         }
@@ -109,7 +156,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setRole(customRole);
       } catch (err: any) {
         console.error('Error synchronizing user profile from Firestore:', err);
-        // Distinguish profile load error from auth identity error
         setProfileError('Unable to synchronize profile from Cloud Firestore. Using authenticated identity.');
         const customRole: UserRole = 'STUDENT';
         setUser({
@@ -118,6 +164,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           fullName: firebaseUser.displayName || 'University User',
           role: customRole,
           emailVerified: firebaseUser.emailVerified,
+          enrollmentStatus: 'INCOMPLETE',
           createdAt: firebaseUser.metadata.creationTime || new Date().toISOString(),
         });
         setRole(customRole);
@@ -145,6 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             fullName: firebaseUser.displayName || 'University Student',
             role: 'STUDENT',
             emailVerified: firebaseUser.emailVerified,
+            enrollmentStatus: 'INCOMPLETE',
             avatarUrl: firebaseUser.photoURL || undefined,
             createdAt: now,
             updatedAt: now,
@@ -175,7 +223,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const customRole = (tokenResult.claims.role as UserRole) || 'STUDENT';
       setRole(customRole);
 
-      setUser((prev) => (prev ? { ...prev, emailVerified: refreshed.emailVerified, role: customRole } : null));
+      // Re-read profile and enrollment status
+      const userDocSnap = await getDoc(doc(db, 'users', refreshed.uid));
+      let currentEnrollment: EnrollmentStatus = 'INCOMPLETE';
+      try {
+        const reqSnap = await getDoc(doc(db, 'enrollmentRequests', refreshed.uid));
+        if (reqSnap.exists()) {
+          currentEnrollment = reqSnap.data().status as EnrollmentStatus;
+        }
+      } catch (_e) {}
+
+      if (userDocSnap.exists()) {
+        const data = userDocSnap.data();
+        setUser({
+          ...data,
+          id: refreshed.uid,
+          email: refreshed.email || data.email,
+          role: customRole,
+          emailVerified: refreshed.emailVerified,
+          enrollmentStatus: data.studentId ? 'VERIFIED' : (data.enrollmentStatus || currentEnrollment),
+        } as UserProfile);
+      } else {
+        setUser((prev) => (prev ? { ...prev, emailVerified: refreshed.emailVerified, role: customRole } : null));
+      }
     } catch (err: any) {
       console.warn('Failed to reload Firebase user:', err);
       setAuthError(err.message || 'Could not refresh user session.');
@@ -184,7 +254,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Real Email / Password Student Registration
   const registerStudent = async (input: StudentRegisterInput): Promise<UserProfile> => {
-    // Validate payload against shared schema
     StudentRegisterSchema.parse(input);
 
     setIsLoading(true);
@@ -194,7 +263,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const userCred = await createUserWithEmailAndPassword(auth, input.email.trim(), input.password);
 
-      // Update Firebase Auth displayName
       try {
         await updateFirebaseProfile(userCred.user, {
           displayName: input.fullName.trim(),
@@ -203,12 +271,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.warn('Could not update Firebase Auth displayName:', profileErr);
       }
 
-      // Send email verification with clear recovery state if it fails
       try {
         await sendEmailVerification(userCred.user);
       } catch (verifyErr: any) {
         console.warn('Verification email dispatch deferred:', verifyErr);
-        // Non-fatal: user can resend from profile or verification banner
       }
 
       const now = new Date().toISOString();
@@ -216,20 +282,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         id: userCred.user.uid,
         email: input.email.trim(),
         fullName: input.fullName.trim(),
-        studentId: input.studentId.trim(),
         role: 'STUDENT',
         emailVerified: false,
+        enrollmentStatus: 'PENDING',
+        department: 'General Studies',
+        semester: 1,
         createdAt: now,
         updatedAt: now,
       };
 
-      // Persist genuine profile in `users/{uid}`
       try {
         await setDoc(doc(db, 'users', userCred.user.uid), newProfile);
       } catch (firestoreErr: any) {
         console.error('Firestore profile persistence failed:', firestoreErr);
         setProfileError('Account created, but initial profile initialization encountered a network issue. Please sign in to retry.');
-        // Do NOT delete the genuine Firebase Auth account after ambiguous network errors
+      }
+
+      // Record formal enrollment request for administrative verification
+      try {
+        const reqDoc: EnrollmentRequest = {
+          id: userCred.user.uid,
+          userId: userCred.user.uid,
+          fullName: input.fullName.trim(),
+          email: input.email.trim(),
+          studentId: input.studentId.trim(),
+          department: 'General Studies',
+          semester: 1,
+          status: 'PENDING',
+          submittedAt: now,
+          reviewedAt: null,
+          reviewedBy: null,
+          rejectionReason: null,
+        };
+        await setDoc(doc(db, 'enrollmentRequests', userCred.user.uid), reqDoc);
+      } catch (reqErr: any) {
+        console.warn('Could not persist initial enrollment request:', reqErr);
       }
 
       setUser(newProfile);
@@ -237,6 +324,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsEmailVerified(false);
       return newProfile;
     } catch (err: any) {
+      if (err.code === 'auth/user-disabled') {
+        const msg = 'This student account has been disabled by university administration. Please contact academic support.';
+        setAuthError(msg);
+        throw new Error(msg);
+      }
       setAuthError(err.message || 'Registration failed.');
       throw err;
     } finally {
@@ -260,22 +352,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const userDocRef = doc(db, 'users', cred.user.uid);
       let profile: UserProfile;
 
+      // Check enrollment request status
+      let enrollmentStatus: EnrollmentStatus = 'INCOMPLETE';
+      let rejectionReason: string | null = null;
+      try {
+        const reqSnap = await getDoc(doc(db, 'enrollmentRequests', cred.user.uid));
+        if (reqSnap.exists()) {
+          const reqData = reqSnap.data() as EnrollmentRequest;
+          enrollmentStatus = reqData.status;
+          rejectionReason = reqData.rejectionReason || null;
+        }
+      } catch (_e) {}
+
       try {
         const userDocSnap = await getDoc(userDocRef);
         if (userDocSnap.exists()) {
+          const raw = userDocSnap.data();
+          const finalStatus: EnrollmentStatus = raw.studentId && (raw.enrollmentStatus === 'VERIFIED' || !raw.enrollmentStatus)
+            ? 'VERIFIED'
+            : (raw.enrollmentStatus || enrollmentStatus);
+
           profile = {
-            ...userDocSnap.data(),
+            ...raw,
+            id: cred.user.uid,
+            email: cred.user.email || email,
+            fullName: raw.fullName || cred.user.displayName || 'University User',
             emailVerified: cred.user.emailVerified,
             role: userRole,
+            enrollmentStatus: userRole === 'ADMIN' ? 'VERIFIED' : finalStatus,
+            rejectionReason: raw.rejectionReason || rejectionReason,
           } as UserProfile;
         } else {
-          // Genuine account without existing profile document
           profile = {
             id: cred.user.uid,
             email: cred.user.email || email,
             fullName: cred.user.displayName || 'University User',
             role: userRole,
             emailVerified: cred.user.emailVerified,
+            enrollmentStatus: userRole === 'ADMIN' ? 'VERIFIED' : enrollmentStatus,
             createdAt: cred.user.metadata.creationTime || new Date().toISOString(),
           };
         }
@@ -288,6 +402,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           fullName: cred.user.displayName || 'University User',
           role: userRole,
           emailVerified: cred.user.emailVerified,
+          enrollmentStatus: userRole === 'ADMIN' ? 'VERIFIED' : 'INCOMPLETE',
           createdAt: cred.user.metadata.creationTime || new Date().toISOString(),
         };
       }
@@ -296,6 +411,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setRole(userRole);
       return profile;
     } catch (err: any) {
+      if (err.code === 'auth/user-disabled') {
+        const msg = 'This account has been disabled by university administration. Please contact academic support.';
+        setAuthError(msg);
+        throw new Error(msg);
+      }
       setAuthError(err.message || 'Login failed.');
       throw err;
     } finally {
@@ -337,8 +457,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       let isNewUser = false;
       let needsProfileCompletion = false;
 
+      // Inspect enrollmentRequests
+      let enrollmentStatus: EnrollmentStatus = 'INCOMPLETE';
+      let rejectionReason: string | null = null;
+      try {
+        const reqSnap = await getDoc(doc(db, 'enrollmentRequests', firebaseUser.uid));
+        if (reqSnap.exists()) {
+          const reqData = reqSnap.data() as EnrollmentRequest;
+          enrollmentStatus = reqData.status;
+          rejectionReason = reqData.rejectionReason || null;
+        }
+      } catch (_e) {}
+
       if (userDocSnap.exists()) {
         const raw = userDocSnap.data();
+        const finalStatus: EnrollmentStatus = raw.studentId && (raw.enrollmentStatus === 'VERIFIED' || !raw.enrollmentStatus)
+          ? 'VERIFIED'
+          : (raw.enrollmentStatus || enrollmentStatus);
+
         profile = {
           ...raw,
           id: firebaseUser.uid,
@@ -346,9 +482,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           fullName: raw.fullName || firebaseUser.displayName || 'University User',
           role: customRole,
           emailVerified: firebaseUser.emailVerified,
+          enrollmentStatus: customRole === 'ADMIN' ? 'VERIFIED' : finalStatus,
+          rejectionReason: raw.rejectionReason || rejectionReason,
           createdAt: raw.createdAt || firebaseUser.metadata.creationTime || new Date().toISOString(),
         } as UserProfile;
-        needsProfileCompletion = !profile.studentId && customRole !== 'ADMIN';
+        needsProfileCompletion = (!profile.studentId || profile.enrollmentStatus !== 'VERIFIED') && customRole !== 'ADMIN';
       } else {
         isNewUser = true;
         needsProfileCompletion = customRole !== 'ADMIN';
@@ -359,6 +497,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           fullName: firebaseUser.displayName || 'University Student',
           role: 'STUDENT',
           emailVerified: firebaseUser.emailVerified,
+          enrollmentStatus: customRole === 'ADMIN' ? 'VERIFIED' : 'INCOMPLETE',
           avatarUrl: firebaseUser.photoURL || undefined,
           createdAt: now,
           updatedAt: now,
@@ -388,12 +527,69 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         userFriendlyMsg = 'Only one Google sign-in window can be open at a time.';
       } else if (err.code === 'auth/network-request-failed') {
         userFriendlyMsg = 'Network failure during Google sign-in. Please check your internet connection.';
+      } else if (err.code === 'auth/user-disabled') {
+        userFriendlyMsg = 'This account has been disabled by university administration. Please contact academic support.';
       }
       setAuthError(userFriendlyMsg);
       throw new Error(userFriendlyMsg);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Submit official institutional enrollment request for administrative verification
+  const submitEnrollmentRequest = async (data: {
+    studentId: string;
+    department: string;
+    semester: number;
+    fullName?: string;
+  }) => {
+    if (!auth.currentUser || !user) throw new Error('Not authenticated');
+
+    const cleanStudentId = data.studentId.trim();
+    const cleanDept = data.department.trim();
+    const cleanName = (data.fullName || user.fullName || auth.currentUser.displayName || 'University Student').trim();
+    const now = new Date().toISOString();
+
+    const requestPayload: EnrollmentRequest = {
+      id: user.id,
+      userId: user.id,
+      fullName: cleanName,
+      email: user.email || auth.currentUser.email || '',
+      studentId: cleanStudentId,
+      department: cleanDept,
+      semester: data.semester,
+      status: 'PENDING',
+      submittedAt: now,
+      reviewedAt: null,
+      reviewedBy: null,
+      rejectionReason: null,
+    };
+
+    // 1. Submit to enrollmentRequests/{uid}
+    await setDoc(doc(db, 'enrollmentRequests', user.id), requestPayload);
+
+    // 2. Update non-privileged user profile fields (without setting verified studentId)
+    const userDocRef = doc(db, 'users', user.id);
+    await updateDoc(userDocRef, {
+      fullName: cleanName,
+      department: cleanDept,
+      semester: data.semester,
+      updatedAt: now,
+    });
+
+    setUser((prev) =>
+      prev
+        ? {
+            ...prev,
+            fullName: cleanName,
+            department: cleanDept,
+            semester: data.semester,
+            enrollmentStatus: 'PENDING',
+            rejectionReason: null,
+          }
+        : null
+    );
   };
 
   // Sign Out
@@ -411,30 +607,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await sendPasswordResetEmail(auth, email.trim());
   };
 
-  // Send Email Verification with rate protection
+  // Send Email Verification with rate protection & cooldown
   const sendVerificationEmail = async () => {
     if (!auth.currentUser) throw new Error('No authenticated user session');
     if (auth.currentUser.emailVerified) throw new Error('Email is already verified');
+    if (verificationCooldown > 0) {
+      throw new Error(`Please wait ${verificationCooldown} seconds before requesting another verification email.`);
+    }
     await sendEmailVerification(auth.currentUser);
+    setVerificationCooldown(60);
   };
 
-  // Update Permitted Profile Fields (Department, Semester, Bio, and initial Student ID)
+  // Update Permitted Profile Fields (Department, Semester, Bio, Avatar)
+  // Authoritative studentId and enrollmentStatus cannot be altered by student directly
   const updateProfile = async (data: Partial<UserProfile>) => {
     if (!user || !auth.currentUser) throw new Error('Not authenticated');
 
-    // Prevent modifying immutable or privileged fields from client
-    const { role: _r, id: _id, email: _e, emailVerified: _ev, ...safeUpdates } = data;
+    const {
+      role: _r,
+      id: _id,
+      email: _e,
+      emailVerified: _ev,
+      studentId: _sid,
+      enrollmentStatus: _es,
+      rejectionReason: _rr,
+      ...safeUpdates
+    } = data;
 
     const userDocRef = doc(db, 'users', user.id);
     const updatesWithTimestamp: Record<string, any> = {
       ...safeUpdates,
       updatedAt: new Date().toISOString(),
     };
-
-    // If student already has a registered studentId, do not allow changing it from client
-    if (user.studentId && updatesWithTimestamp.studentId && updatesWithTimestamp.studentId !== user.studentId) {
-      delete updatesWithTimestamp.studentId;
-    }
 
     await updateDoc(userDocRef, updatesWithTimestamp);
     setUser((prev) => (prev ? { ...prev, ...updatesWithTimestamp } : null));
@@ -448,11 +652,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated: !!user,
         isEmailVerified,
         isLoading,
+        verificationCooldown,
         authError,
         profileError,
         login,
         loginWithGoogle,
         registerStudent,
+        submitEnrollmentRequest,
         logout,
         resetPassword,
         updateProfile,

@@ -3,6 +3,12 @@
 ## Sign in
 Register or log in with the institution-approved account and ensure the correct academic details are associated with your profile. Do not share login credentials.
 
+## Institutional Enrollment Verification
+- Upon registration or signing in with Google, students enter their official institutional enrollment number, department, and semester on `/auth/complete-profile`.
+- Enrollment numbers require administrative verification against official university records before protected features (such as maintenance complaint dispatch and continuous assessment quizzes) unlock.
+- While verification is `PENDING`, you may browse general course outlines and club directories in restricted mode.
+- If your submission is `REJECTED`, the administrator's official explanation is displayed on `/auth/complete-profile` with an option to correct your roll number and resubmit.
+
 ## Academic
 - `/portal/subjects`: browse courses that the institution has actually published.
 - `/portal/timeline`: view current syllabus topic statuses.

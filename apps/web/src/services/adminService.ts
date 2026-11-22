@@ -1,4 +1,10 @@
-import { collection, getCountFromServer, getDocs, query, where } from 'firebase/firestore';
+import {
+  collection,
+  getCountFromServer,
+  getDocs,
+  query,
+  where,
+} from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '@/lib/firebase';
 import {
@@ -9,6 +15,8 @@ import {
   TicketStatus,
   CampusDepartment,
   CampusClub,
+  UserProfile,
+  UniversityRosterRecord,
 } from '@solvesphere/shared';
 import { CampusService } from './campusService';
 
@@ -43,7 +51,6 @@ export const AdminService = {
         department: dept.name,
         assignedCount: assigned.length - resolved.length,
         resolvedCount: resolved.length,
-        // A genuine resolution duration requires a dedicated resolvedAt lifecycle timestamp.
         averageResolutionDays: 0,
       };
     });
@@ -73,6 +80,19 @@ export const AdminService = {
       recentActivities,
       activeClusters,
     };
+  },
+
+  /** Retrieve all student profiles from Firestore */
+  async getEnrolledStudents(): Promise<UserProfile[]> {
+    const q = query(collection(db, 'users'), where('role', '==', 'STUDENT'));
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<UserProfile, 'id'>) }));
+  },
+
+  /** Retrieve official university roster records if provisioned */
+  async getRosterRecords(): Promise<UniversityRosterRecord[]> {
+    const snap = await getDocs(collection(db, 'universityRoster'));
+    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<UniversityRosterRecord, 'id'>) }));
   },
 
   async updateTicketStatus(ticketId: string, newStatus: TicketStatus, note?: string): Promise<void> {

@@ -37,10 +37,14 @@ const SettingsPage = React.lazy(() => import('@/pages/student/SettingsPage').the
 
 // Admin Portal Pages
 const AdminDashboardPage = React.lazy(() => import('@/pages/admin/AdminDashboardPage').then((module) => ({ default: module.AdminDashboardPage })));
+const AdminEnrollmentsPage = React.lazy(() => import('@/pages/admin/AdminEnrollmentsPage').then((module) => ({ default: module.AdminEnrollmentsPage })));
+const AdminStudentsPage = React.lazy(() => import('@/pages/admin/AdminStudentsPage').then((module) => ({ default: module.AdminStudentsPage })));
 const AdminAcademicManagementPage = React.lazy(() => import('@/pages/admin/AdminAcademicManagementPage').then((module) => ({ default: module.AdminAcademicManagementPage })));
 const AdminComplaintsClustersPage = React.lazy(() => import('@/pages/admin/AdminComplaintsClustersPage').then((module) => ({ default: module.AdminComplaintsClustersPage })));
 const AdminDepartmentsPage = React.lazy(() => import('@/pages/admin/AdminDepartmentsPage').then((module) => ({ default: module.AdminDepartmentsPage })));
 const AdminClubsPage = React.lazy(() => import('@/pages/admin/AdminClubsPage').then((module) => ({ default: module.AdminClubsPage })));
+const AdminAnalyticsPage = React.lazy(() => import('@/pages/admin/AdminAnalyticsPage').then((module) => ({ default: module.AdminAnalyticsPage })));
+const AdminSettingsPage = React.lazy(() => import('@/pages/admin/AdminSettingsPage').then((module) => ({ default: module.AdminSettingsPage })));
 import { ShieldAlert } from 'lucide-react';
 
 // Protected Route Guard: Requires Authenticated Student or Admin
@@ -63,8 +67,14 @@ const RequireAuth: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     return <Navigate to="/auth/login" state={{ from: location }} replace />;
   }
 
-  // If a student signed in via Google and lacks an enrollment number, guide them to complete onboarding
-  if (role === 'STUDENT' && user && !user.studentId && location.pathname !== '/auth/complete-profile') {
+  // If a student signed in via Google and lacks an enrollment number and submission, guide them to complete onboarding
+  if (
+    role === 'STUDENT' &&
+    user &&
+    !user.studentId &&
+    (!user.enrollmentStatus || user.enrollmentStatus === 'INCOMPLETE') &&
+    location.pathname !== '/auth/complete-profile'
+  ) {
     return <Navigate to="/auth/complete-profile" replace />;
   }
 
@@ -196,7 +206,8 @@ export function App() {
               >
                 <Route index element={<Navigate to="/admin/dashboard" replace />} />
                 <Route path="dashboard" element={<AdminDashboardPage />} />
-                <Route path="students" element={<AdminDashboardPage />} />
+                <Route path="enrollments" element={<AdminEnrollmentsPage />} />
+                <Route path="students" element={<AdminStudentsPage />} />
                 <Route path="subjects" element={<AdminAcademicManagementPage />} />
                 <Route path="topic-updates" element={<AdminAcademicManagementPage />} />
                 <Route path="resources" element={<AdminAcademicManagementPage />} />
@@ -206,8 +217,8 @@ export function App() {
                 <Route path="departments" element={<AdminDepartmentsPage />} />
                 <Route path="anonymous-reports" element={<AdminComplaintsClustersPage />} />
                 <Route path="clubs" element={<AdminClubsPage />} />
-                <Route path="analytics" element={<AdminDashboardPage />} />
-                <Route path="settings" element={<AdminDashboardPage />} />
+                <Route path="analytics" element={<AdminAnalyticsPage />} />
+                <Route path="settings" element={<AdminSettingsPage />} />
               </Route>
             </Routes>
           </React.Suspense>

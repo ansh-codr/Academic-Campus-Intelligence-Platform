@@ -8,13 +8,13 @@ const rawApiKey = import.meta.env.VITE_FIREBASE_API_KEY;
 const rawAuthDomain = import.meta.env.VITE_FIREBASE_AUTH_DOMAIN;
 const rawProjectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
 
-// Fail visibly in production if required Firebase configuration is missing or placeholder
-if (import.meta.env.PROD) {
+// Fail fast in production if required Firebase configuration is missing or placeholder
+if (import.meta.env.PROD && import.meta.env.VITE_USE_FIREBASE_EMULATOR !== 'true') {
   if (!rawApiKey || rawApiKey === 'demo-placeholder' || rawApiKey.includes('<')) {
-    console.error('CRITICAL: VITE_FIREBASE_API_KEY is missing or contains placeholder in production build.');
+    throw new Error('CRITICAL: VITE_FIREBASE_API_KEY is missing or contains placeholder in production build. Application startup halted.');
   }
   if (!rawProjectId || rawProjectId === 'solvesphere-ai-dev' || rawProjectId.includes('<')) {
-    console.error('CRITICAL: VITE_FIREBASE_PROJECT_ID is missing or targeting development project in production build.');
+    throw new Error('CRITICAL: VITE_FIREBASE_PROJECT_ID is missing or targeting placeholder project in production build. Application startup halted.');
   }
 }
 

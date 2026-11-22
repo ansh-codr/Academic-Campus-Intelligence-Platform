@@ -71,11 +71,25 @@ export const CampusService = {
       functions,
       'createComplaint'
     );
-    const res = await createComplaintFn(input as any);
-    if (res.data?.success && res.data.data) {
-      return { ticket: res.data.data, isRemote: true };
+    try {
+      const res = await createComplaintFn(input as any);
+      if (res.data?.success && res.data.data) {
+        return { ticket: res.data.data, isRemote: true };
+      }
+      throw new Error('Failed to create ticket via authenticated service.');
+    } catch (err: any) {
+      if (
+        err.code === 'functions/not-found' ||
+        err.code === 'functions/unavailable' ||
+        err.message?.includes('NOT_FOUND') ||
+        err.message?.includes('Failed to fetch')
+      ) {
+        throw new Error(
+          'Campus maintenance ticket creation is currently unserviceable because Cloud Functions are undeployed on the Spark plan. Please notify campus administration or contact estate management directly.'
+        );
+      }
+      throw err;
     }
-    throw new Error('Failed to create ticket via authenticated service.');
   },
 
   /**

@@ -3,6 +3,14 @@
 ## Access
 Authenticate with the institution-approved administrator account and verify the Firebase custom claim `role: 'ADMIN'`. The client-side route guard alone is not authorization; the backend validates claims again.
 
+## Student Enrollment Verification
+The dedicated route `/admin/enrollments` (`AdminEnrollmentsPage`) provides real-time review of student enrollment requests.
+- **Review Queue**: Review pending claims submitted by students during registration or Google profile onboarding.
+- **Approval Workflow**: Click "Approve" to transactionally reserve the enrollment number in `enrollmentNumbers/{studentId}` and update the student's profile to `VERIFIED`. The reservation strictly prevents duplicate claims across accounts.
+- **Rejection Workflow**: If roll numbers do not match institutional records, click "Reject" and record a mandatory explanation (e.g. "Roll number CS26019 is not on the active Computer Science 2026 roll"). The student is informed and can resubmit corrected details.
+- **Student Directory**: The `/admin/students` (`AdminStudentsPage`) displays all registered student accounts with their verification status, academic department, and registration timestamp.
+- **Institutional Analytics & System Settings**: `/admin/analytics` and `/admin/settings` provide live metrics and infrastructure transparency without mock placeholders.
+
 ## Academic administration
 The routes `/admin/subjects`, `/admin/topic-updates` and `/admin/resources` are wired to `AdminAcademicManagementPage`. Use approved institution course names, semester, topic status and vetted resource links. Never enter fictional profiles or pre-award quiz scores. Publish quiz questions only through the protected question-bank workflow.
 

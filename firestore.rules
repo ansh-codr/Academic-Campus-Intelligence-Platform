@@ -16,19 +16,18 @@ service cloud.firestore {
     }
 
     // Students can only update non-privileged profile fields.
-    // Initial student ID can be provisioned once during profile completion (e.g. after Google sign-in);
-    // once set, student ID, account ID, role, email, and authorization claims are strictly immutable.
+    // Authoritative studentId and enrollmentStatus can ONLY be updated by administrators
+    // or through the verified enrollment review process. Direct assignment in updateProfile is blocked.
+    // role, id, email, and authorization claims are strictly immutable for students.
     function isAllowedProfileUpdate() {
-      let canSetStudentId = !('studentId' in resource.data) || resource.data.studentId == null || resource.data.studentId == '';
-      let allowedKeys = canSetStudentId 
-        ? ['displayName', 'fullName', 'phoneNumber', 'photoURL', 'avatarUrl', 'bio', 'department', 'semester', 'studentId', 'updatedAt']
-        : ['displayName', 'fullName', 'phoneNumber', 'photoURL', 'avatarUrl', 'bio', 'department', 'semester', 'updatedAt'];
+      let allowedKeys = ['displayName', 'fullName', 'phoneNumber', 'photoURL', 'avatarUrl', 'bio', 'department', 'semester', 'updatedAt'];
       let affected = request.resource.data.diff(resource.data).affectedKeys();
       return affected.hasOnly(allowedKeys)
         && request.resource.data.role == resource.data.role
         && request.resource.data.id == resource.data.id
         && request.resource.data.email == resource.data.email
-        && (!('studentId' in resource.data) || resource.data.studentId == null || resource.data.studentId == '' || request.resource.data.studentId == resource.data.studentId)
+        && (!('studentId' in resource.data) || request.resource.data.studentId == resource.data.studentId)
+        && (!('enrollmentStatus' in resource.data) || request.resource.data.enrollmentStatus == resource.data.enrollmentStatus)
         && !('customClaims' in request.resource.data);
     }
 
@@ -42,14 +41,67 @@ service cloud.firestore {
       // User can read their own profile; admins can read all profiles
       allow read: if isOwner(userId) || isAdmin();
       // User can create their profile on registration with STUDENT role only; ID must match auth UID
+      // Initial enrollmentStatus cannot be self-asserted as VERIFIED by client; starts as INCOMPLETE or PENDING
       allow create: if isOwner(userId) 
         && request.resource.data.role == 'STUDENT'
         && request.resource.data.id == userId
-        && !('customClaims' in request.resource.data);
-      // User can update non-privileged fields only; cannot alter registered student ID, role, id, email, or emailVerified
+        && !('customClaims' in request.resource.data)
+        && (!('enrollmentStatus' in request.resource.data) || request.resource.data.enrollmentStatus in ['INCOMPLETE', 'PENDING']);
+      // User can update non-privileged fields only; cannot alter registered student ID, enrollmentStatus, role, id, or email
       allow update: if isOwner(userId) && isAllowedProfileUpdate();
-      // Admins have full access
+      // Admins have full access to update (e.g. approve enrollment, set verified studentId) and delete
       allow update, delete: if isAdmin();
+    }
+
+    // Enrollment Requests Collection (Tracks student enrollment lifecycle)
+    match /enrollmentRequests/{userId} {
+      // Student can view their own request; Admin can view all requests
+      allow read: if isOwner(userId) || isAdmin();
+
+      // Student can submit initial request with status PENDING
+      allow create: if isOwner(userId)
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'PENDING'
+        && request.resource.data.studentId is string
+        && request.resource.data.studentId.size() >= 4
+        && request.resource.data.studentId.size() <= 30
+        && request.resource.data.department is string
+        && request.resource.data.semester is int;
+
+      // Resubmission by student: allowed if existing request is REJECTED or INCOMPLETE, transitioning back to PENDING
+      allow update: if (
+        isOwner(userId)
+        && resource.data.status in ['REJECTED', 'INCOMPLETE']
+        && request.resource.data.status == 'PENDING'
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.studentId is string
+        && request.resource.data.studentId.size() >= 4
+        && request.resource.data.studentId.size() <= 30
+      ) || (
+        // Admin review: Admin can verify or reject enrollment request
+        isAdmin()
+        && request.resource.data.status in ['VERIFIED', 'REJECTED']
+      );
+
+      // Admin can delete obsolete requests
+      allow delete: if isAdmin();
+    }
+
+    // Enrollment Numbers Reservation Registry (Enforces uniqueness across student accounts)
+    match /enrollmentNumbers/{studentId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // University Roster (Institution-authorized student roll data; zero student exposure)
+    match /universityRoster/{recordId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Legacy Enrollments
+    match /enrollments/{enrollmentId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if isAdmin();
     }
 
     // Complaints / Maintenance Tickets
@@ -160,12 +212,6 @@ service cloud.firestore {
     // Complaint Embeddings Cache (Restricted strictly to Cloud Functions / Admins)
     match /complaintEmbeddings/{complaintId} {
       allow read, write: if isAdmin();
-    }
-
-    // Enrollments
-    match /enrollments/{enrollmentId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow write: if isAdmin();
     }
 
     // Campus Departments

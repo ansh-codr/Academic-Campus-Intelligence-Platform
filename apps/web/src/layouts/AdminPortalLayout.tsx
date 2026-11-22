@@ -39,6 +39,7 @@ export const AdminPortalLayout: React.FC = () => {
       title: 'OPERATIONAL COMMAND',
       items: [
         { label: 'Admin Dashboard', path: '/admin/dashboard', icon: LayoutDashboard },
+        { label: 'Enrollment Requests', path: '/admin/enrollments', icon: UserCheck, highlight: true },
         { label: 'Enrolled Students', path: '/admin/students', icon: Users },
       ],
     },
