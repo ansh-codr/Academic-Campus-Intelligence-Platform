@@ -15,18 +15,18 @@ import {
   Network,
   Activity,
   ArrowRight,
-  Info,
 } from 'lucide-react';
 
 export const AdminDashboardPage: React.FC = () => {
   const [data, setData] = useState<AdminOverviewData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    AdminService.getOverview().then((res) => {
-      setData(res);
-      setIsLoading(false);
-    });
+    AdminService.getOverview()
+      .then((res) => setData(res))
+      .catch((error) => setLoadError(error?.message || 'Unable to load live dashboard data.'))
+      .finally(() => setIsLoading(false));
   }, []);
 
   return (
@@ -56,13 +56,8 @@ export const AdminDashboardPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Explicit Admin Preview Notice */}
-      <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 flex items-start gap-3">
-        <Info className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
-        <div>
-          <strong>Phase 1 Full-Stack Notice:</strong> This administrative shell visualizes campus workload, semester enrollment cohorts, and semantic cluster suggestions. Role-based authorization policies and live database transactions will connect in Phase 2.
-        </div>
-      </div>
+      {isLoading && <p className="text-sm text-slate-400">Loading verified institutional metrics…</p>}
+      {loadError && <div role="alert" className="p-4 rounded-xl border border-rose-500/40 text-rose-300 text-sm">Unable to load live administrative data: {loadError}</div>}
 
       {/* Primary KPI Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
