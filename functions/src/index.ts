@@ -2,7 +2,6 @@ import admin from 'firebase-admin';
 import {
   createComplaint,
   reopenTicket,
-  runComplaintClustering,
   onComplaintCreatedClustering,
   recoverStaleComplaintLeases,
 } from './complaints.js';
@@ -32,7 +31,6 @@ if (!admin.apps.length) {
 export {
   createComplaint,
   reopenTicket,
-  runComplaintClustering,
   onComplaintCreatedClustering,
   recoverStaleComplaintLeases,
   updateTicketStatus,

@@ -479,6 +479,246 @@ async function claimClusteringLease(
   });
 }
 
+export interface CommitClusteringParams {
+  complaintId: string;
+  workerId: string;
+  attemptId: string;
+  clusteringMethod: 'RULE_BASED_LOCATION_PROXIMITY' | 'SEMANTIC_SIMILARITY' | 'HYBRID_SEMANTIC_PROXIMITY' | null;
+  matchedDocIds: string[];
+  coordKey?: string;
+  clusterMetadata?: {
+    similarityScore?: number;
+    confidenceBasis?: string;
+    embeddingSource?: 'GEMINI' | 'TEST';
+    modelIdentifier?: string;
+    vectorDimensions?: number;
+    textFingerprint?: string;
+    semanticExplanation?: string;
+    aiMaintenanceSummary?: string;
+  };
+}
+
+/**
+ * Atomically commits clustering results with worker fencing and cross-worker incident coordination.
+ * Guarantees that:
+ * 1. Expired workers cannot overwrite newer worker results or leases (Worker Fencing).
+ * 2. Two concurrent workers for the same room/incident coordinate on a single cluster document.
+ * 3. Cluster ticketIds and ticketCounts are dynamically reconciled without phantom increments.
+ */
+export async function commitClusteringResult(
+  db: admin.firestore.Firestore,
+  params: CommitClusteringParams
+): Promise<{ success: boolean; status: string; clusterId?: string }> {
+  const { complaintId, workerId, attemptId, clusteringMethod, matchedDocIds, coordKey, clusterMetadata } = params;
+  const complaintRef = db.collection('complaints').doc(complaintId);
+  const now = new Date().toISOString();
+
+  return db.runTransaction(async (transaction) => {
+    // 1. Worker Fencing: verify worker still owns an active, unexpired lease with this attemptId
+    const complaintSnap = await transaction.get(complaintRef);
+    if (!complaintSnap.exists) {
+      return { success: false, status: 'NOT_FOUND' };
+    }
+    const compData = complaintSnap.data()!;
+    const nowMs = Date.now();
+    const leaseExpiryMs = compData.clusteringLeaseExpiry ? new Date(compData.clusteringLeaseExpiry).getTime() : 0;
+
+    if (
+      compData.clusteringAttemptId !== attemptId ||
+      compData.clusteringLeaseOwner !== workerId ||
+      compData.clusteringStatus !== 'PROCESSING' ||
+      leaseExpiryMs <= nowMs
+    ) {
+      console.warn(
+        `[FencedWorker] Worker ${workerId} (attempt ${attemptId}) fenced out on complaint ${complaintId}. Current status: ${compData.clusteringStatus}, leaseOwner: ${compData.clusteringLeaseOwner}, attempt: ${compData.clusteringAttemptId}, expiry: ${compData.clusteringLeaseExpiry}`
+      );
+      return { success: false, status: 'FENCED_EXPIRED_LEASE' };
+    }
+
+    // 2. If unclustered individual issue
+    if (!clusteringMethod || matchedDocIds.length === 0) {
+      transaction.update(complaintRef, {
+        clusteringStatus: 'COMPLETED',
+        clusteringLeaseOwner: null,
+        clusteringLeaseExpiry: null,
+        clusteringError: null,
+        updatedAt: now,
+      });
+      return { success: true, status: 'COMPLETED' };
+    }
+
+    // 3. Cluster Coordination & Duplicate Prevention
+    const coordRef = coordKey ? db.collection('clusterCoordination').doc(coordKey) : null;
+    let targetClusterId: string | undefined = undefined;
+
+    // Check coordination doc first
+    let coordSnap: admin.firestore.DocumentSnapshot | null = null;
+    if (coordRef) {
+      coordSnap = await transaction.get(coordRef);
+      if (coordSnap.exists && coordSnap.data()?.clusterId) {
+        targetClusterId = coordSnap.data()?.clusterId;
+      }
+    }
+
+    // Check matched complaints for an existing clusterId
+    const matchedRefs = matchedDocIds.slice(0, 10).map((id) => db.collection('complaints').doc(id));
+    const matchedSnaps = await Promise.all(matchedRefs.map((r) => transaction.get(r)));
+
+    if (!targetClusterId) {
+      const matchWithCluster = matchedSnaps.find((s) => s.exists && s.data()?.clusterId);
+      if (matchWithCluster) {
+        targetClusterId = matchWithCluster.data()?.clusterId;
+      }
+    }
+
+    // Check if targetCluster exists and is active (SUGGESTED_INCIDENT or ACTIVE_INCIDENT)
+    let targetClusterSnap: admin.firestore.DocumentSnapshot | null = null;
+    if (targetClusterId) {
+      targetClusterSnap = await transaction.get(db.collection('issueClusters').doc(targetClusterId));
+      if (
+        !targetClusterSnap.exists ||
+        !['SUGGESTED_INCIDENT', 'ACTIVE_INCIDENT'].includes(targetClusterSnap.data()?.status)
+      ) {
+        targetClusterId = undefined; // Discard stale/closed cluster
+      }
+    }
+
+    if (targetClusterId && targetClusterSnap?.exists) {
+      // --- Join Existing Cluster ---
+      const clusterRef = targetClusterSnap.ref;
+      const cData = targetClusterSnap.data()!;
+      const currentTicketIds: string[] = Array.isArray(cData.ticketIds) ? cData.ticketIds : [];
+      const updatedTicketIds = Array.from(new Set([...currentTicketIds, complaintId, ...matchedDocIds]));
+
+      const clusterUpdates: Record<string, any> = {
+        ticketIds: updatedTicketIds,
+        ticketCount: updatedTicketIds.length,
+        updatedAt: now,
+      };
+
+      if (clusterMetadata?.similarityScore != null && cData.similarityScore == null) {
+        clusterUpdates.similarityScore = clusterMetadata.similarityScore;
+        clusterUpdates.clusteringMethod = clusteringMethod;
+      }
+      if (clusterMetadata?.confidenceBasis) clusterUpdates.confidenceBasis = clusterMetadata.confidenceBasis;
+      if (clusterMetadata?.semanticExplanation && !cData.semanticExplanation) {
+        clusterUpdates.semanticExplanation = clusterMetadata.semanticExplanation;
+      }
+      if (clusterMetadata?.aiMaintenanceSummary && !cData.aiMaintenanceSummary) {
+        clusterUpdates.aiMaintenanceSummary = clusterMetadata.aiMaintenanceSummary;
+      }
+
+      transaction.update(clusterRef, clusterUpdates);
+
+      // Link complaint, mark completed, release lease
+      transaction.update(complaintRef, {
+        clusterId: targetClusterId,
+        clusteringStatus: 'COMPLETED',
+        clusteringLeaseOwner: null,
+        clusteringLeaseExpiry: null,
+        clusteringError: null,
+        updatedAt: now,
+      });
+
+      // Link any matched complaints that don't have a cluster yet
+      for (const mSnap of matchedSnaps) {
+        if (mSnap.exists && !mSnap.data()?.clusterId) {
+          transaction.update(mSnap.ref, {
+            clusterId: targetClusterId,
+            updatedAt: now,
+          });
+        }
+      }
+
+      if (coordRef) {
+        transaction.set(
+          coordRef,
+          {
+            clusterId: targetClusterId,
+            category: compData.category,
+            building: compData.building,
+            room: compData.room || '',
+            status: cData.status,
+            updatedAt: now,
+          },
+          { merge: true }
+        );
+      }
+
+      return { success: true, status: 'COMPLETED', clusterId: targetClusterId };
+    } else {
+      // --- Create New Cluster ---
+      const newClusterRef = db.collection('issueClusters').doc();
+      const newClusterId = newClusterRef.id;
+      const allTicketIds = Array.from(new Set([complaintId, ...matchedDocIds]));
+
+      const newClusterRecord: Record<string, any> = {
+        id: newClusterId,
+        title: `Suggested Incident: ${compData.category.replace(/_/g, ' ')} at ${compData.building}${compData.room ? ` (${compData.room})` : ''}`,
+        category: compData.category,
+        affectedArea: `${compData.building}${compData.room ? `, Room ${compData.room}` : ''}`,
+        building: compData.building,
+        room: compData.room || '',
+        ticketCount: allTicketIds.length,
+        ticketIds: allTicketIds,
+        clusteringMethod,
+        confidenceBasis: clusterMetadata?.confidenceBasis || 'Heuristic match',
+        processingStatus: 'SUCCESS',
+        verifiedByAdmin: false,
+        status: 'SUGGESTED_INCIDENT',
+        suggestedAction: `Admin review required: confirm whether these ${allTicketIds.length} complaints share the same root cause before dispatching technicians.`,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      if (clusterMetadata?.similarityScore != null) newClusterRecord.similarityScore = clusterMetadata.similarityScore;
+      if (clusterMetadata?.embeddingSource) newClusterRecord.embeddingSource = clusterMetadata.embeddingSource;
+      if (clusterMetadata?.modelIdentifier) newClusterRecord.modelIdentifier = clusterMetadata.modelIdentifier;
+      if (clusterMetadata?.vectorDimensions) newClusterRecord.vectorDimensions = clusterMetadata.vectorDimensions;
+      if (clusterMetadata?.textFingerprint) newClusterRecord.textFingerprint = clusterMetadata.textFingerprint;
+      if (clusterMetadata?.semanticExplanation) newClusterRecord.semanticExplanation = clusterMetadata.semanticExplanation;
+      if (clusterMetadata?.aiMaintenanceSummary) newClusterRecord.aiMaintenanceSummary = clusterMetadata.aiMaintenanceSummary;
+
+      transaction.set(newClusterRef, newClusterRecord);
+
+      // Record in cluster coordination to safely synchronize concurrent workers
+      if (coordRef) {
+        transaction.set(coordRef, {
+          clusterId: newClusterId,
+          category: compData.category,
+          building: compData.building,
+          room: compData.room || '',
+          status: 'SUGGESTED_INCIDENT',
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+
+      // Link this complaint, mark completed, release lease
+      transaction.update(complaintRef, {
+        clusterId: newClusterId,
+        clusteringStatus: 'COMPLETED',
+        clusteringLeaseOwner: null,
+        clusteringLeaseExpiry: null,
+        clusteringError: null,
+        updatedAt: now,
+      });
+
+      // Link matched complaints that don't have a cluster yet
+      for (const mSnap of matchedSnaps) {
+        if (mSnap.exists && !mSnap.data()?.clusterId) {
+          transaction.update(mSnap.ref, {
+            clusterId: newClusterId,
+            updatedAt: now,
+          });
+        }
+      }
+
+      return { success: true, status: 'COMPLETED', clusterId: newClusterId };
+    }
+  });
+}
+
 /**
  * Concurrency-safe, idempotent background worker for semantic embedding generation and issue clustering.
  * Enforces atomic lease claiming, reconciliation in transactions, exact count calculation, and retry handling.
@@ -575,12 +815,36 @@ export async function runComplaintClustering(
     let semanticExplanation: string | undefined = undefined;
     let aiMaintenanceSummary: string | undefined = undefined;
 
-    if (highestSemanticMatch && newEmbedding) {
+    // 1. First check for location proximity (same building & room & category within 48h)
+    const locationMatches = candidateDocs.filter((docSnap) => {
+      const item = docSnap.data();
+      return (
+        item.building === complaint.building &&
+        String(item.room || '').trim().toLowerCase() === String(complaint.room || '').trim().toLowerCase()
+      );
+    });
+
+    if (locationMatches.length > 0) {
+      matchedDocs = locationMatches;
+      if (highestSemanticMatch && highestSemanticMatch.sameLocation) {
+        clusteringMethod = 'HYBRID_SEMANTIC_PROXIMITY';
+        similarityScore = Math.round(highestSemanticMatch.similarity * 100) / 100;
+        confidenceBasis = `Hybrid vector similarity (${similarityScore}) and verified room proximity`;
+      } else {
+        clusteringMethod = 'RULE_BASED_LOCATION_PROXIMITY';
+        similarityScore = undefined;
+        confidenceBasis = 'Heuristic identical room & category match within 48h';
+      }
+      embeddingSource = newEmbedding?.source;
+      modelIdentifier = newEmbedding?.model;
+      vectorDimensions = newEmbedding?.dimensions;
+      textFingerprint = newEmbedding?.textHash;
+      semanticExplanation = `Location proximity confirmed multiple incidents in ${complaint.building} (${complaint.room}).`;
+      aiMaintenanceSummary = `[Deterministic Maintenance Analysis] Location Cluster: Multiple incidents reported in ${complaint.building} (${complaint.room}). Requires technician inspection for localized fault.`;
+    } else if (highestSemanticMatch && newEmbedding) {
       matchedDocs = semanticMatchingDocs.map((m) => m.doc);
       similarityScore = Math.round(highestSemanticMatch.similarity * 100) / 100;
-      clusteringMethod = highestSemanticMatch.sameLocation
-        ? 'HYBRID_SEMANTIC_PROXIMITY'
-        : 'SEMANTIC_SIMILARITY';
+      clusteringMethod = 'SEMANTIC_SIMILARITY';
       embeddingSource = newEmbedding.source;
       modelIdentifier = newEmbedding.model;
       vectorDimensions = newEmbedding.dimensions;
@@ -592,190 +856,77 @@ export async function runComplaintClustering(
       aiMaintenanceSummary = newEmbedding.source === 'GEMINI'
         ? `[Gemini 2.5 Summary] Correlated ${complaint.category.replace(/_/g, ' ')} issues detected across ${complaint.building}. Submissions report related symptoms. Unified dispatch recommended.`
         : `[Deterministic Test Analysis] Correlated ${complaint.category.replace(/_/g, ' ')} issues detected across ${complaint.building}. Submissions report related symptoms.`;
-    } else {
-      // Fallback: rule-based location proximity (same building & room & category within 48h)
-      const locationMatches = candidateDocs.filter((docSnap) => {
-        const item = docSnap.data();
-        return (
-          item.building === complaint.building &&
-          String(item.room || '').trim().toLowerCase() === String(complaint.room || '').trim().toLowerCase()
-        );
-      });
-
-      if (locationMatches.length > 0) {
-        matchedDocs = locationMatches;
-        clusteringMethod = 'RULE_BASED_LOCATION_PROXIMITY';
-        similarityScore = undefined;
-        confidenceBasis = 'Heuristic identical room & category match within 48h';
-        semanticExplanation = `Rule-based location proximity heuristic matched identical category and room within 48 hours.`;
-        aiMaintenanceSummary = `[Deterministic Maintenance Analysis] Location Cluster: Multiple incidents reported in ${complaint.building} (${complaint.room}). Requires technician inspection for localized fault.`;
-      }
     }
 
-    let assignedClusterId: string | undefined = undefined;
-
-    if (matchedDocs.length > 0 && clusteringMethod) {
-      const existingClusterDoc = matchedDocs.find((docSnap) => docSnap.data().clusterId);
-
-      if (existingClusterDoc && existingClusterDoc.data().clusterId) {
-        assignedClusterId = existingClusterDoc.data().clusterId;
-        const clusterRef = db.collection('issueClusters').doc(assignedClusterId!);
-
-        // Transactional reconciliation to prevent double-counting
-        await db.runTransaction(async (transaction) => {
-          const cSnap = await transaction.get(clusterRef);
-          if (!cSnap.exists) return;
-          const cData = cSnap.data()!;
-          const currentTicketIds: string[] = Array.isArray(cData.ticketIds) ? cData.ticketIds : [];
-          const updatedTicketIds = currentTicketIds.includes(complaintId)
-            ? currentTicketIds
-            : [...currentTicketIds, complaintId];
-
-          const updateData: Record<string, any> = {
-            ticketIds: updatedTicketIds,
-            ticketCount: updatedTicketIds.length,
-            clusteringMethod,
-            confidenceBasis: confidenceBasis || 'Heuristic match',
-            processingStatus: 'SUCCESS',
-            updatedAt: now,
-          };
-          if (similarityScore != null) updateData.similarityScore = similarityScore;
-          if (embeddingSource) updateData.embeddingSource = embeddingSource;
-          if (modelIdentifier) updateData.modelIdentifier = modelIdentifier;
-          if (vectorDimensions) updateData.vectorDimensions = vectorDimensions;
-          if (textFingerprint) updateData.textFingerprint = textFingerprint;
-          if (semanticExplanation) updateData.semanticExplanation = semanticExplanation;
-          if (aiMaintenanceSummary) updateData.aiMaintenanceSummary = aiMaintenanceSummary;
-
-          transaction.update(clusterRef, updateData);
-        });
-      } else {
-        // Check if an existing suggested incident already exists for this exact category and building
-        const existingClusterQuery = await db
-          .collection('issueClusters')
-          .where('category', '==', complaint.category)
-          .where('building', '==', complaint.building)
-          .where('status', '==', 'SUGGESTED_INCIDENT')
-          .limit(5)
-          .get();
-
-        const duplicateRoomMatch = existingClusterQuery.docs.find((cDoc) => {
-          const cData = cDoc.data();
-          return String(cData.room || '').trim().toLowerCase() === String(complaint.room || '').trim().toLowerCase();
-        });
-
-        if (duplicateRoomMatch) {
-          assignedClusterId = duplicateRoomMatch.id;
-          const clusterRef = db.collection('issueClusters').doc(assignedClusterId);
-
-          await db.runTransaction(async (transaction) => {
-            const cSnap = await transaction.get(clusterRef);
-            if (!cSnap.exists) return;
-            const cData = cSnap.data()!;
-            const currentTicketIds: string[] = Array.isArray(cData.ticketIds) ? cData.ticketIds : [];
-            const updatedTicketIds = currentTicketIds.includes(complaintId)
-              ? currentTicketIds
-              : [...currentTicketIds, complaintId];
-
-            transaction.update(clusterRef, {
-              ticketIds: updatedTicketIds,
-              ticketCount: updatedTicketIds.length,
-              updatedAt: now,
-            });
-          });
-        } else {
-          const clusterRef = db.collection('issueClusters').doc();
-          assignedClusterId = clusterRef.id;
-          const allTicketIds = Array.from(new Set([complaintId, ...matchedDocs.map((d) => d.id)]));
-
-          const newClusterRecord: Record<string, any> = {
-            id: assignedClusterId,
-            title: `Suggested Incident: ${complaint.category.replace(/_/g, ' ')} at ${complaint.building}${complaint.room ? ` (${complaint.room})` : ''}`,
-            category: complaint.category,
-            affectedArea: `${complaint.building}${complaint.room ? `, Room ${complaint.room}` : ''}`,
-            building: complaint.building,
-            room: complaint.room || '',
-            ticketCount: allTicketIds.length,
-            ticketIds: allTicketIds,
-            clusteringMethod,
-            confidenceBasis: confidenceBasis || 'Heuristic match',
-            processingStatus: 'SUCCESS',
-            verifiedByAdmin: false,
-            status: 'SUGGESTED_INCIDENT',
-            suggestedAction: `Admin review required: confirm whether these ${allTicketIds.length} complaints share the same root cause before dispatching technicians.`,
-            createdAt: now,
-            updatedAt: now,
-          };
-          if (similarityScore != null) newClusterRecord.similarityScore = similarityScore;
-          if (embeddingSource) newClusterRecord.embeddingSource = embeddingSource;
-          if (modelIdentifier) newClusterRecord.modelIdentifier = modelIdentifier;
-          if (vectorDimensions) newClusterRecord.vectorDimensions = vectorDimensions;
-          if (textFingerprint) newClusterRecord.textFingerprint = textFingerprint;
-          if (semanticExplanation) newClusterRecord.semanticExplanation = semanticExplanation;
-          if (aiMaintenanceSummary) newClusterRecord.aiMaintenanceSummary = aiMaintenanceSummary;
-
-          await clusterRef.set(newClusterRecord);
-
-          // Link cluster suggestion to earlier matching tickets
-          const batch = db.batch();
-          for (const d of matchedDocs) {
-            batch.update(d.ref, { clusterId: assignedClusterId });
-          }
-          await batch.commit();
-        }
-      }
-
-      // Link complaint to cluster, mark completed, and release lease
-      await complaintRef.update({
-        clusterId: assignedClusterId,
-        clusteringStatus: 'COMPLETED',
-        clusteringLeaseOwner: null,
-        clusteringLeaseExpiry: null,
-        clusteringError: null,
-        updatedAt: now,
-      });
-    } else {
-      // Unclustered individual issue
-      await complaintRef.update({
-        clusteringStatus: 'COMPLETED',
-        clusteringLeaseOwner: null,
-        clusteringLeaseExpiry: null,
-        clusteringError: null,
-        updatedAt: now,
-      });
+    // Generate stable coordination key to prevent duplicate cluster creation across concurrent workers
+    let coordKey: string | undefined = undefined;
+    if (clusteringMethod === 'RULE_BASED_LOCATION_PROXIMITY' || clusteringMethod === 'HYBRID_SEMANTIC_PROXIMITY') {
+      const normCat = String(complaint.category || '').trim().toLowerCase();
+      const normBldg = String(complaint.building || '').trim().toLowerCase();
+      const normRoom = String(complaint.room || 'general').trim().toLowerCase();
+      coordKey = `loc_${normCat}_${normBldg}_${normRoom}`.replace(/[^a-z0-9_-]/g, '_');
+    } else if (clusteringMethod === 'SEMANTIC_SIMILARITY' && matchedDocs.length > 0) {
+      const normCat = String(complaint.category || '').trim().toLowerCase();
+      const normBldg = String(complaint.building || '').trim().toLowerCase();
+      const anchorId = [complaintId, ...matchedDocs.map((d) => d.id)].sort()[0];
+      coordKey = `sem_${normCat}_${normBldg}_${anchorId}`.replace(/[^a-z0-9_-]/g, '_');
     }
 
-    return {
-      success: true,
-      status: 'COMPLETED',
-      clusterId: assignedClusterId,
-    };
+    // Atomically commit results with fencing check and cluster coordination
+    return await commitClusteringResult(db, {
+      complaintId,
+      workerId,
+      attemptId: claim.attemptId!,
+      clusteringMethod,
+      matchedDocIds: matchedDocs.map((d) => d.id),
+      coordKey,
+      clusterMetadata: {
+        similarityScore,
+        confidenceBasis,
+        embeddingSource,
+        modelIdentifier,
+        vectorDimensions,
+        textFingerprint,
+        semanticExplanation,
+        aiMaintenanceSummary,
+      },
+    });
   } catch (err: any) {
     console.error(`[runComplaintClustering] Error processing clustering for ${complaintId}:`, err);
     const retryable = isRetryableError(err);
     const attempt = claim.complaint?.clusteringAttempt || 1;
 
-    if (retryable && attempt < 3) {
-      // Re-queue for scheduled retry worker
-      await complaintRef.update({
-        clusteringStatus: 'PENDING',
-        clusteringError: `[Retryable] ${err.message || 'Transient error'}`,
-        clusteringLeaseOwner: null,
-        clusteringLeaseExpiry: null,
-        updatedAt: now,
-      });
-      return { success: false, status: 'RETRYABLE_ERROR_SCHEDULED' };
-    } else {
-      // Permanent failure or max retries exceeded
-      await complaintRef.update({
-        clusteringStatus: 'FAILED',
-        clusteringError: `[${retryable ? 'Max Retries Exceeded' : 'Permanent Error'}] ${err.message || 'Clustering processing error'}`,
-        clusteringLeaseOwner: null,
-        clusteringLeaseExpiry: null,
-        updatedAt: now,
-      });
-      return { success: false, status: 'FAILED' };
-    }
+    // Transactional fencing check before updating on failure
+    await db.runTransaction(async (transaction) => {
+      const snap = await transaction.get(complaintRef);
+      if (!snap.exists) return;
+      const data = snap.data()!;
+      // Fence check: only update if this worker still holds the lease and attemptId
+      if (data.clusteringAttemptId !== claim.attemptId || data.clusteringLeaseOwner !== workerId) {
+        console.warn(`[FencedWorker] Worker ${workerId} fenced out during error reporting for ${complaintId}`);
+        return;
+      }
+
+      if (retryable && attempt < 3) {
+        transaction.update(complaintRef, {
+          clusteringStatus: 'PENDING',
+          clusteringError: `[Retryable] ${err.message || 'Transient error'}`,
+          clusteringLeaseOwner: null,
+          clusteringLeaseExpiry: null,
+          updatedAt: now,
+        });
+      } else {
+        transaction.update(complaintRef, {
+          clusteringStatus: 'FAILED',
+          clusteringError: `[${retryable ? 'Max Retries Exceeded' : 'Permanent Error'}] ${err.message || 'Clustering processing error'}`,
+          clusteringLeaseOwner: null,
+          clusteringLeaseExpiry: null,
+          updatedAt: now,
+        });
+      }
+    });
+
+    return { success: false, status: retryable && attempt < 3 ? 'RETRYABLE_ERROR_SCHEDULED' : 'FAILED' };
   }
 }
 

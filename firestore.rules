@@ -171,6 +171,12 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // Cluster Coordination (Internal background coordination - Admins only, client writes disabled)
+    match /clusterCoordination/{coordId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     // Public/Student Sanitized Active Campus Incidents (Contains no student IDs or individual complaint references)
     match /publicIncidents/{incidentId} {
       allow read: if isAuthenticated();
