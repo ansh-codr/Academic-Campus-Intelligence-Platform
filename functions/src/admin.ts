@@ -511,3 +511,215 @@ export const adminReviewCluster = onCall({ cors: true }, async (request) => {
     throw new HttpsError('internal', err.message || 'Failed to review cluster.');
   }
 });
+
+/**
+ * Callable Cloud Function: adminApproveEnrollment (Admin only)
+ * Atomically verifies student enrollment, reserves roll number, and updates user profile.
+ */
+export const adminApproveEnrollment = onCall({ cors: true }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required.');
+  }
+  if (request.auth.token.role !== 'ADMIN') {
+    throw new HttpsError('permission-denied', 'Only administrators can approve enrollment requests.');
+  }
+
+  const { requestId, studentId, department, semester } = request.data || {};
+  if (!requestId || typeof requestId !== 'string') {
+    throw new HttpsError('invalid-argument', 'requestId string is required.');
+  }
+  if (!studentId || typeof studentId !== 'string' || studentId.trim().length < 4 || studentId.trim().length > 30) {
+    throw new HttpsError('invalid-argument', 'Valid studentId (4-30 characters) is required.');
+  }
+  if (!department || typeof department !== 'string' || !department.trim()) {
+    throw new HttpsError('invalid-argument', 'department is required.');
+  }
+  const sem = Number(semester);
+  if (!Number.isInteger(sem) || sem < 1 || sem > 12) {
+    throw new HttpsError('invalid-argument', 'Valid semester (1-12) is required.');
+  }
+
+  const cleanStudentId = studentId.trim();
+  const cleanDept = department.trim();
+  const db = admin.firestore();
+  const adminUid = request.auth.uid;
+  const adminEmail = request.auth.token.email || request.auth.token.name || 'Administrator';
+  const now = new Date().toISOString();
+
+  const reservationRef = db.collection('enrollmentNumbers').doc(cleanStudentId);
+  const requestRef = db.collection('enrollmentRequests').doc(requestId);
+  const userRef = db.collection('users').doc(requestId);
+
+  try {
+    return await db.runTransaction(async (transaction) => {
+      // 1. Check enrollment request
+      const reqSnap = await transaction.get(requestRef);
+      if (!reqSnap.exists) {
+        throw new HttpsError('not-found', `Enrollment request for user ${requestId} does not exist.`);
+      }
+      const reqData = reqSnap.data()!;
+      if (reqData.status === 'VERIFIED') {
+        throw new HttpsError('failed-precondition', 'This enrollment request is already verified.');
+      }
+      if (reqData.status !== 'PENDING') {
+        throw new HttpsError('failed-precondition', `Cannot approve request with current status "${reqData.status}".`);
+      }
+
+      // 2. Check reservation registry for roll number uniqueness
+      const reservationSnap = await transaction.get(reservationRef);
+      if (reservationSnap.exists) {
+        const resData = reservationSnap.data();
+        if (resData?.userId !== requestId) {
+          throw new HttpsError(
+            'already-exists',
+            `Enrollment number "${cleanStudentId}" is already officially registered to another student account.`
+          );
+        }
+      }
+
+      // 3. Check user profile exists
+      const userSnap = await transaction.get(userRef);
+      if (!userSnap.exists) {
+        throw new HttpsError('not-found', `User profile ${requestId} does not exist.`);
+      }
+
+      // 4. Commit atomic updates
+      transaction.set(reservationRef, {
+        studentId: cleanStudentId,
+        userId: requestId,
+        verifiedAt: now,
+        verifiedBy: adminEmail,
+      });
+
+      transaction.update(requestRef, {
+        studentId: cleanStudentId,
+        department: cleanDept,
+        semester: sem,
+        status: 'VERIFIED',
+        reviewedAt: now,
+        reviewedBy: adminEmail,
+        rejectionReason: null,
+        updatedAt: now,
+      });
+
+      transaction.update(userRef, {
+        studentId: cleanStudentId,
+        enrollmentStatus: 'VERIFIED',
+        department: cleanDept,
+        semester: sem,
+        rejectionReason: null,
+        updatedAt: now,
+      });
+
+      // Audit log entry
+      const auditRef = db.collection('adminAuditLogs').doc();
+      transaction.set(auditRef, {
+        action: 'APPROVE_ENROLLMENT',
+        requestId,
+        studentId: cleanStudentId,
+        adminUid,
+        adminEmail,
+        timestamp: now,
+      });
+
+      return {
+        success: true,
+        message: `Enrollment number "${cleanStudentId}" successfully verified and reserved.`,
+      };
+    });
+  } catch (err: any) {
+    if (err instanceof HttpsError) throw err;
+    throw new HttpsError('internal', err.message || 'Failed to approve enrollment request.');
+  }
+});
+
+/**
+ * Callable Cloud Function: adminRejectEnrollment (Admin only)
+ * Rejects an enrollment request with a mandatory explanation and frees any pending reservation.
+ */
+export const adminRejectEnrollment = onCall({ cors: true }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentication required.');
+  }
+  if (request.auth.token.role !== 'ADMIN') {
+    throw new HttpsError('permission-denied', 'Only administrators can reject enrollment requests.');
+  }
+
+  const { requestId, rejectionReason } = request.data || {};
+  if (!requestId || typeof requestId !== 'string') {
+    throw new HttpsError('invalid-argument', 'requestId string is required.');
+  }
+  if (!rejectionReason || typeof rejectionReason !== 'string' || !rejectionReason.trim()) {
+    throw new HttpsError('invalid-argument', 'rejectionReason is required.');
+  }
+  const cleanReason = rejectionReason.trim();
+  if (cleanReason.length > 500) {
+    throw new HttpsError('invalid-argument', 'rejectionReason cannot exceed 500 characters.');
+  }
+
+  const db = admin.firestore();
+  const adminUid = request.auth.uid;
+  const adminEmail = request.auth.token.email || request.auth.token.name || 'Administrator';
+  const now = new Date().toISOString();
+
+  const requestRef = db.collection('enrollmentRequests').doc(requestId);
+  const userRef = db.collection('users').doc(requestId);
+
+  try {
+    return await db.runTransaction(async (transaction) => {
+      const reqSnap = await transaction.get(requestRef);
+      if (!reqSnap.exists) {
+        throw new HttpsError('not-found', `Enrollment request for user ${requestId} does not exist.`);
+      }
+      const reqData = reqSnap.data()!;
+
+      const userSnap = await transaction.get(userRef);
+      if (!userSnap.exists) {
+        throw new HttpsError('not-found', `User profile ${requestId} does not exist.`);
+      }
+
+      // If roll number was reserved for this user, release it
+      if (reqData.studentId) {
+        const reservationRef = db.collection('enrollmentNumbers').doc(reqData.studentId.trim());
+        const resSnap = await transaction.get(reservationRef);
+        if (resSnap.exists && resSnap.data()?.userId === requestId) {
+          transaction.delete(reservationRef);
+        }
+      }
+
+      transaction.update(requestRef, {
+        status: 'REJECTED',
+        rejectionReason: cleanReason,
+        reviewedAt: now,
+        reviewedBy: adminEmail,
+        updatedAt: now,
+      });
+
+      transaction.update(userRef, {
+        enrollmentStatus: 'REJECTED',
+        rejectionReason: cleanReason,
+        updatedAt: now,
+      });
+
+      // Audit log entry
+      const auditRef = db.collection('adminAuditLogs').doc();
+      transaction.set(auditRef, {
+        action: 'REJECT_ENROLLMENT',
+        requestId,
+        studentId: reqData.studentId || null,
+        rejectionReason: cleanReason,
+        adminUid,
+        adminEmail,
+        timestamp: now,
+      });
+
+      return {
+        success: true,
+        message: 'Enrollment request rejected.',
+      };
+    });
+  } catch (err: any) {
+    if (err instanceof HttpsError) throw err;
+    throw new HttpsError('internal', err.message || 'Failed to reject enrollment request.');
+  }
+});

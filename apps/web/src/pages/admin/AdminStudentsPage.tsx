@@ -175,7 +175,7 @@ export const AdminStudentsPage: React.FC = () => {
                   <td className="px-4 py-3.5">
                     <Badge
                       variant={
-                        s.studentId || s.enrollmentStatus === 'VERIFIED'
+                        s.enrollmentStatus === 'VERIFIED'
                           ? 'green'
                           : s.enrollmentStatus === 'PENDING'
                           ? 'amber'
@@ -184,9 +184,7 @@ export const AdminStudentsPage: React.FC = () => {
                           : 'slate'
                       }
                     >
-                      {s.studentId || s.enrollmentStatus === 'VERIFIED'
-                        ? 'VERIFIED'
-                        : s.enrollmentStatus || 'INCOMPLETE'}
+                      {s.enrollmentStatus || 'INCOMPLETE'}
                     </Badge>
                   </td>
                   <td className="px-5 py-3.5 text-slate-400 font-mono text-[11px]">

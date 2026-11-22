@@ -291,9 +291,18 @@ export const createComplaint = onCall(
     const userDoc = await db.collection('users').doc(uid).get();
     if (userDoc.exists) {
       const userData = userDoc.data();
+      // Enforce verified student enrollment for official complaint submissions
+      if (request.auth.token.role !== 'ADMIN' && userData?.enrollmentStatus !== 'VERIFIED') {
+        throw new HttpsError(
+          'permission-denied',
+          'Official campus maintenance complaint submission requires verified institutional enrollment. Your verification status is pending or incomplete.'
+        );
+      }
       if (userData?.fullName) {
         submitterName = `${userData.fullName} (${userData.studentId || ''})`.trim();
       }
+    } else if (request.auth.token.role !== 'ADMIN') {
+      throw new HttpsError('permission-denied', 'Student user profile not found. Please complete profile registration.');
     }
 
     const now = new Date().toISOString();

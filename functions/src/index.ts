@@ -11,6 +11,8 @@ import {
   adminManageDepartment,
   adminManageClub,
   adminReviewCluster,
+  adminApproveEnrollment,
+  adminRejectEnrollment,
 } from './admin.js';
 import {
   getQuizQuestions,
@@ -38,6 +40,8 @@ export {
   adminManageDepartment,
   adminManageClub,
   adminReviewCluster,
+  adminApproveEnrollment,
+  adminRejectEnrollment,
   getQuizQuestions,
   submitQuiz,
   adminSaveQuiz,

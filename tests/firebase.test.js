@@ -102,6 +102,7 @@ async function runTests() {
     role: 'STUDENT',
     department: 'Computer Science & AI',
     semester: 1,
+    enrollmentStatus: 'VERIFIED',
     createdAt: new Date().toISOString(),
   });
 
@@ -3118,7 +3119,25 @@ async function runTests() {
   // 3. Verify Google sign-in grants NO admin claim by default (must be STUDENT role)
   assert.strictEqual(googleToken.claims.role || 'STUDENT', 'STUDENT', 'Google sign-in must not grant admin custom claim');
 
-  // 4. Initial profile created without studentId (simulating first-time Google sign-in)
+  // 4. Negative test: student CANNOT create user profile with self-asserted 'VERIFIED' status
+  await assert.rejects(
+    async () => {
+      await setDoc(doc(clientDb, 'users', googleUid), {
+        id: googleUid,
+        email: googleEmail,
+        fullName: 'Priyanshu Google Student',
+        role: 'STUDENT',
+        emailVerified: true,
+        enrollmentStatus: 'VERIFIED', // FORBIDDEN: self-verification on profile creation
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission|denied/i.test(err.message),
+    'Student attempting to create user profile with enrollmentStatus VERIFIED must be rejected with permission-denied'
+  );
+
+  // 5. Initial profile created without studentId (simulating first-time Google sign-in)
   const initialGoogleProfile = {
     id: googleUid,
     email: googleEmail,
@@ -3131,7 +3150,7 @@ async function runTests() {
   };
   await setDoc(doc(clientDb, 'users', googleUid), initialGoogleProfile);
 
-  // 5. Security Rule check: student CANNOT self-assert or directly write authoritative studentId to users/{uid}
+  // 6. Security Rule check: student CANNOT self-assert or directly write authoritative studentId to users/{uid}
   await assert.rejects(
     async () => {
       await updateDoc(doc(clientDb, 'users', googleUid), {
@@ -3143,7 +3162,7 @@ async function runTests() {
     'Direct client assignment of authoritative studentId in users collection must be rejected with permission-denied'
   );
 
-  // 6. Security Rule check: student CANNOT self-elevate enrollmentStatus to VERIFIED
+  // 7. Security Rule check: student CANNOT self-elevate enrollmentStatus to VERIFIED
   await assert.rejects(
     async () => {
       await updateDoc(doc(clientDb, 'users', googleUid), {
@@ -3155,7 +3174,7 @@ async function runTests() {
     'Student attempting to self-verify enrollmentStatus must be rejected with permission-denied'
   );
 
-  // 7. Security Rule check: student CANNOT elevate role to ADMIN
+  // 8. Security Rule check: student CANNOT elevate role to ADMIN
   await assert.rejects(
     async () => {
       await updateDoc(doc(clientDb, 'users', googleUid), {
@@ -3167,7 +3186,64 @@ async function runTests() {
     'Attempt to escalate role to ADMIN must be rejected with permission-denied'
   );
 
-  // 8. Permitted profile update: non-privileged fields (department, semester, bio) succeed
+  // 9. Negative authorization test: Unverified student CANNOT submit campus complaints
+  const unverifiedComplaintCallable = httpsCallable(clientFunctions, 'createComplaint');
+  await assert.rejects(
+    async () => {
+      await unverifiedComplaintCallable({
+        title: 'Unverified Student Complaint',
+        category: 'GENERAL_INFRASTRUCTURE',
+        building: 'Academic Block A',
+        floor: '2nd Floor',
+        room: 'Room 201',
+        description: 'Testing that unverified student complaint submissions are blocked by Cloud Functions.',
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /verified institutional enrollment|permission/i.test(err.message),
+    'Unverified student attempting to invoke createComplaint must be rejected with permission-denied'
+  );
+
+  // 10. Negative authorization test: Unverified student CANNOT submit continuous assessment quizzes
+  const unverifiedQuizCallable = httpsCallable(clientFunctions, 'submitQuiz');
+  await assert.rejects(
+    async () => {
+      await unverifiedQuizCallable({
+        quizId: quizId,
+        answers: [],
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /verified institutional student enrollment|permission/i.test(err.message),
+    'Unverified student attempting to invoke submitQuiz must be rejected with permission-denied'
+  );
+
+  // 11. Negative authorization test: Student CANNOT write directly to enrollmentNumbers registry
+  await assert.rejects(
+    async () => {
+      await setDoc(doc(clientDb, 'enrollmentNumbers', 'STU-2026-CS-099'), {
+        studentId: 'STU-2026-CS-099',
+        userId: googleUid,
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission|denied/i.test(err.message),
+    'Direct client write to enrollmentNumbers collection must be rejected with permission-denied'
+  );
+
+  // 12. Negative authorization test: Student CANNOT invoke adminApproveEnrollment or adminRejectEnrollment
+  const studentApproveCallable = httpsCallable(clientFunctions, 'adminApproveEnrollment');
+  await assert.rejects(
+    async () => {
+      await studentApproveCallable({
+        requestId: googleUid,
+        studentId: 'STU-2026-CS-099',
+        department: 'Computer Science & Engineering',
+        semester: 2,
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /administrator|permission/i.test(err.message),
+    'Student attempting to invoke adminApproveEnrollment must be rejected with permission-denied'
+  );
+
+  // 13. Permitted profile update: non-privileged fields (department, semester, bio) succeed
   await updateDoc(doc(clientDb, 'users', googleUid), {
     department: 'Computer Science & Engineering',
     semester: 2,
@@ -3178,7 +3254,7 @@ async function runTests() {
   assert.strictEqual(partialProfileSnap.data().department, 'Computer Science & Engineering');
   assert.strictEqual(partialProfileSnap.data().semester, 2);
 
-  console.log(`✓ Test 54 Passed: Google user provisioning, direct student ID self-assertion blocked, and permitted profile fields updated.`);
+  console.log(`✓ Test 54 Passed: Google user provisioning, self-verification rejection, and unverified service blocks verified.`);
 
   // --------------------------------------------------------------------------
   // TEST 55: Student Enrollment Request Submission & Self-Approval Prevention
@@ -3249,7 +3325,7 @@ async function runTests() {
   console.log(`✓ Test 56 Passed: Institutional university roster completely shielded from student reads & writes.`);
 
   // --------------------------------------------------------------------------
-  // TEST 57: Admin Review, Approval & Uniqueness Reservation
+  // TEST 57: Admin Review, Callable Function Approval, Uniqueness & Feature Unblocking
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 57] Verifying Admin Enrollment Approval & Uniqueness Reservation...`);
   // Sign in as Administrator
@@ -3267,31 +3343,31 @@ async function runTests() {
 
   const adminClientDb = getClientFirestore(adminClientApp);
   connectClientFirestoreEmulator(adminClientDb, '127.0.0.1', 8080);
+  const adminClientFunctions = getClientFunctions(adminClientApp);
+  connectClientFunctionsEmulator(adminClientFunctions, '127.0.0.1', 5001);
 
-  // Admin approves enrollment: reserves enrollmentNumbers/STU-2026-CS-099, updates request & user doc
+  // Negative test: Client cannot directly write to enrollmentNumbers even if logged in as Admin (writes restricted to Cloud Functions Admin SDK)
   const targetId = 'STU-2026-CS-099';
-  const approvalNow = new Date().toISOString();
+  await assert.rejects(
+    async () => {
+      await setDoc(doc(adminClientDb, 'enrollmentNumbers', targetId), {
+        studentId: targetId,
+        userId: googleUid,
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission|denied/i.test(err.message),
+    'Direct client write to enrollmentNumbers must be blocked for all client connections'
+  );
 
-  await setDoc(doc(adminClientDb, 'enrollmentNumbers', targetId), {
+  // Admin approves enrollment using trusted callable Cloud Function
+  const adminApproveCallable = httpsCallable(adminClientFunctions, 'adminApproveEnrollment');
+  const approveRes = await adminApproveCallable({
+    requestId: googleUid,
     studentId: targetId,
-    userId: googleUid,
-    verifiedAt: approvalNow,
-    verifiedBy: adminEmail,
+    department: 'Computer Science & Engineering',
+    semester: 2,
   });
-
-  await updateDoc(doc(adminClientDb, 'enrollmentRequests', googleUid), {
-    status: 'VERIFIED',
-    reviewedAt: approvalNow,
-    reviewedBy: adminEmail,
-    rejectionReason: null,
-  });
-
-  await updateDoc(doc(adminClientDb, 'users', googleUid), {
-    studentId: targetId,
-    enrollmentStatus: 'VERIFIED',
-    rejectionReason: null,
-    updatedAt: approvalNow,
-  });
+  assert.ok(approveRes.data?.success, 'adminApproveEnrollment must return success');
 
   // Verify student profile now holds verified student ID and status
   const verifiedUserSnap = await getDoc(doc(clientDb, 'users', googleUid));
@@ -3301,10 +3377,39 @@ async function runTests() {
   const verifiedReqSnap = await getDoc(doc(clientDb, 'enrollmentRequests', googleUid));
   assert.strictEqual(verifiedReqSnap.data().status, 'VERIFIED');
   assert.strictEqual(verifiedReqSnap.data().reviewedBy, adminEmail);
-  console.log(`✓ Test 57 Passed: Admin enrollment approval and reservation verified.`);
+
+  // Verify audit log entry in adminAuditLogs
+  const auditSnap = await db.collection('adminAuditLogs')
+    .where('action', '==', 'APPROVE_ENROLLMENT')
+    .where('requestId', '==', googleUid)
+    .get();
+  assert.strictEqual(auditSnap.empty, false, 'Audit log must record enrollment approval');
+  assert.strictEqual(auditSnap.docs[0].data().studentId, targetId);
+
+  // Post-verification feature unblocking test: Google student now CAN submit complaints & quizzes
+  const verifiedComplaintCallable = httpsCallable(clientFunctions, 'createComplaint');
+  const googleCompRes = await verifiedComplaintCallable({
+    title: 'Verified Student Air Conditioner Issue',
+    category: 'AC_HVAC',
+    building: 'Engineering Block 2',
+    floor: '3rd Floor',
+    room: 'Lab 304',
+    description: 'AC unit in Lab 304 is leaking water onto the student work desks.',
+  });
+  assert.ok(googleCompRes.data?.success, 'Verified student must now be permitted to submit complaints');
+  assert.match(googleCompRes.data?.data?.referenceNumber, /^SS-2026-\d{4}$/);
+
+  const verifiedQuizCallable = httpsCallable(clientFunctions, 'submitQuiz');
+  const googleQuizRes = await verifiedQuizCallable({
+    quizId: quizId,
+    answers: [{ questionId: 'q-math-1', selectedOptionIndex: 1 }],
+  });
+  assert.ok(googleQuizRes.data?.success, 'Verified student must now be permitted to take quizzes');
+
+  console.log(`✓ Test 57 Passed: Admin enrollment approval, audit trail, and student service unblocking verified.`);
 
   // --------------------------------------------------------------------------
-  // TEST 58: Duplicate Enrollment Number Collision Prevention
+  // TEST 58: Duplicate Roll Number Collision & Transaction Safety
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 58] Verifying Duplicate Enrollment Number Prevention...`);
   // Create second student
@@ -3331,7 +3436,7 @@ async function runTests() {
   const dupClientDb = getClientFirestore(dupClientApp);
   connectClientFirestoreEmulator(dupClientDb, '127.0.0.1', 8080);
 
-  // Student 2 attempts to claim the exact same studentId
+  // Student 2 attempts to claim the exact same studentId in enrollmentRequests
   await setDoc(doc(dupClientDb, 'users', secondUid), {
     id: secondUid,
     email: secondStudentEmail,
@@ -3354,56 +3459,110 @@ async function runTests() {
     submittedAt: new Date().toISOString(),
   });
 
-  // Admin approval transaction checks enrollmentNumbers reservation
-  const reservationSnap = await getDoc(doc(adminClientDb, 'enrollmentNumbers', targetId));
-  assert.ok(reservationSnap.exists(), 'Enrollment reservation must exist');
-  assert.strictEqual(reservationSnap.data().userId, googleUid, 'Reservation belongs to first student');
+  // Admin approval transaction checks enrollmentNumbers reservation and rejects collision
+  await assert.rejects(
+    async () => {
+      await adminApproveCallable({
+        requestId: secondUid,
+        studentId: targetId, // Colliding ID
+        department: 'Civil Engineering',
+        semester: 1,
+      });
+    },
+    (err) => err.code?.includes('already-exists') || /already.*registered/i.test(err.message),
+    'Admin approval with already reserved roll number must be rejected with already-exists'
+  );
 
-  // Attempt to re-reserve for second student must detect collision
-  let collisionDetected = false;
-  if (reservationSnap.exists() && reservationSnap.data().userId !== secondUid) {
-    collisionDetected = true;
-  }
-  assert.strictEqual(collisionDetected, true, 'Reservation collision must be detected');
-  console.log(`✓ Test 58 Passed: Duplicate enrollment number collision detected and prevented.`);
+  // Negative test: Retrying approval on an already VERIFIED student request must be rejected
+  await assert.rejects(
+    async () => {
+      await adminApproveCallable({
+        requestId: googleUid,
+        studentId: targetId,
+        department: 'Computer Science & Engineering',
+        semester: 2,
+      });
+    },
+    (err) => err.code?.includes('failed-precondition') || /already verified/i.test(err.message),
+    'Approving an already verified enrollment request must be rejected'
+  );
+
+  console.log(`✓ Test 58 Passed: Duplicate enrollment number collision detected and atomic rejection verified.`);
 
   // --------------------------------------------------------------------------
-  // TEST 59: Admin Rejection with Required Reason & Student Resubmission
+  // TEST 59: Admin Rejection Flow, Audit Log & Student Resubmission Integrity
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 59] Verifying Admin Rejection Flow & Student Resubmission...`);
-  const rejectionReason = 'Enrollment Number CS26019 is already registered to another active student account.';
-  const rejectNow = new Date().toISOString();
+  const rejectionReason = 'Enrollment Number STU-2026-CS-099 is already registered to another active student account.';
 
-  await updateDoc(doc(adminClientDb, 'enrollmentRequests', secondUid), {
-    status: 'REJECTED',
-    rejectionReason: rejectionReason,
-    reviewedAt: rejectNow,
-    reviewedBy: adminEmail,
+  const adminRejectCallable = httpsCallable(adminClientFunctions, 'adminRejectEnrollment');
+  const rejectEnrollmentRes = await adminRejectCallable({
+    requestId: secondUid,
+    rejectionReason,
   });
+  assert.ok(rejectEnrollmentRes.data?.success, 'adminRejectEnrollment must return success');
 
-  await updateDoc(doc(adminClientDb, 'users', secondUid), {
-    enrollmentStatus: 'REJECTED',
-    rejectionReason: rejectionReason,
-    updatedAt: rejectNow,
-  });
+  // Verify rejection logged to audit log
+  const rejectAuditSnap = await db.collection('adminAuditLogs')
+    .where('action', '==', 'REJECT_ENROLLMENT')
+    .where('requestId', '==', secondUid)
+    .get();
+  assert.strictEqual(rejectAuditSnap.empty, false, 'Audit log must record enrollment rejection');
 
   // Second student reads rejection reason
   const rejectedUserSnap = await getDoc(doc(dupClientDb, 'users', secondUid));
   assert.strictEqual(rejectedUserSnap.data().enrollmentStatus, 'REJECTED');
   assert.strictEqual(rejectedUserSnap.data().rejectionReason, rejectionReason);
 
-  // Second student resubmits with corrected unique enrollment number
+  // Negative test: Student CANNOT wipe or forge reviewedBy or set status to VERIFIED on resubmission
+  await assert.rejects(
+    async () => {
+      await updateDoc(doc(dupClientDb, 'enrollmentRequests', secondUid), {
+        studentId: 'STU-2026-CV-044',
+        status: 'VERIFIED', // FORBIDDEN: self-verification
+        reviewedBy: 'Forged Admin',
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission|denied/i.test(err.message),
+    'Student attempting to forge review fields or self-verify on resubmission must be rejected'
+  );
+
+  // Second student resubmits with corrected unique enrollment number as PENDING
   const correctedStudentId = 'STU-2026-CV-044';
   await updateDoc(doc(dupClientDb, 'enrollmentRequests', secondUid), {
     studentId: correctedStudentId,
+    department: 'Civil Engineering',
+    semester: 1,
+    fullName: 'Duplicate Student Claimer',
     status: 'PENDING',
     submittedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   });
 
   const resubmittedSnap = await getDoc(doc(dupClientDb, 'enrollmentRequests', secondUid));
   assert.strictEqual(resubmittedSnap.data().status, 'PENDING');
   assert.strictEqual(resubmittedSnap.data().studentId, correctedStudentId);
-  console.log(`✓ Test 59 Passed: Admin rejection records reason, student receives explanation and resubmits.`);
+  // Audit fields from previous rejection must be preserved
+  assert.strictEqual(resubmittedSnap.data().reviewedBy, adminEmail);
+  assert.strictEqual(resubmittedSnap.data().rejectionReason, rejectionReason);
+
+  // --------------------------------------------------------------------------
+  // TEST 60: Approval of Resubmitted Enrollment Request
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 60] Verifying Approval of Corrected Resubmitted Request...`);
+  const secondApproveRes = await adminApproveCallable({
+    requestId: secondUid,
+    studentId: correctedStudentId,
+    department: 'Civil Engineering',
+    semester: 1,
+  });
+  assert.ok(secondApproveRes.data?.success, 'Approval of resubmitted request must succeed');
+
+  const secondApprovedUser = await getDoc(doc(dupClientDb, 'users', secondUid));
+  assert.strictEqual(secondApprovedUser.data().enrollmentStatus, 'VERIFIED');
+  assert.strictEqual(secondApprovedUser.data().studentId, correctedStudentId);
+
+  console.log(`✓ Test 59 & 60 Passed: Admin rejection records reason, student receives explanation, resubmits, and gets approved.`);
 
   // Clean up: sign out
   await signOut(clientAuth);
@@ -3411,7 +3570,7 @@ async function runTests() {
   await signOut(adminClientAuth);
 
   console.log(`\n======================================================`);
-  console.log(`  ALL 59 INTEGRATION, AI & SECURITY TESTS PASSED!`);
+  console.log(`  ALL 60 INTEGRATION, AI & SECURITY TESTS PASSED!`);
   console.log(`======================================================\n`);
   process.exit(0);
 }

@@ -119,9 +119,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (userDocSnap.exists()) {
           const raw = userDocSnap.data();
-          const finalStatus: EnrollmentStatus = raw.studentId && (raw.enrollmentStatus === 'VERIFIED' || !raw.enrollmentStatus)
+          const finalStatus: EnrollmentStatus = customRole === 'ADMIN'
             ? 'VERIFIED'
-            : (raw.enrollmentStatus || enrollmentStatus);
+            : (raw.enrollmentStatus === 'VERIFIED' ? 'VERIFIED' : (raw.enrollmentStatus || enrollmentStatus || 'INCOMPLETE'));
 
           profileData = {
             id: firebaseUser.uid,
@@ -130,7 +130,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             studentId: raw.studentId,
             role: customRole,
             emailVerified: firebaseUser.emailVerified,
-            enrollmentStatus: customRole === 'ADMIN' ? 'VERIFIED' : finalStatus,
+            enrollmentStatus: finalStatus,
             rejectionReason: raw.rejectionReason || rejectionReason,
             department: raw.department,
             semester: raw.semester,
@@ -241,7 +241,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           email: refreshed.email || data.email,
           role: customRole,
           emailVerified: refreshed.emailVerified,
-          enrollmentStatus: data.studentId ? 'VERIFIED' : (data.enrollmentStatus || currentEnrollment),
+          enrollmentStatus: customRole === 'ADMIN'
+            ? 'VERIFIED'
+            : (data.enrollmentStatus === 'VERIFIED' ? 'VERIFIED' : (data.enrollmentStatus || currentEnrollment || 'INCOMPLETE')),
         } as UserProfile);
       } else {
         setUser((prev) => (prev ? { ...prev, emailVerified: refreshed.emailVerified, role: customRole } : null));
@@ -368,9 +370,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const userDocSnap = await getDoc(userDocRef);
         if (userDocSnap.exists()) {
           const raw = userDocSnap.data();
-          const finalStatus: EnrollmentStatus = raw.studentId && (raw.enrollmentStatus === 'VERIFIED' || !raw.enrollmentStatus)
+          const finalStatus: EnrollmentStatus = userRole === 'ADMIN'
             ? 'VERIFIED'
-            : (raw.enrollmentStatus || enrollmentStatus);
+            : (raw.enrollmentStatus === 'VERIFIED' ? 'VERIFIED' : (raw.enrollmentStatus || enrollmentStatus || 'INCOMPLETE'));
 
           profile = {
             ...raw,
@@ -379,7 +381,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             fullName: raw.fullName || cred.user.displayName || 'University User',
             emailVerified: cred.user.emailVerified,
             role: userRole,
-            enrollmentStatus: userRole === 'ADMIN' ? 'VERIFIED' : finalStatus,
+            enrollmentStatus: finalStatus,
             rejectionReason: raw.rejectionReason || rejectionReason,
           } as UserProfile;
         } else {
@@ -471,9 +473,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (userDocSnap.exists()) {
         const raw = userDocSnap.data();
-        const finalStatus: EnrollmentStatus = raw.studentId && (raw.enrollmentStatus === 'VERIFIED' || !raw.enrollmentStatus)
+        const finalStatus: EnrollmentStatus = customRole === 'ADMIN'
           ? 'VERIFIED'
-          : (raw.enrollmentStatus || enrollmentStatus);
+          : (raw.enrollmentStatus === 'VERIFIED' ? 'VERIFIED' : (raw.enrollmentStatus || enrollmentStatus || 'INCOMPLETE'));
 
         profile = {
           ...raw,
@@ -482,7 +484,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           fullName: raw.fullName || firebaseUser.displayName || 'University User',
           role: customRole,
           emailVerified: firebaseUser.emailVerified,
-          enrollmentStatus: customRole === 'ADMIN' ? 'VERIFIED' : finalStatus,
+          enrollmentStatus: finalStatus,
           rejectionReason: raw.rejectionReason || rejectionReason,
           createdAt: raw.createdAt || firebaseUser.metadata.creationTime || new Date().toISOString(),
         } as UserProfile;
@@ -551,23 +553,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const cleanName = (data.fullName || user.fullName || auth.currentUser.displayName || 'University Student').trim();
     const now = new Date().toISOString();
 
-    const requestPayload: EnrollmentRequest = {
-      id: user.id,
-      userId: user.id,
-      fullName: cleanName,
-      email: user.email || auth.currentUser.email || '',
-      studentId: cleanStudentId,
-      department: cleanDept,
-      semester: data.semester,
-      status: 'PENDING',
-      submittedAt: now,
-      reviewedAt: null,
-      reviewedBy: null,
-      rejectionReason: null,
-    };
+    const reqDocRef = doc(db, 'enrollmentRequests', user.id);
+    const reqSnap = await getDoc(reqDocRef);
 
-    // 1. Submit to enrollmentRequests/{uid}
-    await setDoc(doc(db, 'enrollmentRequests', user.id), requestPayload);
+    if (reqSnap.exists()) {
+      // Controlled update preserving administrative audit fields (reviewedAt, reviewedBy, rejectionReason)
+      await updateDoc(reqDocRef, {
+        fullName: cleanName,
+        studentId: cleanStudentId,
+        department: cleanDept,
+        semester: data.semester,
+        status: 'PENDING',
+        submittedAt: now,
+        updatedAt: now,
+      });
+    } else {
+      // Initial creation
+      await setDoc(reqDocRef, {
+        id: user.id,
+        userId: user.id,
+        fullName: cleanName,
+        email: user.email || auth.currentUser.email || '',
+        studentId: cleanStudentId,
+        department: cleanDept,
+        semester: data.semester,
+        status: 'PENDING',
+        submittedAt: now,
+        updatedAt: now,
+      });
+    }
 
     // 2. Update non-privileged user profile fields (without setting verified studentId)
     const userDocRef = doc(db, 'users', user.id);

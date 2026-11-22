@@ -98,8 +98,11 @@ SolveSphere AI supports **Continue with Google** via the Firebase JavaScript SDK
    - Submitting routes the request to `enrollmentRequests/{uid}` with `status: 'PENDING'`.
 4. **Student ID Immutability & Protection**:
    - `firestore.rules` prevents direct client assignment of authoritative `studentId` in `updateProfile`.
-   - Students cannot self-elevate `enrollmentStatus` to `VERIFIED`.
-   - Only authorized administrators on `/admin/enrollments` can confirm verification.
+   - Students cannot self-elevate `enrollmentStatus` to `VERIFIED` on create or update.
+   - Client writes to `enrollmentNumbers` registry are strictly blocked (`allow write: if false;`).
+   - Only authorized administrators invoking trusted callable Cloud Functions (`adminApproveEnrollment`, `adminRejectEnrollment`) can confirm or reject verification via atomic transactions.
+   - Student resubmissions preserve all previous administrative review audit fields (`reviewedBy`, `reviewedAt`, `rejectionReason`).
+   - Student-facing Cloud Functions (`createComplaint`, `submitQuiz`) enforce verified student enrollment before permitting official submissions.
 5. **Admin Privilege Isolation**:
    - Google Sign-In **never** confers administrative authority.
    - Administrative command requires trusted, cryptographically signed custom claim `{ role: 'ADMIN' }` provisioned via server-side Admin SDK (`scripts/bootstrap-admin.js`).

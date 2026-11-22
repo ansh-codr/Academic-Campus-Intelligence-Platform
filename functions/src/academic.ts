@@ -88,7 +88,16 @@ export const submitQuiz = onCall({ cors: true }, async (request) => {
   let studentName = request.auth.token.name || request.auth.token.email || 'Student';
   const userDoc = await db.collection('users').doc(uid).get();
   if (userDoc.exists) {
-    studentName = userDoc.data()?.fullName || studentName;
+    const userData = userDoc.data();
+    if (request.auth.token.role !== 'ADMIN' && userData?.enrollmentStatus !== 'VERIFIED') {
+      throw new HttpsError(
+        'permission-denied',
+        'Official continuous assessment quiz submission requires verified institutional student enrollment.'
+      );
+    }
+    studentName = userData?.fullName || studentName;
+  } else if (request.auth.token.role !== 'ADMIN') {
+    throw new HttpsError('permission-denied', 'Student user profile not found.');
   }
 
   const quizDoc = await db.collection('quizzes').doc(quizId).get();
