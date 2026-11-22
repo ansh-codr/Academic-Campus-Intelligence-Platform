@@ -18,9 +18,11 @@
     "build:api": "npm run build --workspace=@solvesphere/api",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
-    "emulators": "firebase emulators:start --only auth,firestore,functions,storage",
-    "seed": "node --input-type=module scripts/seed-firebase.js",
+    "emulators": "firebase emulators:start --only auth,firestore,functions,storage,hosting",
+    "seed": "tsx scripts/seed-firebase.js",
     "admin:bootstrap": "node --input-type=module scripts/bootstrap-admin.js",
+    "test:ui": "node tests/ui-structure.test.js",
+    "test:smoke-ai": "node scripts/smoke-test-live-ai.js",
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules functions/node_modules apps/*/dist functions/lib"
   },
   "devDependencies": {

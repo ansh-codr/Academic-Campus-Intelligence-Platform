@@ -42,6 +42,7 @@ ui-debug.log*
 .vscode/*
 !.vscode/extensions.json
 .idea/
+.playwright-mcp/
 
 # Prisma
 apps/api/prisma/migrations/dev.db*

@@ -259,6 +259,9 @@ export const createComplaint = onCall(
   {
     cors: true,
     secrets: [geminiApiKey],
+    timeoutSeconds: 60,
+    memory: '256MiB',
+    maxInstances: 10,
   },
   async (request) => {
   if (!request.auth) {
@@ -940,6 +943,8 @@ export const onComplaintCreatedClustering = onDocumentCreated(
     document: 'complaints/{complaintId}',
     secrets: [geminiApiKey],
     timeoutSeconds: 60,
+    memory: '256MiB',
+    maxInstances: 5,
     retry: false,
   },
   async (event) => {
@@ -1005,7 +1010,14 @@ export const recoverStaleComplaintLeases = onSchedule(
  * Callable Cloud Function: reopenTicket
  * Allows student (ticket owner) or administrator to reopen a RESOLVED or CLOSED ticket
  */
-export const reopenTicket = onCall({ cors: true }, async (request) => {
+export const reopenTicket = onCall(
+  {
+    cors: true,
+    timeoutSeconds: 60,
+    memory: '256MiB',
+    maxInstances: 10,
+  },
+  async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to reopen a ticket.');
   }

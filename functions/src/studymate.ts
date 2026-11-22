@@ -225,6 +225,9 @@ export const askStudyMateAi = onCall(
   {
     cors: true,
     secrets: [geminiApiKey],
+    timeoutSeconds: 60,
+    memory: '256MiB',
+    maxInstances: 10,
   },
   async (request): Promise<AskStudyMateResponse> => {
     // 1. Verify Authentication

@@ -14,8 +14,8 @@
  */
 
 import admin from 'firebase-admin';
-import { FIXTURE_SUBJECTS, FIXTURE_TOPICS, FIXTURE_RESOURCES } from '../apps/web/src/fixtures/academicFixtures.js';
-import { FIXTURE_CLUBS, FIXTURE_TICKETS, FIXTURE_CLUSTERS } from '../apps/web/src/fixtures/campusFixtures.js';
+import { FIXTURE_SUBJECTS, FIXTURE_TOPICS, FIXTURE_RESOURCES } from '../apps/web/src/fixtures/academicFixtures.ts';
+import { FIXTURE_CLUBS, FIXTURE_TICKETS, FIXTURE_CLUSTERS } from '../apps/web/src/fixtures/campusFixtures.ts';
 
 // Target emulators if live credentials not explicitly provided
 if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {

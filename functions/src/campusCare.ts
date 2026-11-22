@@ -449,6 +449,9 @@ export const askCampusCareAi = onCall(
   {
     cors: true,
     secrets: [geminiApiKey],
+    timeoutSeconds: 60,
+    memory: '256MiB',
+    maxInstances: 10,
   },
   async (request): Promise<AskCampusCareResponse> => {
     // 1. Verify Authentication
@@ -732,6 +735,9 @@ export const aiAssistComplaint = onCall(
   {
     cors: true,
     secrets: [geminiApiKey],
+    timeoutSeconds: 60,
+    memory: '256MiB',
+    maxInstances: 10,
   },
   async (request): Promise<AiAssistComplaintResponse> => {
     if (!request.auth) {
