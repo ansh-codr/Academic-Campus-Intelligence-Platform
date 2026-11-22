@@ -5,52 +5,159 @@
  * Sets custom claim: { role: 'ADMIN' }
  * Updates the Firestore document in `users/{uid}`.
  * 
+ * Safety & Security Guards:
+ * - Rejects weak, known example, and placeholder passwords.
+ * - Prevents unconfirmed provisioning against live Firebase projects.
+ * - Requires explicit project identification in production.
+ * 
  * Usage:
- *   ADMIN_EMAIL="admin@campus.edu" ADMIN_PASSWORD="Password123" node scripts/bootstrap-admin.js
+ *   # Local Emulator Mode (default when emulators are running):
+ *   ADMIN_EMAIL="admin@campus.edu" ADMIN_PASSWORD="MySecureDevPassword123!" node scripts/bootstrap-admin.js
+ * 
+ *   # Live Production Mode (strictly requires deliberate authorization):
+ *   CONFIRM_PROD_ADMIN_BOOTSTRAP=true \
+ *   GCLOUD_PROJECT="my-prod-project" \
+ *   ADMIN_EMAIL="admin@institution.edu" \
+ *   ADMIN_PASSWORD="MyHighEntropyProductionPassword987!" \
+ *   node scripts/bootstrap-admin.js
  */
 
 import admin from 'firebase-admin';
 
-// Check if running against emulator
-if (process.env.FIREBASE_AUTH_EMULATOR_HOST || !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-  process.env.FIREBASE_AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099';
-  process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
-  console.log(`[Bootstrap] Running against Firebase Emulators:`);
-  console.log(`  Auth:      ${process.env.FIREBASE_AUTH_EMULATOR_HOST}`);
-  console.log(`  Firestore: ${process.env.FIRESTORE_EMULATOR_HOST}`);
-}
+const BANNED_EXAMPLE_PASSWORDS = [
+  'solvesphereadmin@2026',
+  'password123',
+  'password',
+  'admin123',
+  'admin',
+  'solvesphere',
+  'campusadmin',
+  'letmein',
+  'qwerty',
+  '12345678',
+  'change_me',
+];
 
-if (!admin.apps.length) {
-  admin.initializeApp({
-    projectId: process.env.GCLOUD_PROJECT || 'solvesphere-ai-dev',
-  });
-}
+/**
+ * Validates bootstrap configuration and enforces security policies.
+ * Exported for deterministic unit testing.
+ */
+export function validateAdminBootstrapConfig(env = process.env) {
+  const isEmulator = Boolean(env.FIREBASE_AUTH_EMULATOR_HOST || env.FIRESTORE_EMULATOR_HOST);
+  const email = (env.ADMIN_EMAIL || '').trim();
+  const password = (env.ADMIN_PASSWORD || '').trim();
+  const projectId = (env.GCLOUD_PROJECT || env.FIREBASE_PROJECT_ID || '').trim();
 
-const auth = admin.auth();
-const db = admin.firestore();
+  if (!isEmulator) {
+    // 1. Enforce explicit authorization for live project execution
+    if (env.CONFIRM_PROD_ADMIN_BOOTSTRAP !== 'true') {
+      throw new Error(
+        'AUTHORIZATION REQUIRED: Live administrator account bootstrap requires explicit confirmation. ' +
+        'Set CONFIRM_PROD_ADMIN_BOOTSTRAP="true" along with real target project credentials.'
+      );
+    }
+
+    // 2. Enforce real project ID
+    if (!projectId || projectId.includes('<') || projectId === 'solvesphere-ai-dev') {
+      throw new Error(
+        `INVALID PROJECT ID: Live bootstrap requires an explicitly configured production or staging project ID, got: "${projectId}"`
+      );
+    }
+
+    // 3. Enforce explicit email
+    if (!email || !email.includes('@') || email.includes('<')) {
+      throw new Error('INVALID EMAIL: A valid ADMIN_EMAIL is required for live administrator bootstrap.');
+    }
+
+    // 4. Enforce high-entropy password policy in live environments
+    if (!password) {
+      throw new Error('PASSWORD REQUIRED: ADMIN_PASSWORD must be provided for live administrator bootstrap.');
+    }
+
+    if (password.includes('<') || password.includes('REPLACE_WITH')) {
+      throw new Error('REJECTED: ADMIN_PASSWORD contains an unreplaced placeholder value.');
+    }
+
+    const lowerPw = password.toLowerCase();
+    for (const banned of BANNED_EXAMPLE_PASSWORDS) {
+      if (lowerPw.includes(banned)) {
+        throw new Error(`INSECURE PASSWORD: "${password}" contains a known example or weak password pattern.`);
+      }
+    }
+
+    if (password.length < 12) {
+      throw new Error(`INSUFFICIENT COMPLEXITY: Administrator password must be at least 12 characters (length: ${password.length}).`);
+    }
+
+    const hasUpper = /[A-Z]/.test(password);
+    const hasLower = /[a-z]/.test(password);
+    const hasDigit = /[0-9]/.test(password);
+    const hasSymbol = /[^A-Za-z0-9]/.test(password);
+
+    if (!hasUpper || !hasLower || !hasDigit || !hasSymbol) {
+      throw new Error('INSUFFICIENT COMPLEXITY: Administrator password must contain uppercase, lowercase, numbers, and symbols.');
+    }
+  } else {
+    // Emulator mode checks
+    if (password && (password.includes('<') || password.includes('REPLACE_WITH'))) {
+      throw new Error('REJECTED: ADMIN_PASSWORD contains an unreplaced placeholder value.');
+    }
+  }
+
+  return {
+    isEmulator,
+    email: email || 'admin@campus.edu',
+    password: password || 'DevAdminTestPassword@2026',
+    fullName: env.ADMIN_NAME || 'Dr. Vikram Malhotra',
+    projectId: projectId || 'solvesphere-ai-dev',
+  };
+}
 
 async function bootstrapAdmin() {
-  const email = process.env.ADMIN_EMAIL || 'admin@campus.edu';
-  const password = process.env.ADMIN_PASSWORD || 'SolveSphereAdmin@2026';
-  const fullName = process.env.ADMIN_NAME || 'Dr. Vikram Malhotra';
+  const config = validateAdminBootstrapConfig(process.env);
+
+  if (config.isEmulator) {
+    process.env.FIREBASE_AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099';
+    process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
+    console.log(`[Bootstrap] Running against Firebase Emulators:`);
+    console.log(`  Auth:      ${process.env.FIREBASE_AUTH_EMULATOR_HOST}`);
+    console.log(`  Firestore: ${process.env.FIRESTORE_EMULATOR_HOST}`);
+  } else {
+    console.log(`[Bootstrap] Targeting LIVE project: ${config.projectId}`);
+  }
+
+  if (!admin.apps.length) {
+    admin.initializeApp({
+      projectId: config.projectId,
+    });
+  }
+
+  const auth = admin.auth();
+  const db = admin.firestore();
+
   const studentId = 'ADM-8802';
 
   console.log(`\n======================================================`);
   console.log(`  SolveSphere AI — Admin Account Bootstrap`);
-  console.log(`  Target Email: ${email}`);
+  console.log(`  Target Email: ${config.email}`);
+  console.log(`  Environment:  ${config.isEmulator ? 'EMULATOR' : 'LIVE CLOUD'}`);
   console.log(`======================================================\n`);
 
   let userRecord;
   try {
-    userRecord = await auth.getUserByEmail(email);
+    userRecord = await auth.getUserByEmail(config.email);
     console.log(`✓ Existing Firebase Auth user found: ${userRecord.uid}`);
+    if (config.password) {
+      await auth.updateUser(userRecord.uid, { password: config.password });
+      console.log(`✓ Password updated for existing account.`);
+    }
   } catch (error) {
     if (error.code === 'auth/user-not-found') {
-      console.log(`Creating new Firebase Auth user for ${email}...`);
+      console.log(`Creating new Firebase Auth user for ${config.email}...`);
       userRecord = await auth.createUser({
-        email,
-        password,
-        displayName: fullName,
+        email: config.email,
+        password: config.password,
+        displayName: config.fullName,
       });
       console.log(`✓ User created with UID: ${userRecord.uid}`);
     } else {
@@ -68,8 +175,8 @@ async function bootstrapAdmin() {
   await db.collection('users').doc(userRecord.uid).set(
     {
       id: userRecord.uid,
-      email,
-      fullName,
+      email: config.email,
+      fullName: config.fullName,
       studentId,
       role: 'ADMIN',
       department: 'Academic Affairs & Campus Operations',
@@ -83,13 +190,17 @@ async function bootstrapAdmin() {
   console.log(`\n======================================================`);
   console.log(`  Admin account provisioned successfully!`);
   console.log(`  UID:   ${userRecord.uid}`);
-  console.log(`  Email: ${email}`);
+  console.log(`  Email: ${config.email}`);
   console.log(`  Role:  ADMIN`);
   console.log(`======================================================\n`);
   process.exit(0);
 }
 
-bootstrapAdmin().catch((err) => {
-  console.error('Fatal error in bootstrap-admin:', err);
-  process.exit(1);
-});
+// Only auto-run if directly invoked as main script
+const isMainScript = process.argv[1] && process.argv[1].endsWith('bootstrap-admin.js');
+if (isMainScript) {
+  bootstrapAdmin().catch((err) => {
+    console.error('\n✖ Fatal error in bootstrap-admin:', err.message || err);
+    process.exit(1);
+  });
+}

@@ -225,6 +225,9 @@ export const askStudyMateAi = onCall(
   {
     cors: true,
     secrets: [geminiApiKey],
+    timeoutSeconds: 60,
+    memory: '256MiB',
+    maxInstances: 10,
   },
   async (request): Promise<AskStudyMateResponse> => {
     // 1. Verify Authentication
@@ -305,7 +308,7 @@ export const askStudyMateAi = onCall(
     if (apiKey) {
       try {
         const ai = new GoogleGenAI({ apiKey });
-        
+
         // Build conversation contents with server-side validation of conversation history
         const contents: any[] = [];
         if (Array.isArray(data.conversationHistory) && data.conversationHistory.length > 0) {

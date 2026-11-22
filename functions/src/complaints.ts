@@ -45,7 +45,7 @@ function getExpectedBucketName(): string {
       const cfg = JSON.parse(process.env.FIREBASE_CONFIG);
       if (cfg.storageBucket) return cfg.storageBucket;
       if (cfg.projectId) return `${cfg.projectId}.appspot.com`;
-    } catch {}
+    } catch { }
   }
   const projectId = process.env.GCLOUD_PROJECT || process.env.FIREBASE_PROJECT || 'fluetas-a1914';
   return `${projectId}.appspot.com`;
@@ -259,128 +259,131 @@ export const createComplaint = onCall(
   {
     cors: true,
     secrets: [geminiApiKey],
+    timeoutSeconds: 60,
+    memory: '256MiB',
+    maxInstances: 10,
   },
   async (request) => {
-  if (!request.auth) {
-    throw new HttpsError('unauthenticated', 'User must be authenticated to submit a complaint.');
-  }
-
-  const parseResult = CreateTicketSchema.safeParse(request.data);
-  if (!parseResult.success) {
-    throw new HttpsError('invalid-argument', 'Invalid complaint payload', parseResult.error.format());
-  }
-
-  const data = parseResult.data;
-  const db = admin.firestore();
-  const uid = request.auth.uid;
-
-  // Validate all attachments belong to the authenticated student and exist in storage
-  const verifiedAttachments: VerifiedAttachment[] = [];
-  if (data.attachmentUrls && data.attachmentUrls.length > 0) {
-    for (const rawUrl of data.attachmentUrls) {
-      const verified = await verifyAndResolveAttachment(rawUrl, uid, db);
-      verifiedAttachments.push(verified);
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'User must be authenticated to submit a complaint.');
     }
-  }
 
-  // Retrieve user name / student ID from user profile or auth token
-  let submitterName = request.auth.token.name || request.auth.token.email || 'Student';
-  const userDoc = await db.collection('users').doc(uid).get();
-  if (userDoc.exists) {
-    const userData = userDoc.data();
-    if (userData?.fullName) {
-      submitterName = `${userData.fullName} (${userData.studentId || ''})`.trim();
+    const parseResult = CreateTicketSchema.safeParse(request.data);
+    if (!parseResult.success) {
+      throw new HttpsError('invalid-argument', 'Invalid complaint payload', parseResult.error.format());
     }
-  }
 
-  const now = new Date().toISOString();
-  const counterRef = db.collection('systemCounters').doc('complaints');
+    const data = parseResult.data;
+    const db = admin.firestore();
+    const uid = request.auth.uid;
 
-  try {
-    const newComplaint: Record<string, any> = await db.runTransaction(async (transaction) => {
-      const counterSnap = await transaction.get(counterRef);
-      let nextSeq = 1;
-      if (counterSnap.exists) {
-        nextSeq = (counterSnap.data()?.currentSequence || 0) + 1;
+    // Validate all attachments belong to the authenticated student and exist in storage
+    const verifiedAttachments: VerifiedAttachment[] = [];
+    if (data.attachmentUrls && data.attachmentUrls.length > 0) {
+      for (const rawUrl of data.attachmentUrls) {
+        const verified = await verifyAndResolveAttachment(rawUrl, uid, db);
+        verifiedAttachments.push(verified);
       }
-      transaction.set(counterRef, { currentSequence: nextSeq }, { merge: true });
+    }
 
-      const refNum = `SS-2026-${String(nextSeq).padStart(4, '0')}`;
-      const complaintRef = db.collection('complaints').doc();
-      const complaintId = complaintRef.id;
-
-      const complaintData: Record<string, any> = {
-        id: complaintId,
-        referenceNumber: refNum,
-        title: data.title,
-        category: data.category,
-        building: data.building,
-        floor: data.floor,
-        room: data.room,
-        description: data.description,
-        priority: data.priority || 'MEDIUM',
-        status: 'SUBMITTED' as TicketStatus,
-        clusteringStatus: 'PENDING',
-        assignedDepartment: getDepartmentForCategory(data.category),
-        submittedById: uid,
-        submittedBy: submitterName,
-        submittedAt: now,
-        updatedAt: now,
-      };
-
-      if (verifiedAttachments.length > 0) {
-        complaintData.attachmentUrls = verifiedAttachments.map((a) => a.downloadUrl);
-        complaintData.attachmentPaths = verifiedAttachments.map((a) => a.canonicalPath);
+    // Retrieve user name / student ID from user profile or auth token
+    let submitterName = request.auth.token.name || request.auth.token.email || 'Student';
+    const userDoc = await db.collection('users').doc(uid).get();
+    if (userDoc.exists) {
+      const userData = userDoc.data();
+      if (userData?.fullName) {
+        submitterName = `${userData.fullName} (${userData.studentId || ''})`.trim();
       }
+    }
 
-      transaction.set(complaintRef, complaintData);
+    const now = new Date().toISOString();
+    const counterRef = db.collection('systemCounters').doc('complaints');
 
-      // Add initial timeline event in subcollection
-      const eventRef = complaintRef.collection('timeline').doc();
-      const initialEvent = {
-        id: eventRef.id,
-        ticketId: complaintId,
-        status: 'SUBMITTED',
-        note: 'Issue submitted via SolveSphere Portal.',
-        updatedBy: submitterName,
-        timestamp: now,
-      };
-      transaction.set(eventRef, initialEvent);
+    try {
+      const newComplaint: Record<string, any> = await db.runTransaction(async (transaction) => {
+        const counterSnap = await transaction.get(counterRef);
+        let nextSeq = 1;
+        if (counterSnap.exists) {
+          nextSeq = (counterSnap.data()?.currentSequence || 0) + 1;
+        }
+        transaction.set(counterRef, { currentSequence: nextSeq }, { merge: true });
+
+        const refNum = `SS-2026-${String(nextSeq).padStart(4, '0')}`;
+        const complaintRef = db.collection('complaints').doc();
+        const complaintId = complaintRef.id;
+
+        const complaintData: Record<string, any> = {
+          id: complaintId,
+          referenceNumber: refNum,
+          title: data.title,
+          category: data.category,
+          building: data.building,
+          floor: data.floor,
+          room: data.room,
+          description: data.description,
+          priority: data.priority || 'MEDIUM',
+          status: 'SUBMITTED' as TicketStatus,
+          clusteringStatus: 'PENDING',
+          assignedDepartment: getDepartmentForCategory(data.category),
+          submittedById: uid,
+          submittedBy: submitterName,
+          submittedAt: now,
+          updatedAt: now,
+        };
+
+        if (verifiedAttachments.length > 0) {
+          complaintData.attachmentUrls = verifiedAttachments.map((a) => a.downloadUrl);
+          complaintData.attachmentPaths = verifiedAttachments.map((a) => a.canonicalPath);
+        }
+
+        transaction.set(complaintRef, complaintData);
+
+        // Add initial timeline event in subcollection
+        const eventRef = complaintRef.collection('timeline').doc();
+        const initialEvent = {
+          id: eventRef.id,
+          ticketId: complaintId,
+          status: 'SUBMITTED',
+          note: 'Issue submitted via SolveSphere Portal.',
+          updatedBy: submitterName,
+          timestamp: now,
+        };
+        transaction.set(eventRef, initialEvent);
+
+        return {
+          ...complaintData,
+          timeline: [initialEvent],
+        };
+      });
+
+      const complaintId = newComplaint.id;
+      const refNum = newComplaint.referenceNumber;
+
+      // --- Dispatch In-App Notification (Idempotent) ---
+      try {
+        await sendInAppNotification(db, {
+          userId: uid,
+          ticketId: complaintId,
+          referenceNumber: refNum,
+          type: 'SUBMITTED',
+          title: 'Ticket Submitted Successfully',
+          message: `Your ticket ${refNum} has been received and assigned to ${newComplaint.assignedDepartment}.`,
+          eventId: newComplaint.timeline[0]?.id || `init_${complaintId}`,
+        });
+      } catch (notifErr) {
+        console.warn('Notification send non-fatal warning:', notifErr);
+      }
 
       return {
-        ...complaintData,
-        timeline: [initialEvent],
+        success: true,
+        data: newComplaint,
       };
-    });
-
-    const complaintId = newComplaint.id;
-    const refNum = newComplaint.referenceNumber;
-
-    // --- Dispatch In-App Notification (Idempotent) ---
-    try {
-      await sendInAppNotification(db, {
-        userId: uid,
-        ticketId: complaintId,
-        referenceNumber: refNum,
-        type: 'SUBMITTED',
-        title: 'Ticket Submitted Successfully',
-        message: `Your ticket ${refNum} has been received and assigned to ${newComplaint.assignedDepartment}.`,
-        eventId: newComplaint.timeline[0]?.id || `init_${complaintId}`,
-      });
-    } catch (notifErr) {
-      console.warn('Notification send non-fatal warning:', notifErr);
+    } catch (error: any) {
+      console.error('Error creating complaint transaction:', error);
+      if (error instanceof HttpsError) throw error;
+      throw new HttpsError('internal', error.message || 'Failed to submit complaint.');
     }
-
-    return {
-      success: true,
-      data: newComplaint,
-    };
-  } catch (error: any) {
-    console.error('Error creating complaint transaction:', error);
-    if (error instanceof HttpsError) throw error;
-    throw new HttpsError('internal', error.message || 'Failed to submit complaint.');
-  }
-});
+  });
 
 /**
  * Distinguishes retryable transient failures (rate limits, 503s, timeouts, network)
@@ -940,6 +943,8 @@ export const onComplaintCreatedClustering = onDocumentCreated(
     document: 'complaints/{complaintId}',
     secrets: [geminiApiKey],
     timeoutSeconds: 60,
+    memory: '256MiB',
+    maxInstances: 5,
     retry: false,
   },
   async (event) => {
@@ -1005,7 +1010,14 @@ export const recoverStaleComplaintLeases = onSchedule(
  * Callable Cloud Function: reopenTicket
  * Allows student (ticket owner) or administrator to reopen a RESOLVED or CLOSED ticket
  */
-export const reopenTicket = onCall({ cors: true }, async (request) => {
+export const reopenTicket = onCall(
+  {
+    cors: true,
+    timeoutSeconds: 60,
+    memory: '256MiB',
+    maxInstances: 10,
+  },
+  async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to reopen a ticket.');
   }
