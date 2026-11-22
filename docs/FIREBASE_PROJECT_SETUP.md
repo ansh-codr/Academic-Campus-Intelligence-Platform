@@ -94,7 +94,7 @@ Associate your newly created project with the project alias:
 firebase use --add <project-id>
 ```
 
-Or edit [.firebaserc](file:///Users/havocerebus/Documents/Current_Project_Working/Academic%20&%20Campus%20Intelligence%20Platform/.firebaserc):
+Or edit `.firebaserc`:
 
 ```json
 {

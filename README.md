@@ -1,4 +1,6 @@
-> **Phase 8 real-data transition:** Production services must use genuine Firestore records instead of demonstration fixture fallbacks. The demo seed script is for local emulator/testing only. See [backend architecture](docs/BACKEND_ARCHITECTURE.md), [data model](docs/FIRESTORE_DATA_MODEL.md), [real-data onboarding](docs/REAL_DATA_ONBOARDING.md), [deployment runbook](docs/DEPLOYMENT_RUNBOOK.md), and [friend handover](docs/FRIEND_HANDOVER.md). Do not seed or purge a live Firebase database without explicit approval.\n\n# SolveSphere AI — Academic & Campus Intelligence Platform
+> **Phase 8 real-data transition:** Production services must use genuine Firestore records instead of demonstration fixture fallbacks. The demo seed script is for local emulator/testing only. See [backend architecture](docs/BACKEND_ARCHITECTURE.md), [data model](docs/FIRESTORE_DATA_MODEL.md), [real-data onboarding](docs/REAL_DATA_ONBOARDING.md), [deployment runbook](docs/DEPLOYMENT_RUNBOOK.md), and [friend handover](docs/FRIEND_HANDOVER.md). Do not seed or purge a live Firebase database without explicit approval.
+
+# SolveSphere AI — Academic & Campus Intelligence Platform
 
 > **"Your Problems. Our Smart Solutions."**
 >
@@ -133,7 +135,7 @@ A comprehensive integration test suite verifies the complete platform:
 firebase emulators:exec --only auth,firestore,functions,storage "node tests/firebase.test.js"
 ```
 
-**Verified Test Scenarios (53 automated test suites):**
+**Verified Test Scenarios (60 automated integration and security tests):**
 1. Student Account Registration in Firebase Auth and Cloud Firestore.
 2. Privilege Escalation Prevention (Public users cannot self-assign ADMIN role).
 3. Admin Account Provisioning with verified `{ role: 'ADMIN' }` custom claims.
@@ -148,6 +150,11 @@ firebase emulators:exec --only auth,firestore,functions,storage "node tests/fire
 12. Assessment Publication Validation & Unpublished Draft Isolation (Drafts protected from student access).
 13. Read-Only Sample Data Inventory & Safety Auditing.
 14. Production Authentication Workflows (Student Registration, Email Verification Dispatch, Profile Immutability, Password Reset, and Admin RBAC).
+15. Institutional Enrollment Verification Lifecycle (`INCOMPLETE` -> `PENDING` -> `VERIFIED` / `REJECTED`).
+16. Server-Side Roll Number Uniqueness Reservation (`enrollmentNumbers/{studentId}`) and Concurrency Collision Handling (`already-exists`).
+17. Closed Client Writes on Registry (`allow write: if false;`) & Administrative Callable Cloud Functions (`adminApproveEnrollment`, `adminRejectEnrollment`).
+18. Resubmission Audit History Integrity (preserving previous review timestamps, administrators, and rejection reasons).
+19. Verified-Enrollment Barriers for Official Complaint and Continuous Assessment Quiz Submissions.
 
 ---
 
