@@ -12,7 +12,6 @@ import {
   Calendar,
   Sparkles,
   UserCheck,
-  CheckCircle,
   Tag,
 } from 'lucide-react';
 
@@ -20,7 +19,6 @@ export const CampusClubsPage: React.FC = () => {
   const [clubs, setClubs] = useState<CampusClub[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
-  const [joinedClubIds, setJoinedClubIds] = useState<string[]>(['club-ai']);
 
   useEffect(() => {
     CampusService.getClubs().then(setClubs);
@@ -38,12 +36,6 @@ export const CampusClubsPage: React.FC = () => {
     }
     return true;
   });
-
-  const toggleJoinClub = (id: string) => {
-    setJoinedClubIds((prev) =>
-      prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]
-    );
-  };
 
   return (
     <div className="space-y-8 animate-in fade-in duration-300">
@@ -109,7 +101,6 @@ export const CampusClubsPage: React.FC = () => {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {filteredClubs.map((club) => {
-            const isJoined = joinedClubIds.includes(club.id);
 
             return (
               <Card key={club.id} hoverEffect className="p-6 flex flex-col justify-between space-y-5">
@@ -119,7 +110,7 @@ export const CampusClubsPage: React.FC = () => {
                       {club.category}
                     </Badge>
                     <span className="text-xs text-slate-400 font-semibold">
-                      {club.memberCount + (isJoined ? 1 : 0)} Members
+                      {club.memberCount} Members
                     </span>
                   </div>
 
@@ -166,22 +157,8 @@ export const CampusClubsPage: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="pt-2">
-                  <Button
-                    variant={isJoined ? 'outline' : 'gradient'}
-                    size="sm"
-                    className="w-full text-xs"
-                    onClick={() => toggleJoinClub(club.id)}
-                  >
-                    {isJoined ? (
-                      <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-semibold">
-                        <CheckCircle className="w-3.5 h-3.5" />
-                        Member &bull; Leave Club (Demo)
-                      </span>
-                    ) : (
-                      <span>Join Society Roster &rarr;</span>
-                    )}
-                  </Button>
+                <div className="pt-2 text-xs text-slate-500 dark:text-slate-400">
+                  Membership registration is managed by the club. Contact the listed club lead for verified joining information.
                 </div>
               </Card>
             );
