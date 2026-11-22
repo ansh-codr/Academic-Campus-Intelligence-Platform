@@ -26,12 +26,6 @@ import {
   AnonymousReport,
   TicketEvent,
 } from '@solvesphere/shared';
-import {
-  FIXTURE_TICKETS,
-  FIXTURE_CLUSTERS,
-  FIXTURE_CLUBS,
-  FIXTURE_DEPARTMENTS,
-} from '@/fixtures/campusFixtures';
 
 export const CampusService = {
   /**
@@ -132,10 +126,10 @@ export const CampusService = {
         return tickets;
       }
     } catch (err) {
-      console.warn('Firestore tickets fetch note (falling back to fixtures):', err);
+      console.error('Unable to load live complaints:', err);
     }
 
-    return FIXTURE_TICKETS;
+    return [];
   },
 
   /**
@@ -157,7 +151,7 @@ export const CampusService = {
       q,
       async (snap) => {
         if (snap.empty) {
-          callback(FIXTURE_TICKETS);
+          callback([]);
           return;
         }
 
@@ -177,8 +171,8 @@ export const CampusService = {
         callback(tickets);
       },
       (error) => {
-        console.warn('Firestore tickets subscription notice, fallback to fixtures:', error);
-        callback(FIXTURE_TICKETS);
+        console.error('Live complaints subscription failed:', error);
+        callback([]);
       }
     );
 
@@ -201,7 +195,7 @@ export const CampusService = {
     } catch (err) {
       console.warn('Error fetching ticket by ID:', err);
     }
-    return FIXTURE_TICKETS.find((t) => t.id === ticketId) || null;
+    return null;
   },
 
   /**
@@ -216,7 +210,7 @@ export const CampusService = {
     } catch {
       // ignore
     }
-    return FIXTURE_DEPARTMENTS;
+    return [];
   },
 
   /**
@@ -230,10 +224,10 @@ export const CampusService = {
           const depts = snap.docs.map((d) => ({ id: d.id, ...d.data() } as CampusDepartment));
           callback(depts);
         } else {
-          callback(FIXTURE_DEPARTMENTS);
+          callback([]);
         }
       },
-      () => callback(FIXTURE_DEPARTMENTS)
+      () => callback([])
     );
   },
 
@@ -249,7 +243,7 @@ export const CampusService = {
     } catch {
       // ignore
     }
-    return FIXTURE_CLUSTERS;
+    return [];
   },
 
   /**
@@ -263,12 +257,12 @@ export const CampusService = {
           const clusters = snap.docs.map((d) => ({ id: d.id, ...d.data() } as IssueCluster));
           callback(clusters);
         } else {
-          callback(FIXTURE_CLUSTERS);
+          callback([]);
         }
       },
       (err) => {
         console.warn('issueClusters subscription notice (Admin role required):', err.message);
-        callback(FIXTURE_CLUSTERS);
+        callback([]);
       }
     );
   },
@@ -285,20 +279,7 @@ export const CampusService = {
           const incidents = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PublicCampusIncident));
           callback(incidents);
         } else {
-          // Fall back to sanitized fixture clusters
-          callback(
-            FIXTURE_CLUSTERS.map((c) => ({
-              id: c.id,
-              title: c.title,
-              category: c.category,
-              affectedArea: c.affectedArea,
-              building: c.building,
-              status: c.status === 'ACTIVE_INCIDENT' ? 'ACTIVE_INCIDENT' : 'RESOLVING',
-              summary: c.suggestedAction,
-              ticketCount: c.ticketCount,
-              verifiedAt: c.createdAt,
-            }))
-          );
+          callback([]);
         }
       },
       (err) => {
@@ -320,7 +301,7 @@ export const CampusService = {
     } catch {
       // ignore
     }
-    return FIXTURE_CLUBS;
+    return [];
   },
 
   /**
@@ -334,10 +315,10 @@ export const CampusService = {
           const clubs = snap.docs.map((d) => ({ id: d.id, ...d.data() } as CampusClub));
           callback(clubs.filter((c) => !c.isArchived));
         } else {
-          callback(FIXTURE_CLUBS);
+          callback([]);
         }
       },
-      () => callback(FIXTURE_CLUBS)
+      () => callback([])
     );
   },
 
