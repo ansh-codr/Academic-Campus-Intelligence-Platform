@@ -1,4 +1,4 @@
-import { collection, getCountFromServer, getDocs } from 'firebase/firestore';
+import { collection, getCountFromServer, getDocs, query, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '@/lib/firebase';
 import {
@@ -31,7 +31,7 @@ export const AdminService = {
       CampusService.getTickets(),
       CampusService.getDepartments(),
       CampusService.getClusters(),
-      getCountFromServer(collection(db, 'users')),
+      getCountFromServer(query(collection(db, 'users'), where('role', '==', 'STUDENT'))),
       getDocs(collection(db, 'subjects')),
     ]);
     const resolvedTickets = tickets.filter(t => t.status === 'RESOLVED' || t.status === 'CLOSED');
@@ -39,18 +39,12 @@ export const AdminService = {
     const workload: DepartmentWorkload[] = depts.map(dept => {
       const assigned = tickets.filter(t => t.assignedDepartment === dept.name);
       const resolved = assigned.filter(t => t.status === 'RESOLVED' || t.status === 'CLOSED');
-      const eligibleDays = resolved.map(t => {
-        const start = Date.parse(t.submittedAt);
-        const finish = Date.parse(t.updatedAt);
-        return Number.isFinite(start) && Number.isFinite(finish) && finish >= start
-          ? (finish - start) / 86400000 : null;
-      }).filter((v): v is number => v !== null);
       return {
         department: dept.name,
         assignedCount: assigned.length - resolved.length,
         resolvedCount: resolved.length,
-        averageResolutionDays: eligibleDays.length
-          ? Math.round((eligibleDays.reduce((a, b) => a + b, 0) / eligibleDays.length) * 10) / 10 : 0,
+        // A genuine resolution duration requires a dedicated resolvedAt lifecycle timestamp.
+        averageResolutionDays: 0,
       };
     });
     const recentActivities: AdminActivityItem[] = tickets
