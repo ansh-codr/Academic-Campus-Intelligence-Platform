@@ -1,5 +1,10 @@
 import admin from 'firebase-admin';
-import { createComplaint, reopenTicket } from './complaints.js';
+import {
+  createComplaint,
+  reopenTicket,
+  onComplaintCreatedClustering,
+  recoverStaleComplaintLeases,
+} from './complaints.js';
 import {
   updateTicketStatus,
   assignTicketDepartment,
@@ -16,6 +21,7 @@ import {
   toggleStudentTopicProgress,
 } from './academic.js';
 import { askStudyMateAi } from './studymate.js';
+import { askCampusCareAi, aiAssistComplaint } from './campusCare.js';
 
 // Initialize Admin SDK once
 if (!admin.apps.length) {
@@ -25,6 +31,8 @@ if (!admin.apps.length) {
 export {
   createComplaint,
   reopenTicket,
+  onComplaintCreatedClustering,
+  recoverStaleComplaintLeases,
   updateTicketStatus,
   assignTicketDepartment,
   adminManageDepartment,
@@ -37,4 +45,6 @@ export {
   adminUpdateTopicStatus,
   toggleStudentTopicProgress,
   askStudyMateAi,
+  askCampusCareAi,
+  aiAssistComplaint,
 };

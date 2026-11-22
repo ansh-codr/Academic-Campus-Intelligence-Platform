@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CampusService } from '@/services/campusService';
-import { CampusTicket, IssueCluster } from '@solvesphere/shared';
+import { CampusTicket, PublicCampusIncident } from '@solvesphere/shared';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -17,19 +17,20 @@ import {
   ShieldCheck,
   Megaphone,
   Radio,
+  Sparkles,
 } from 'lucide-react';
 
 export const CampusDashboardPage: React.FC = () => {
   const [tickets, setTickets] = useState<CampusTicket[]>([]);
-  const [clusters, setClusters] = useState<IssueCluster[]>([]);
+  const [incidents, setIncidents] = useState<PublicCampusIncident[]>([]);
 
   useEffect(() => {
     const unsubTickets = CampusService.subscribeTickets(setTickets);
-    const unsubClusters = CampusService.subscribeClusters(setClusters);
+    const unsubIncidents = CampusService.subscribePublicIncidents(setIncidents);
 
     return () => {
       unsubTickets();
-      unsubClusters();
+      unsubIncidents();
     };
   }, []);
 
@@ -58,12 +59,24 @@ export const CampusDashboardPage: React.FC = () => {
           </p>
         </div>
 
-        <Link to="/portal/report">
-          <Button variant="gradient" size="md">
-            <PlusCircle className="w-4 h-4 mr-1.5" />
-            Report New Campus Issue
-          </Button>
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link to="/portal/campus-care">
+            <Button
+              variant="outline"
+              size="md"
+              className="gap-1.5 text-cyan-600 dark:text-cyan-400 border-cyan-500/40 hover:bg-cyan-50 dark:hover:bg-cyan-950/40"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>Campus Care AI</span>
+            </Button>
+          </Link>
+          <Link to="/portal/report">
+            <Button variant="gradient" size="md">
+              <PlusCircle className="w-4 h-4 mr-1.5" />
+              Report New Campus Issue
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* Metrics Row */}
@@ -97,11 +110,11 @@ export const CampusDashboardPage: React.FC = () => {
 
         <Card className="p-5 space-y-2">
           <div className="flex justify-between items-center text-xs text-slate-500 font-semibold">
-            <span>COMMON CLUSTERS</span>
+            <span>ACTIVE INCIDENTS</span>
             <Radio className="w-4 h-4 text-purple-500" />
           </div>
-          <p className="text-3xl font-extrabold text-purple-600 dark:text-purple-400">{clusters.length}</p>
-          <p className="text-xs text-slate-500">Duplicate grouping active</p>
+          <p className="text-3xl font-extrabold text-purple-600 dark:text-purple-400">{incidents.length}</p>
+          <p className="text-xs text-slate-500">Verified campus operations</p>
         </Card>
       </div>
 
@@ -180,55 +193,53 @@ export const CampusDashboardPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Right: AI Common Issue Clustering in Action */}
+        {/* Right: Verified Campus Incidents (Privacy-Preserved for Students) */}
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-purple-500 animate-pulse" />
               <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-                AI Common Issue Clustering
+                Active Campus Incidents
               </h2>
             </div>
             <span className="text-xs text-purple-600 dark:text-purple-400 font-semibold">
-              Semantic Duplicate Detection
+              Verified Operational Updates
             </span>
           </div>
 
           <div className="space-y-3">
-            {clusters.map((cluster) => (
+            {incidents.map((incident) => (
               <div
-                key={cluster.id}
+                key={incident.id}
                 className="p-5 rounded-2xl border border-purple-200 dark:border-purple-900/60 bg-purple-50/30 dark:bg-purple-950/20 space-y-3"
               >
                 <div className="flex items-center justify-between">
                   <Badge variant="cyan" size="sm">
-                    {cluster.ticketCount} Related Reports Grouped
+                    {incident.category.replace(/_/g, ' ')}
                   </Badge>
-                  <span className="text-xs font-mono font-bold text-purple-700 dark:text-purple-300">
-                    {cluster.confidenceScore != null
-                      ? `Confidence: ${Math.round(cluster.confidenceScore * 100)}%`
-                      : (cluster.status === 'SUGGESTED_INCIDENT' ? 'Suggested Incident' : 'Rule-Based Cluster')}
+                  <span className="text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                    {incident.status}
                   </span>
                 </div>
 
                 <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                  {cluster.title}
+                  {incident.title}
                 </h3>
                 <p className="text-xs text-slate-600 dark:text-slate-400">
-                  <strong>Affected Zone:</strong> {cluster.affectedArea}
+                  <strong>Affected Zone:</strong> {incident.affectedArea}
                 </p>
 
                 <div className="p-3 rounded-xl bg-white dark:bg-brand-surfaceDark border border-purple-100 dark:border-purple-900 text-xs text-slate-700 dark:text-slate-300">
                   <span className="font-bold text-purple-700 dark:text-purple-400 block mb-0.5">
-                    Root Cause Recommendation:
+                    Incident Status &amp; Advisory:
                   </span>
-                  {cluster.suggestedAction}
+                  {incident.summary}
                 </div>
 
                 <div className="text-[11px] text-slate-400 flex justify-between items-center pt-1">
-                  <span>Linked Tickets: {cluster.ticketIds.join(', ')}</span>
+                  <span>Unified Incident &bull; {incident.ticketCount} reports verified</span>
                   <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                    Auto-Dispatched
+                    Technician Dispatched
                   </span>
                 </div>
               </div>

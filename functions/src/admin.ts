@@ -1,6 +1,6 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import admin from 'firebase-admin';
-import { TicketStatus } from '@solvesphere/shared';
+import { TicketStatus, AdminReviewClusterSchema } from '@solvesphere/shared';
 import { sendInAppNotification } from './notifications.js';
 
 // Permitted status transitions in ticket lifecycle
@@ -412,7 +412,7 @@ export const adminManageClub = onCall({ cors: true }, async (request) => {
 
 /**
  * Callable Cloud Function: adminReviewCluster (Admin only)
- * Reviews, verifies, merges, resolves, or dismisses suggested rule-based issue clusters.
+ * Reviews, verifies, merges, resolves, rejects, or dismisses suggested rule-based and semantic issue clusters.
  * Enforces admin confirmation before converting a suggestion into an official active incident.
  */
 export const adminReviewCluster = onCall({ cors: true }, async (request) => {
@@ -423,14 +423,20 @@ export const adminReviewCluster = onCall({ cors: true }, async (request) => {
     throw new HttpsError('permission-denied', 'Only administrators can review issue clusters.');
   }
 
-  const { clusterId, action, note } = request.data || {};
-  if (!clusterId || !action || !['verify', 'merge', 'resolve', 'dismiss'].includes(action)) {
-    throw new HttpsError('invalid-argument', 'clusterId and valid action (verify, merge, resolve, dismiss) are required.');
+  const parseResult = AdminReviewClusterSchema.safeParse(request.data);
+  if (!parseResult.success) {
+    throw new HttpsError(
+      'invalid-argument',
+      `Invalid cluster review request: ${parseResult.error.errors.map((e) => e.message).join(', ')}`
+    );
   }
+  const { clusterId, action, note } = parseResult.data;
 
   const db = admin.firestore();
   const now = new Date().toISOString();
+  const adminName = request.auth.token.name || request.auth.token.email || 'Administrator';
   const clusterRef = db.collection('issueClusters').doc(clusterId);
+  const publicIncidentRef = db.collection('publicIncidents').doc(clusterId);
 
   try {
     const snap = await clusterRef.get();
@@ -438,7 +444,8 @@ export const adminReviewCluster = onCall({ cors: true }, async (request) => {
       throw new HttpsError('not-found', `Cluster ${clusterId} not found.`);
     }
 
-    let newStatus: 'ACTIVE_INCIDENT' | 'RESOLVING' | 'MERGED' | 'DISMISSED';
+    const clusterData = snap.data();
+    let newStatus: 'ACTIVE_INCIDENT' | 'RESOLVING' | 'MERGED' | 'DISMISSED' | 'REJECTED';
     let verifiedByAdmin = true;
 
     if (action === 'verify') {
@@ -447,22 +454,57 @@ export const adminReviewCluster = onCall({ cors: true }, async (request) => {
       newStatus = 'MERGED';
     } else if (action === 'resolve') {
       newStatus = 'RESOLVING';
+    } else if (action === 'reject') {
+      newStatus = 'REJECTED';
+      verifiedByAdmin = false;
     } else {
       newStatus = 'DISMISSED';
       verifiedByAdmin = false;
     }
 
-    await clusterRef.update({
+    const updatePayload: Record<string, any> = {
       status: newStatus,
       verifiedByAdmin,
       updatedAt: now,
+      verifiedAt: now,
+      verifiedBy: adminName,
       ...(note ? { reviewNote: note } : {}),
-    });
+    };
+
+    await clusterRef.update(updatePayload);
+
+    // Synchronize sanitized student-facing public incidents view (no private ticket IDs, no student identities)
+    if (newStatus === 'ACTIVE_INCIDENT') {
+      await publicIncidentRef.set({
+        id: clusterId,
+        title: clusterData?.title || 'Campus Facility Incident',
+        category: clusterData?.category || 'GENERAL_INFRASTRUCTURE',
+        affectedArea: clusterData?.affectedArea || 'Campus Facilities',
+        building: clusterData?.building || '',
+        status: 'ACTIVE_INCIDENT',
+        summary: clusterData?.aiMaintenanceSummary || clusterData?.suggestedAction || 'Maintenance team active.',
+        ticketCount: clusterData?.ticketCount || clusterData?.ticketIds?.length || 1,
+        verifiedAt: now,
+      });
+    } else if (newStatus === 'RESOLVING') {
+      await publicIncidentRef.set(
+        {
+          status: 'RESOLVING',
+          summary: note ? `Resolving: ${note}` : 'Technicians actively addressing this incident.',
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+    } else {
+      // If rejected, merged, or dismissed, remove from public awareness feed
+      await publicIncidentRef.delete();
+    }
 
     return {
       success: true,
       message: `Cluster ${clusterId} status updated to ${newStatus}.`,
       status: newStatus,
+      verifiedByAdmin,
     };
   } catch (err: any) {
     if (err instanceof HttpsError) throw err;

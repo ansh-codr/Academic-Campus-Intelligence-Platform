@@ -1125,7 +1125,20 @@ async function runTests() {
   const compRes2 = await createComplaintCallable(duplicateCompPayload);
   assert.ok(compRes2.data?.success);
   const comp2Data = compRes2.data?.data;
-  assert.ok(comp2Data?.clusterId, 'Duplicate ticket must be assigned a clusterId');
+  assert.ok(comp2Data?.id);
+  assert.strictEqual(comp2Data?.clusteringStatus, 'PENDING', 'createComplaint must return PENDING status immediately');
+
+  // Wait for Firestore background trigger (onComplaintCreatedClustering) to complete clustering
+  let comp2Doc;
+  let comp2ClusterId;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    comp2Doc = await db.collection('complaints').doc(comp2Data.id).get();
+    comp2ClusterId = comp2Doc.data()?.clusterId;
+    if (comp2ClusterId && comp2Doc.data()?.clusteringStatus === 'COMPLETED') break;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  assert.ok(comp2ClusterId, 'Duplicate ticket must be assigned a clusterId by background worker');
+  comp2Data.clusterId = comp2ClusterId;
 
   // Verify cluster in Firestore: must be created as unreviewed rule-based suggestion without invented scores
   const clusterSnap = await db.collection('issueClusters').doc(comp2Data.clusterId).get();
@@ -1709,6 +1722,883 @@ async function runTests() {
   console.log(`✓ Test 34 Passed: Direct client writes to Speak Freely blocked; read restricted exclusively to admin.`);
 
   // --------------------------------------------------------------------------
+  // TEST 35: Campus Care AI Assistant - Querying & Grounded Ticket Tracking
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 35] Verifying Campus Care AI Assistant & Grounded Ticket Tracking...`);
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  const askCampusCareFn = httpsCallable(clientFunctions, 'askCampusCareAi');
+
+  // Student 1 queries status of their tickets
+  const careRes1 = await askCampusCareFn({
+    prompt: 'What is the current status of my tickets?',
+  });
+  assert.ok(careRes1.data?.reply, 'Campus Care AI must return a reply');
+  assert.ok(careRes1.data?.conversationId, 'Must return generated conversationId');
+  assert.strictEqual(careRes1.data?.isMock, true, 'Emulator test double active');
+  assert.ok(Array.isArray(careRes1.data?.relevantTickets), 'Should return relevantTickets array');
+  const student1HasTicket = careRes1.data.relevantTickets.some((t) => t.id === createdCompData.id);
+  assert.ok(student1HasTicket, 'Student 1 should see their own submitted ticket');
+
+  // Query facilities issue generating complaint draft
+  // Wait 2.1s to respect per-user rate limit
+  await new Promise((r) => setTimeout(r, 2100));
+  const careRes2 = await askCampusCareFn({
+    prompt: 'The classroom AC in Engineering Block Room 204 is leaking water heavily',
+    conversationId: careRes1.data.conversationId,
+  });
+  assert.ok(careRes2.data?.reply);
+  assert.strictEqual(careRes2.data?.conversationId, careRes1.data.conversationId, 'Must preserve conversation ID');
+  assert.ok(careRes2.data?.draftComplaint, 'Must generate draft complaint for maintenance issue');
+  assert.strictEqual(careRes2.data.draftComplaint.category, 'AC_HVAC');
+  assert.strictEqual(careRes2.data.draftComplaint.suggestedDepartment, 'HVAC & Climate Control');
+  console.log(`✓ Test 35 Passed: Campus Care AI answered query, tracked tickets, and drafted structured complaint.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 36: Campus Care AI - Unauthenticated Invocation Rejection
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 36] Verifying Unauthenticated User is Rejected by askCampusCareAi...`);
+  await signOut(clientAuth);
+  await assert.rejects(
+    async () => {
+      await askCampusCareFn({
+        prompt: 'Unauthenticated facilities query',
+      });
+    },
+    (err) => err.code?.includes('unauthenticated') || /authenticated/i.test(err.message),
+    'Unauthenticated call to askCampusCareAi must fail with unauthenticated'
+  );
+  console.log(`✓ Test 36 Passed: Unauthenticated request rejected by askCampusCareAi.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 37: Cross-Student Ticket & Conversation Isolation in Campus Care AI
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 37] Verifying Cross-Student Ticket & Conversation Isolation...`);
+  await signInWithEmailAndPassword(clientAuth, student2Email, 'Password@2026');
+
+  // Student 2 queries ticket status -> must NOT receive Student 1's ticket
+  const student2CareRes = await askCampusCareFn({
+    prompt: 'What is the status of my tickets?',
+  });
+  const student2Tickets = student2CareRes.data?.relevantTickets || [];
+  const leakedTicket = student2Tickets.find((t) => t.id === createdCompData.id);
+  assert.strictEqual(leakedTicket, undefined, 'Student 2 must not see Student 1 tickets in AI lookup');
+
+  // Student 2 attempts to append to Student 1's conversation -> rejected
+  await new Promise((r) => setTimeout(r, 2100));
+  await assert.rejects(
+    async () => {
+      await askCampusCareFn({
+        prompt: 'Attempting to inject into student 1 conversation',
+        conversationId: careRes1.data.conversationId,
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /do not own/i.test(err.message),
+    'Attempting to append to another student conversation must be rejected'
+  );
+  console.log(`✓ Test 37 Passed: Ticket and conversation isolation strictly enforced across students.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 38: AI-Assisted Complaint Reporting (aiAssistComplaint)
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 38] Verifying AI-Assisted Complaint Reporting (aiAssistComplaint)...`);
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  const aiAssistFn = httpsCallable(clientFunctions, 'aiAssistComplaint');
+
+  await new Promise((r) => setTimeout(r, 2100));
+  const assistRes = await aiAssistFn({
+    rawInput: 'air conditioning unit in Room 302 is blowing warm humid air and dripping onto desks',
+    building: 'Engineering Block B',
+    room: 'Room 302',
+  });
+  assert.ok(assistRes.data?.suggestedTitle, 'Must return suggested title');
+  assert.strictEqual(assistRes.data.suggestedCategory, 'AC_HVAC');
+  assert.strictEqual(assistRes.data.suggestedDepartment, 'HVAC & Climate Control');
+  assert.ok(assistRes.data.enhancedDescription, 'Must return enhanced description');
+  assert.strictEqual(assistRes.data.isMock, true);
+  assert.strictEqual(assistRes.data.provider, 'TEST_DOUBLE_HEURISTIC');
+  assert.strictEqual(assistRes.data.enhancementSource, 'RULE_BASED_ASSISTANCE');
+
+  // Input validation: rejecting rawInput under 3 characters
+  await assert.rejects(
+    async () => {
+      await aiAssistFn({ rawInput: 'ab' });
+    },
+    (err) => err.code?.includes('invalid-argument') || /validation/i.test(err.message),
+    'aiAssistComplaint with rawInput under 3 characters must be rejected with invalid-argument'
+  );
+  console.log(`✓ Test 38 Passed: aiAssistComplaint successfully enhanced student description and enforced input validation.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 39: Semantic Duplicate Complaint Detection, Metadata & Embedding Safety
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 39] Verifying Semantic Duplicate Detection, Metadata & Embedding Safety...`);
+  // 1. Submit First Complaint
+  const acComp1Res = await createComplaintCallable({
+    title: 'Split AC blowing hot air',
+    category: 'AC_HVAC',
+    building: 'Science Block',
+    floor: '1st Floor',
+    room: 'Lab 101',
+    description: 'The air conditioner is not cooling and making loud rattling noise in the computer lab.',
+    priority: 'HIGH',
+  });
+  assert.ok(acComp1Res.data?.success);
+  const acComp1Id = acComp1Res.data.data.id;
+  assert.ok(acComp1Res.data?.data?.referenceNumber);
+  assert.strictEqual(acComp1Res.data?.data?.status, 'SUBMITTED');
+  assert.ok(['PENDING', 'PROCESSING', 'COMPLETED'].includes(acComp1Res.data?.data?.clusteringStatus));
+
+  // Poll for background embedding generation for comp1
+  let embDoc;
+  for (let attempt = 0; attempt < 30; attempt++) {
+    embDoc = await db.collection('complaintEmbeddings').doc(acComp1Id).get();
+    if (embDoc.exists) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.ok(embDoc.exists, 'Complaint embedding record must exist in complaintEmbeddings');
+  const embData = embDoc.data();
+  assert.strictEqual(embData.source, 'TEST', 'Test environment embedding source must be TEST');
+  assert.strictEqual(embData.model, 'deterministic-test-projector');
+  assert.strictEqual(embData.dimensions, 64);
+  assert.ok(embData.textHash, 'textHash must be recorded');
+  assert.ok(['READY', 'SUCCESS'].includes(embData.status), 'status must indicate ready or success');
+
+  // Verify cosineSimilarity rejects cross-model and cross-source comparisons
+  const { cosineSimilarity, getGeminiEmbeddingModel } = await import('../functions/lib/campusCare.js');
+  const dummyGeminiEmb = {
+    values: new Array(768).fill(0.05),
+    source: 'GEMINI',
+    model: getGeminiEmbeddingModel(),
+    dimensions: 768,
+    textHash: 'hash-gemini',
+  };
+  const testDoubleEmb = {
+    values: embData.embedding,
+    source: embData.source,
+    model: embData.model,
+    dimensions: embData.dimensions,
+    textHash: embData.textHash,
+  };
+  assert.strictEqual(
+    cosineSimilarity(dummyGeminiEmb, testDoubleEmb),
+    0,
+    'cosineSimilarity must return 0 when comparing incompatible models/sources'
+  );
+
+  // 2. Submit Second Semantically Similar Complaint (Different Room, but strongly correlated symptoms)
+  const acComp2Res = await createComplaintCallable({
+    title: 'Air conditioning cooling failure in lab',
+    category: 'AC_HVAC',
+    building: 'Science Block',
+    floor: '1st Floor',
+    room: 'Lab 102',
+    description: 'Air conditioner completely stopped cooling the room, temperature very high and AC unit hot.',
+    priority: 'HIGH',
+  });
+  assert.ok(acComp2Res.data?.success);
+  const acComp2Id = acComp2Res.data.data.id;
+
+  // Poll for background clustering completion
+  let acComp2Doc;
+  let clusterId;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    acComp2Doc = await db.collection('complaints').doc(acComp2Id).get();
+    clusterId = acComp2Doc.data()?.clusterId;
+    if (clusterId && acComp2Doc.data()?.clusteringStatus === 'COMPLETED') break;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  assert.ok(clusterId, 'Second semantically similar complaint must be assigned a clusterId');
+
+  const clusterDoc = await db.collection('issueClusters').doc(clusterId).get();
+  assert.ok(clusterDoc.exists, 'Cluster document must exist');
+  const semanticClusterData = clusterDoc.data();
+  assert.ok(semanticClusterData.clusteringMethod === 'SEMANTIC_SIMILARITY' || semanticClusterData.clusteringMethod === 'HYBRID_SEMANTIC_PROXIMITY');
+  assert.ok(semanticClusterData.similarityScore >= 0.80, `Similarity score must be >= 0.80 (actual: ${semanticClusterData.similarityScore})`);
+  assert.strictEqual(semanticClusterData.embeddingSource, 'TEST');
+  assert.strictEqual(semanticClusterData.modelIdentifier, 'deterministic-test-projector');
+  assert.strictEqual(semanticClusterData.vectorDimensions, 64);
+  assert.ok(semanticClusterData.semanticExplanation, 'Semantic explanation must be recorded');
+  assert.ok(semanticClusterData.aiMaintenanceSummary, 'AI maintenance summary must be generated');
+  assert.strictEqual(semanticClusterData.status, 'SUGGESTED_INCIDENT');
+  assert.strictEqual(semanticClusterData.verifiedByAdmin, false);
+  assert.ok(semanticClusterData.ticketIds.includes(acComp1Id));
+  assert.ok(semanticClusterData.ticketIds.includes(acComp2Id));
+
+  // 3. Submit Unrelated Complaint (Water Leak) -> Must NOT join AC cluster
+  const plumbingCompRes = await createComplaintCallable({
+    title: 'Water tap leaking heavily',
+    category: 'WATER_SUPPLY',
+    building: 'Science Block',
+    floor: '1st Floor',
+    room: 'Washroom 1',
+    description: 'Continuous water leakage from tap flooding washroom floor.',
+    priority: 'MEDIUM',
+  });
+  assert.ok(plumbingCompRes.data?.success);
+  const plumbingCompId = plumbingCompRes.data.data.id;
+  const plumbingDoc = await db.collection('complaints').doc(plumbingCompId).get();
+  assert.notStrictEqual(plumbingDoc.data()?.clusterId, clusterId, 'Dissimilar complaint must not join the AC cluster');
+  console.log(`✓ Test 39 Passed: Semantic embeddings accurately clustered similar issues (score: ${semanticClusterData.similarityScore}) and verified embedding metadata safety.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 40: Admin Review Cluster Actions (Verify & Reject)
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 40] Verifying Admin Review Cluster Actions (Verify & Reject)...`);
+  await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+
+  // 1. Admin verifies AC cluster
+  const verifyRes = await reviewClusterCallable({
+    clusterId,
+    action: 'verify',
+    note: 'Admin verified centralized chiller outage.',
+  });
+  assert.ok(verifyRes.data?.success);
+  assert.strictEqual(verifyRes.data.status, 'ACTIVE_INCIDENT');
+  assert.strictEqual(verifyRes.data.verifiedByAdmin, true);
+
+  const updatedClusterSnap = await db.collection('issueClusters').doc(clusterId).get();
+  assert.strictEqual(updatedClusterSnap.data().status, 'ACTIVE_INCIDENT');
+  assert.strictEqual(updatedClusterSnap.data().verifiedByAdmin, true);
+  assert.ok(updatedClusterSnap.data().verifiedAt);
+  assert.ok(updatedClusterSnap.data().verifiedBy);
+
+  // Verify sanitized publicIncidents document was automatically generated
+  const publicIncidentDoc = await db.collection('publicIncidents').doc(clusterId).get();
+  assert.ok(publicIncidentDoc.exists, 'Public incident record must be created when cluster is verified');
+  const pubData = publicIncidentDoc.data();
+  assert.strictEqual(pubData.status, 'ACTIVE_INCIDENT');
+  assert.strictEqual(pubData.ticketIds, undefined, 'Public incident must omit raw ticketIds');
+  assert.strictEqual(pubData.submittedById, undefined, 'Public incident must omit submitter identity');
+  assert.ok(pubData.title, 'Public incident must have title');
+  assert.ok(pubData.summary, 'Public incident must have summary');
+
+  // 2. Admin rejects another cluster suggestion
+  const dummyClusterRef = db.collection('issueClusters').doc();
+  await dummyClusterRef.set({
+    id: dummyClusterRef.id,
+    title: 'False Positive Cluster',
+    status: 'SUGGESTED_INCIDENT',
+    verifiedByAdmin: false,
+    ticketIds: ['tkt-1', 'tkt-2'],
+    createdAt: new Date().toISOString(),
+  });
+
+  const rejectRes = await reviewClusterCallable({
+    clusterId: dummyClusterRef.id,
+    action: 'reject',
+    note: 'Independent problems, not a shared failure.',
+  });
+  assert.ok(rejectRes.data?.success);
+  assert.strictEqual(rejectRes.data.status, 'REJECTED');
+  assert.strictEqual(rejectRes.data.verifiedByAdmin, false);
+
+  const rejectedClusterSnap = await dummyClusterRef.get();
+  assert.strictEqual(rejectedClusterSnap.data().status, 'REJECTED');
+  assert.strictEqual(rejectedClusterSnap.data().verifiedByAdmin, false);
+
+  // Negative test: invalid adminReviewCluster payload rejected
+  await assert.rejects(
+    async () => {
+      await reviewClusterCallable({
+        clusterId: '',
+        action: 'invalid_action',
+      });
+    },
+    (err) => err.code?.includes('invalid-argument') || /validation/i.test(err.message),
+    'Invalid cluster review parameters must be rejected with invalid-argument'
+  );
+  console.log(`✓ Test 40 Passed: Admin cluster verify, reject, and public incident synchronization confirmed.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 41: Firestore Security Rules for Campus Care, Public Incidents & Embeddings
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 41] Verifying Security Rules for Campus Care, Public Incidents & Embeddings...`);
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  const student1ConvRef = doc(clientDb, 'campusCareConversations', careRes1.data.conversationId);
+
+  // Student 1 can read own conversation
+  const student1ReadSnap = await getDoc(student1ConvRef);
+  assert.ok(student1ReadSnap.exists, 'Student 1 must be able to read own conversation');
+
+  // Student 2 CANNOT read Student 1 conversation
+  await signInWithEmailAndPassword(clientAuth, student2Email, 'Password@2026');
+  await assert.rejects(
+    async () => {
+      await getDoc(student1ConvRef);
+    },
+    /permission-denied/i,
+    'Student 2 cannot read Student 1 campus care conversation'
+  );
+
+  // Direct client write to messages subcollection is blocked
+  await assert.rejects(
+    async () => {
+      await setDoc(doc(clientDb, 'campusCareConversations', careRes1.data.conversationId, 'messages', 'forged-msg'), {
+        role: 'user',
+        text: 'Forged message direct from client',
+        timestamp: new Date().toISOString(),
+      });
+    },
+    /permission-denied/i,
+    'Direct client message creation must be rejected'
+  );
+
+  // Raw issueClusters collection read is BLOCKED for ordinary students (Admin only)
+  await assert.rejects(
+    async () => {
+      await getDoc(doc(clientDb, 'issueClusters', clusterId));
+    },
+    /permission-denied/i,
+    'Ordinary student must NOT have read access to raw issueClusters'
+  );
+
+  // Sanitized publicIncidents collection read is ALLOWED for authenticated students
+  const studentPubSnap = await getDoc(doc(clientDb, 'publicIncidents', clusterId));
+  assert.ok(studentPubSnap.exists, 'Authenticated student must be able to read publicIncidents');
+  assert.strictEqual(studentPubSnap.data().ticketIds, undefined, 'Public incident must omit ticket IDs');
+
+  // Direct client write to publicIncidents is blocked
+  await assert.rejects(
+    async () => {
+      await setDoc(doc(clientDb, 'publicIncidents', 'forged-incident'), {
+        title: 'Forged Incident Title',
+        status: 'ACTIVE_INCIDENT',
+      });
+    },
+    /permission-denied/i,
+    'Direct client write to publicIncidents must be rejected'
+  );
+
+  // Direct client write to complaintEmbeddings is blocked
+  await assert.rejects(
+    async () => {
+      await setDoc(doc(clientDb, 'complaintEmbeddings', 'fake-complaint-id'), {
+        embedding: [0.1, 0.2, 0.3],
+        textSnippet: 'Fake embedding',
+      });
+    },
+    /permission-denied/i,
+    'Client write to complaintEmbeddings must be rejected'
+  );
+
+  // Direct client read of complaintEmbeddings is blocked
+  await assert.rejects(
+    async () => {
+      await getDoc(doc(clientDb, 'complaintEmbeddings', acComp1Id));
+    },
+    /permission-denied/i,
+    'Client read from complaintEmbeddings must be rejected'
+  );
+  console.log(`✓ Test 41 Passed: Campus Care chat privacy, cluster isolation & public incident access enforced.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 42: Production Mock Restrictions, Rate Limit & Schema Validation
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 42] Verifying Rate Limit Cooldown, Input Validation & Mock Restrictions...`);
+  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+
+  // Input validation: empty prompt must be rejected
+  await assert.rejects(
+    async () => {
+      await askCampusCareFn({ prompt: '' });
+    },
+    (err) => err.code?.includes('invalid-argument') || /validation/i.test(err.message),
+    'askCampusCareAi with empty prompt must be rejected with invalid-argument'
+  );
+
+  // Calling askCampusCareAi within 2s interval must trigger rate limit
+  try {
+    await askCampusCareFn({
+      prompt: 'First inquiry to initialize rate limit window',
+    });
+    // If first call succeeded, immediate second call must trigger rate limit
+    await assert.rejects(
+      async () => {
+        await askCampusCareFn({
+          prompt: 'Immediate rapid inquiry testing rate limit',
+        });
+      },
+      (err) => err.code?.includes('resource-exhausted') || /resource-exhausted|wait|seconds/i.test(err.message),
+      'Immediate rapid request must be rejected with resource-exhausted'
+    );
+  } catch (err) {
+    // If already rate-limited from prior test calls within 2s
+    assert.ok(
+      err.code?.includes('resource-exhausted') || /resource-exhausted|wait|seconds/i.test(err.message),
+      `Expected resource-exhausted error, got: ${err.message}`
+    );
+  }
+
+  // Verify production mock restriction helper (already imported above)
+  assert.strictEqual(typeof isEmulatorOrTestEnvironment, 'function');
+  // In active emulator run, returns true
+  assert.strictEqual(isEmulatorOrTestEnvironment(), true);
+  console.log(`✓ Test 42 Passed: AI rate limiting, schema validation and mock restrictions confirmed.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 43: Rule-Based Proximity Clustering & Similarity Score Omission
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 43] Verifying Rule-Based Location Proximity Clustering & Metadata...`);
+  const ruleComp1 = await createComplaintCallable({
+    title: 'Ceiling projector flickers violently',
+    category: 'ELECTRICAL',
+    building: 'Main Academic Block',
+    floor: '2nd Floor',
+    room: 'Lecture Hall 204',
+    description: 'The ceiling projector is flashing blue and green intermittently during lectures.',
+    priority: 'MEDIUM',
+  });
+  const ruleComp2 = await createComplaintCallable({
+    title: 'Power socket sparked near podium',
+    category: 'ELECTRICAL',
+    building: 'Main Academic Block',
+    floor: '2nd Floor',
+    room: 'Lecture Hall 204',
+    description: 'The wall outlet next to the professor podium sparked and stopped working.',
+    priority: 'HIGH',
+  });
+  assert.ok(ruleComp1.data?.success);
+  assert.ok(ruleComp2.data?.success);
+
+  let ruleComp2Doc;
+  let ruleClusterId;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    ruleComp2Doc = await db.collection('complaints').doc(ruleComp2.data.data.id).get();
+    ruleClusterId = ruleComp2Doc.data()?.clusterId;
+    if (ruleClusterId && ruleComp2Doc.data()?.clusteringStatus === 'COMPLETED') break;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  assert.ok(ruleClusterId, 'Rule-based location proximity should assign a clusterId');
+
+  const ruleClusterDoc = await db.collection('issueClusters').doc(ruleClusterId).get();
+  assert.ok(ruleClusterDoc.exists);
+  const ruleClusterData = ruleClusterDoc.data();
+  assert.strictEqual(ruleClusterData.clusteringMethod, 'RULE_BASED_LOCATION_PROXIMITY');
+  assert.strictEqual(ruleClusterData.similarityScore, undefined, 'Rule-based clusters must omit arbitrary numerical similarityScore');
+  assert.ok(ruleClusterData.confidenceBasis?.includes('Heuristic identical room & category match'));
+  console.log(`✓ Test 43 Passed: Rule-based location proximity verified without false numerical similarity scores.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 44: Legacy Embedding Invalidation, Incompatible Vectors & Idempotency
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 44] Verifying Legacy Cache Invalidation, Vector Safety & Idempotency...`);
+  const { getOrCreateComplaintEmbedding } = await import('../functions/lib/campusCare.js');
+  const { runComplaintClustering } = await import('../functions/lib/complaints.js');
+
+  // 1. Invalidation of legacy text-embedding-004 cache record
+  const legacyCompId = 'legacy-test-complaint-id';
+  await db.collection('complaintEmbeddings').doc(legacyCompId).set({
+    complaintId: legacyCompId,
+    embedding: new Array(768).fill(0.123),
+    source: 'GEMINI',
+    model: 'text-embedding-004', // Discontinued legacy model
+    dimensions: 768,
+    textHash: 'legacy-hash',
+    status: 'SUCCESS',
+    createdAt: new Date().toISOString(),
+  });
+
+  const refreshedEmb = await getOrCreateComplaintEmbedding(
+    db,
+    legacyCompId,
+    'AC cooling unit is freezing up and creating frost'
+  );
+  assert.ok(refreshedEmb);
+  assert.notStrictEqual(refreshedEmb.model, 'text-embedding-004', 'Legacy text-embedding-004 model must be invalidated');
+  assert.strictEqual(refreshedEmb.source, 'TEST');
+  assert.strictEqual(refreshedEmb.dimensions, 64);
+
+  // 2. Invalidation of corrupted non-number vector cache
+  const corruptCompId = 'corrupt-test-complaint-id';
+  await db.collection('complaintEmbeddings').doc(corruptCompId).set({
+    complaintId: corruptCompId,
+    embedding: [NaN, 0.5, Infinity, null],
+    source: 'TEST',
+    model: 'deterministic-test-projector',
+    dimensions: 4,
+    textHash: 'corrupt-hash',
+    status: 'SUCCESS',
+    createdAt: new Date().toISOString(),
+  });
+
+  const cleanEmb = await getOrCreateComplaintEmbedding(
+    db,
+    corruptCompId,
+    'Pipe leak in second floor bathroom'
+  );
+  assert.ok(cleanEmb);
+  assert.strictEqual(cleanEmb.dimensions, 64);
+  assert.ok(cleanEmb.embedding.every((v) => typeof v === 'number' && !isNaN(v) && isFinite(v)));
+
+  // 3. Incompatible vector comparisons safely return 0
+  assert.strictEqual(cosineSimilarity([0.1, 0.2], [0.1, NaN]), 0, 'Vector with NaN must return 0');
+  assert.strictEqual(cosineSimilarity({ values: [0.1], dimensions: 1, model: 'A' }, { values: [0.1], dimensions: 1, model: 'B' }), 0, 'Model mismatch must return 0');
+
+  // 4. Idempotency: repeating runComplaintClustering on an already-clustered complaint
+  const clusterSnapBefore = await db.collection('issueClusters').doc(clusterId).get();
+  const ticketCountBefore = clusterSnapBefore.data().ticketCount;
+
+  const repeatRun = await runComplaintClustering(db, acComp2Id);
+  assert.ok(repeatRun.success);
+  assert.strictEqual(repeatRun.status, 'ALREADY_CLUSTERED');
+  assert.strictEqual(repeatRun.clusterId, clusterId);
+
+  const clusterSnapAfter = await db.collection('issueClusters').doc(clusterId).get();
+  assert.strictEqual(clusterSnapAfter.data().ticketCount, ticketCountBefore, 'Ticket count must not be incremented on retry');
+  console.log(`✓ Test 44 Passed: Legacy embedding cache invalidated, vector safety confirmed, and background idempotency verified.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 45: Concurrency Safety & Race Condition Prevention
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 45] Verifying Concurrency Safety & Race Condition Prevention...`);
+  const concurrencyCompId = 'concurrency-test-comp-1';
+  const concurrencyCompRef = db.collection('complaints').doc(concurrencyCompId);
+  const concNow = new Date().toISOString();
+  await concurrencyCompRef.set({
+    id: concurrencyCompId,
+    referenceNumber: 'SS-2026-9991',
+    title: 'Network switch rebooting intermittently',
+    category: 'IT_SUPPORT',
+    building: 'Engineering Block',
+    floor: '3rd Floor',
+    room: 'Server Room 301',
+    description: 'Core switch reboots every hour causing dropped SSH sessions.',
+    priority: 'HIGH',
+    status: 'SUBMITTED',
+    submittedById: testStudentUid,
+    submittedByName: 'Concurrency Tester',
+    submittedByEmail: studentEmail,
+    clusteringStatus: 'PENDING',
+    clusteringAttempt: 0,
+    createdAt: concNow,
+    submittedAt: concNow,
+    updatedAt: concNow,
+    timeline: [],
+  });
+
+  // Launch two concurrent worker executions simultaneously
+  const [worker1Res, worker2Res] = await Promise.all([
+    runComplaintClustering(db, concurrencyCompId, undefined, 'worker-alpha'),
+    runComplaintClustering(db, concurrencyCompId, undefined, 'worker-beta'),
+  ]);
+
+  // One worker must claim and succeed; the other must encounter LEASE_LOCKED or ALREADY_CLUSTERED
+  const statuses = [worker1Res.status, worker2Res.status];
+  assert.ok(
+    statuses.includes('COMPLETED') || statuses.includes('ALREADY_CLUSTERED'),
+    `At least one worker must complete processing (got: ${statuses.join(', ')})`
+  );
+  assert.ok(
+    statuses.includes('LEASE_LOCKED') || statuses.includes('ALREADY_CLUSTERED'),
+    `Concurrent worker must be safely locked out with LEASE_LOCKED or ALREADY_CLUSTERED (got: ${statuses.join(', ')})`
+  );
+
+  // Verify complaint state in Firestore
+  const concDoc = await concurrencyCompRef.get();
+  assert.strictEqual(concDoc.data().clusteringStatus, 'COMPLETED');
+  assert.strictEqual(concDoc.data().clusteringLeaseOwner, null, 'Lease owner must be released upon completion');
+  assert.strictEqual(concDoc.data().clusteringLeaseExpiry, null, 'Lease expiry must be cleared upon completion');
+
+  // Verify that if a cluster was created or joined, ticketIds contains no duplicates and ticketCount === ticketIds.length
+  if (concDoc.data().clusterId) {
+    const concClusterSnap = await db.collection('issueClusters').doc(concDoc.data().clusterId).get();
+    if (concClusterSnap.exists) {
+      const clusterData = concClusterSnap.data();
+      const uniqueIds = new Set(clusterData.ticketIds);
+      assert.strictEqual(clusterData.ticketIds.length, uniqueIds.size, 'Cluster ticketIds must not contain duplicate tickets');
+      assert.strictEqual(clusterData.ticketCount, uniqueIds.size, 'Cluster ticketCount must exactly match unique ticket count');
+    }
+  }
+  console.log(`✓ Test 45 Passed: Concurrency-safe atomic lease claiming and idempotent cluster counting verified.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 46: Stale Lease Expiry & Worker Crash Recovery
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 46] Verifying Stale Lease Expiry & Worker Crash Recovery...`);
+  const staleCompId = 'stale-lease-comp-1';
+  const staleCompRef = db.collection('complaints').doc(staleCompId);
+  const pastIso = new Date(Date.now() - 5000).toISOString(); // 5 seconds expired
+  await staleCompRef.set({
+    id: staleCompId,
+    referenceNumber: 'SS-2026-9992',
+    title: 'Water fountain filter clogged',
+    category: 'WATER_SUPPLY',
+    building: 'Engineering Block',
+    floor: '1st Floor',
+    room: 'Hallway 102',
+    description: 'Water pressure very low and red filter indicator blinking.',
+    priority: 'LOW',
+    status: 'SUBMITTED',
+    submittedById: testStudentUid,
+    submittedByName: 'Stale Lease Tester',
+    submittedByEmail: studentEmail,
+    clusteringStatus: 'PROCESSING',
+    clusteringAttempt: 1,
+    clusteringAttemptId: 'attempt_stale_12345',
+    clusteringLeaseOwner: 'crashed-worker-old',
+    clusteringLeaseExpiry: pastIso,
+    createdAt: new Date(Date.now() - 10000).toISOString(),
+    submittedAt: new Date(Date.now() - 10000).toISOString(),
+    updatedAt: pastIso,
+    timeline: [],
+  });
+
+  // Recovery worker runs on this complaint
+  const recoveryRes = await runComplaintClustering(db, staleCompId, undefined, 'recovery-worker-hero');
+  assert.ok(recoveryRes.success, 'Recovery worker must successfully claim expired lease or acknowledge completion');
+  assert.ok(
+    ['COMPLETED', 'ALREADY_CLUSTERED'].includes(recoveryRes.status),
+    `Status must be COMPLETED or ALREADY_CLUSTERED (got: ${recoveryRes.status})`
+  );
+
+  // Verify complaint state after recovery
+  let recoveredSnap;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    recoveredSnap = await staleCompRef.get();
+    if (recoveredSnap.data()?.clusteringStatus === 'COMPLETED') break;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  assert.strictEqual(recoveredSnap.data().clusteringStatus, 'COMPLETED');
+  assert.ok(recoveredSnap.data().clusteringAttempt >= 2, 'Clustering attempt should increment');
+  assert.strictEqual(recoveredSnap.data().clusteringLeaseOwner, null, 'Lease owner must be released');
+  assert.strictEqual(recoveredSnap.data().clusteringLeaseExpiry, null, 'Lease expiry must be cleared');
+  console.log(`✓ Test 46 Passed: Stale lease recovery and crashed worker takeover verified.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 47: Duplicate Cluster Prevention & Cross-Worker Race Coordination
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 47] Verifying Duplicate Cluster Prevention Across Concurrent Complaints...`);
+  const raceComp1Id = 'race-comp-alpha';
+  const raceComp2Id = 'race-comp-beta';
+  const raceNow = new Date().toISOString();
+
+  await db.collection('complaints').doc(raceComp1Id).set({
+    id: raceComp1Id,
+    referenceNumber: 'SS-2026-9993',
+    title: 'Ceiling projector flickering violently',
+    category: 'ELECTRICAL',
+    building: 'Innovation Hub',
+    floor: '2nd Floor',
+    room: 'Seminar Room 201',
+    description: 'Projector display is blinking green and losing HDMI sync.',
+    priority: 'HIGH',
+    status: 'SUBMITTED',
+    submittedById: testStudentUid,
+    submittedByName: 'Student 1',
+    submittedByEmail: studentEmail,
+    clusteringStatus: 'PENDING',
+    clusteringAttempt: 0,
+    createdAt: raceNow,
+    submittedAt: raceNow,
+    updatedAt: raceNow,
+    timeline: [],
+  });
+
+  await db.collection('complaints').doc(raceComp2Id).set({
+    id: raceComp2Id,
+    referenceNumber: 'SS-2026-9994',
+    title: 'Power adapter sparks near projector mount',
+    category: 'ELECTRICAL',
+    building: 'Innovation Hub',
+    floor: '2nd Floor',
+    room: 'Seminar Room 201',
+    description: 'Ceiling power outlet next to projector sparked when turned on.',
+    priority: 'HIGH',
+    status: 'SUBMITTED',
+    submittedById: testStudentUid,
+    submittedByName: 'Student 2',
+    submittedByEmail: studentEmail,
+    clusteringStatus: 'PENDING',
+    clusteringAttempt: 0,
+    createdAt: raceNow,
+    submittedAt: raceNow,
+    updatedAt: raceNow,
+    timeline: [],
+  });
+
+  // Two workers concurrently race to create/join the first cluster for this room & category
+  await Promise.allSettled([
+    runComplaintClustering(db, raceComp1Id, undefined, 'worker-race-1'),
+    runComplaintClustering(db, raceComp2Id, undefined, 'worker-race-2'),
+  ]);
+
+  // Poll until both complaints have completed clustering
+  let raceSnap1, raceSnap2;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    raceSnap1 = await db.collection('complaints').doc(raceComp1Id).get();
+    raceSnap2 = await db.collection('complaints').doc(raceComp2Id).get();
+    if (
+      raceSnap1.data()?.clusteringStatus === 'COMPLETED' &&
+      raceSnap2.data()?.clusteringStatus === 'COMPLETED' &&
+      raceSnap1.data()?.clusterId &&
+      raceSnap2.data()?.clusterId
+    ) {
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+
+  const clusterId1 = raceSnap1.data().clusterId;
+  const clusterId2 = raceSnap2.data().clusterId;
+
+  assert.ok(clusterId1, 'Complaint 1 must have an assigned clusterId');
+  assert.ok(clusterId2, 'Complaint 2 must have an assigned clusterId');
+  assert.strictEqual(clusterId1, clusterId2, 'Both concurrent complaints MUST join the exact same clusterId');
+
+  // Verify cluster document by ID
+  const raceClusterSnap = await db.collection('issueClusters').doc(clusterId1).get();
+  assert.ok(raceClusterSnap.exists, 'Cluster document must exist in Firestore');
+  const sharedCluster = raceClusterSnap.data();
+  assert.strictEqual(sharedCluster.category, 'ELECTRICAL');
+  assert.strictEqual(sharedCluster.building, 'Innovation Hub');
+  assert.strictEqual(sharedCluster.room, 'Seminar Room 201');
+  assert.strictEqual(sharedCluster.ticketCount, 2, 'Shared cluster must have ticketCount == 2');
+  assert.ok(sharedCluster.ticketIds.includes(raceComp1Id), 'Must include complaint 1');
+  assert.ok(sharedCluster.ticketIds.includes(raceComp2Id), 'Must include complaint 2');
+
+  // Verify that exactly ONE cluster document exists for this room in issueClusters (zero duplicate clusters)
+  const allClustersSnap = await db.collection('issueClusters').get();
+  const matchedRoomClusters = allClustersSnap.docs.filter(
+    (d) => d.data().building === 'Innovation Hub' && d.data().room === 'Seminar Room 201'
+  );
+  assert.strictEqual(matchedRoomClusters.length, 1, 'Exactly ONE issueCluster must exist for this incident, zero duplicates');
+  console.log(`✓ Test 47 Passed: Two concurrent workers for the same room coordinated on a single cluster document without duplicates.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 48: Expired Worker Fencing & Zombie Write Prevention
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 48] Verifying Expired Worker Fencing & Zombie Write Prevention...`);
+  const { commitClusteringResult } = await import('../functions/lib/complaints.js');
+  const fencedCompId = 'fenced-worker-comp-1';
+  const fencedNow = new Date().toISOString();
+
+  // Initially create complaint claimed by stale worker whose lease expired 10 seconds ago
+  await db.collection('complaints').doc(fencedCompId).set({
+    id: fencedCompId,
+    referenceNumber: 'SS-2026-9995',
+    title: 'HVAC fan humming loudly',
+    category: 'AC_HVAC',
+    building: 'Innovation Hub',
+    floor: '1st Floor',
+    room: 'Room 105',
+    description: 'Vibration noise throughout the hallway.',
+    priority: 'MEDIUM',
+    status: 'SUBMITTED',
+    submittedById: testStudentUid,
+    submittedByName: 'Fencing Tester',
+    submittedByEmail: studentEmail,
+    clusteringStatus: 'PROCESSING',
+    clusteringAttempt: 1,
+    clusteringAttemptId: 'attempt_zombie_111',
+    clusteringLeaseOwner: 'zombie-worker',
+    clusteringLeaseExpiry: new Date(Date.now() - 10000).toISOString(), // expired
+    createdAt: fencedNow,
+    submittedAt: fencedNow,
+    updatedAt: fencedNow,
+    timeline: [],
+  });
+
+  // Legitimate active recovery worker claims the expired lease and completes processing
+  await runComplaintClustering(db, fencedCompId, undefined, 'legit-worker');
+  let postLegitSnap;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    postLegitSnap = await db.collection('complaints').doc(fencedCompId).get();
+    if (postLegitSnap.data()?.clusteringStatus === 'COMPLETED') break;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  assert.strictEqual(postLegitSnap.data().clusteringStatus, 'COMPLETED');
+  assert.ok(postLegitSnap.data().clusteringAttempt >= 2);
+
+  // Now the stale zombie worker attempts to commit its outdated result with old attemptId and workerId
+  const zombieCommitRes = await commitClusteringResult(db, {
+    complaintId: fencedCompId,
+    workerId: 'zombie-worker',
+    attemptId: 'attempt_zombie_111',
+    clusteringMethod: 'RULE_BASED_LOCATION_PROXIMITY',
+    matchedDocIds: [],
+    clusterMetadata: { confidenceBasis: 'Zombie commit attempt' },
+  });
+
+  assert.strictEqual(zombieCommitRes.success, false, 'Zombie worker commit must be rejected');
+  assert.strictEqual(zombieCommitRes.status, 'FENCED_EXPIRED_LEASE', 'Status must be FENCED_EXPIRED_LEASE');
+
+  // Verify complaint state was NOT overwritten by zombie worker
+  const postZombieSnap = await db.collection('complaints').doc(fencedCompId).get();
+  assert.strictEqual(postZombieSnap.data().clusteringStatus, 'COMPLETED');
+  assert.ok(postZombieSnap.data().clusteringAttempt >= 2, 'Attempt count must not be rolled back');
+  assert.strictEqual(postZombieSnap.data().clusteringLeaseOwner, null, 'Lease owner must remain released');
+  console.log(`✓ Test 48 Passed: Expired worker was fenced out; newer worker results preserved.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 49: Duplicate Trigger Event Delivery (At-Least-Once Delivery Idempotency)
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 49] Verifying Duplicate Trigger Event Delivery Idempotency...`);
+  // Re-invoking clustering on raceComp1Id (already completed and clustered in Test 47)
+  const dupEventRes = await runComplaintClustering(db, raceComp1Id, undefined, 'worker-dup-event');
+  assert.ok(dupEventRes.success);
+  assert.strictEqual(dupEventRes.status, 'ALREADY_CLUSTERED', 'Must recognize complaint is already clustered');
+  assert.strictEqual(dupEventRes.clusterId, clusterId1, 'Must return the existing clusterId');
+
+  // Verify cluster ticket count did not increase
+  const recheckedClusterSnap = await db.collection('issueClusters').doc(clusterId1).get();
+  assert.strictEqual(recheckedClusterSnap.data().ticketCount, 2, 'Ticket count must stay exactly 2');
+  assert.strictEqual(recheckedClusterSnap.data().ticketIds.length, 2, 'No duplicate IDs in ticketIds');
+  console.log(`✓ Test 49 Passed: Duplicate trigger event delivery safely acknowledged without duplicate counts.`);
+
+  // --------------------------------------------------------------------------
+  // TEST 50: Cluster Membership and Counts Stay Correct After Worker Retry
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 50] Verifying Cluster Membership & Count Consistency After Retry...`);
+  const retryCompId = 'retry-count-comp-1';
+  const retryNow = new Date().toISOString();
+
+  // Create complaint that previously had 1 failed attempt and was reset to PENDING
+  await db.collection('complaints').doc(retryCompId).set({
+    id: retryCompId,
+    referenceNumber: 'SS-2026-9996',
+    title: 'Water pipe leaking under sink',
+    category: 'WATER_SUPPLY',
+    building: 'Innovation Hub',
+    floor: '1st Floor',
+    room: 'Washroom 101',
+    description: 'Heavy dripping into floor drain.',
+    priority: 'MEDIUM',
+    status: 'SUBMITTED',
+    submittedById: testStudentUid,
+    submittedByName: 'Retry Student',
+    submittedByEmail: studentEmail,
+    clusteringStatus: 'PENDING',
+    clusteringAttempt: 1,
+    clusteringError: '[Retryable] Rate limit exceeded on previous attempt',
+    createdAt: retryNow,
+    submittedAt: retryNow,
+    updatedAt: retryNow,
+    timeline: [],
+  });
+
+  await runComplaintClustering(db, retryCompId, undefined, 'worker-retry-run');
+  let retryDoc;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    retryDoc = await db.collection('complaints').doc(retryCompId).get();
+    if (retryDoc.data()?.clusteringStatus === 'COMPLETED') break;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  assert.strictEqual(retryDoc.data().clusteringStatus, 'COMPLETED');
+  assert.ok(retryDoc.data().clusteringAttempt >= 2, 'Attempt must increment to 2');
+  assert.strictEqual(retryDoc.data().clusteringError, null, 'Previous error must be cleared');
+  assert.strictEqual(retryDoc.data().clusteringLeaseOwner, null);
+  assert.strictEqual(retryDoc.data().clusteringLeaseExpiry, null);
+
+  // Re-run again to ensure idempotency after retry
+  const secondRetryRun = await runComplaintClustering(db, retryCompId, undefined, 'worker-retry-second');
+  assert.ok(secondRetryRun.success);
+  assert.strictEqual(secondRetryRun.status, 'ALREADY_CLUSTERED');
+
+  const finalRetryDoc = await db.collection('complaints').doc(retryCompId).get();
+  assert.strictEqual(finalRetryDoc.data().clusteringAttempt, retryDoc.data().clusteringAttempt, 'Attempt should not increment for already completed ticket');
+  console.log(`✓ Test 50 Passed: Cluster membership, attempt count, and error clearance verified through retry workflow.`);
+
+  // --------------------------------------------------------------------------
   // TEST 19: Security Scan - Zero API Keys in Client Bundles
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 19] Verifying Zero Sensitive Keys or Secrets in Client Assets...`);
@@ -1729,7 +2619,7 @@ async function runTests() {
   console.log(`✓ Test 19 Passed: Client distribution verified free of exposed API keys.`);
 
   console.log(`\n======================================================`);
-  console.log(`  ALL 34 INTEGRATION, AI & SECURITY TESTS PASSED!`);
+  console.log(`  ALL 50 INTEGRATION, AI & SECURITY TESTS PASSED!`);
   console.log(`======================================================\n`);
   process.exit(0);
 }

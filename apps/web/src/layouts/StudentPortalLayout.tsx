@@ -26,6 +26,7 @@ import {
   X,
   LogOut,
   ExternalLink,
+  Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -58,6 +59,7 @@ export const StudentPortalLayout: React.FC = () => {
       title: 'MODULE B: CAMPUS INTELLIGENCE',
       items: [
         { label: 'Campus Dashboard', path: '/portal/campus', icon: Building },
+        { label: 'Campus Care AI', path: '/portal/campus-care', icon: Sparkles, badge: 'AI' },
         { label: 'Report an Issue', path: '/portal/report', icon: PlusCircle, highlight: true },
         { label: 'My Tickets', path: '/portal/tickets', icon: Ticket },
         { label: 'Speak Freely', path: '/portal/speak-freely', icon: ShieldAlert, badge: 'Privacy' },
