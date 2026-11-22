@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useAuth } from '@/hooks/useAuthDemo';
+import { useAuth } from '@/hooks/useAuth';
 import { AcademicService } from '@/services/academicService';
 import { CampusService } from '@/services/campusService';
 import { SubjectSummary, CampusTicket, SyllabusTopic } from '@solvesphere/shared';
@@ -66,7 +66,7 @@ export const StudentOverviewPage: React.FC = () => {
             <span>Semester 1 &bull; Academic Year 2026-27</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-            Welcome back, {user?.fullName || 'Aarav'}!
+            Welcome back, {user?.fullName || 'Student'}!
           </h1>
           <p className="text-blue-100 text-xs sm:text-sm leading-relaxed">
             Your academic and campus updates, brought together in one focused workspace.

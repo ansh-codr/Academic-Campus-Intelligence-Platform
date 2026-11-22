@@ -3,22 +3,21 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { AdminLoginSchema, AdminLoginInput } from '@solvesphere/shared';
-import { useAuth } from '@/hooks/useAuthDemo';
+import { useAuth } from '@/hooks/useAuth';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { ShieldAlert, ArrowRight, Sparkles, AlertCircle, Info } from 'lucide-react';
+import { ShieldAlert, ArrowRight, AlertCircle, Info } from 'lucide-react';
 
 export const AdminLoginPage: React.FC = () => {
   const navigate = useNavigate();
-  const { login, loginAsAdmin } = useAuth();
+  const { login, logout } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
   const {
     register,
     handleSubmit,
-    setValue,
     formState: { errors },
   } = useForm<AdminLoginInput>({
     resolver: zodResolver(AdminLoginSchema),
@@ -34,25 +33,23 @@ export const AdminLoginPage: React.FC = () => {
     try {
       const profile = await login(data.email, data.password);
       if (profile.role !== 'ADMIN') {
-        throw new Error('Access denied. This account does not possess verified ADMIN privileges.');
+        await logout();
+        throw new Error('Access denied. This account does not possess verified administrator credentials.');
       }
       navigate('/admin/dashboard');
     } catch (err: any) {
       console.error('Admin login error:', err);
-      setLoginError(err.message || 'Authentication failed or account lacks admin permissions.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleDemoFill = async () => {
-    setIsSubmitting(true);
-    setLoginError(null);
-    try {
-      await loginAsAdmin();
-      navigate('/admin/dashboard');
-    } catch (err: any) {
-      setLoginError(err.message || 'Admin sign in failed. Ensure admin bootstrap has been executed.');
+      let msg = err.message || 'Authentication failed or account lacks admin permissions.';
+      if (
+        err.code === 'auth/user-not-found' ||
+        err.code === 'auth/wrong-password' ||
+        err.code === 'auth/invalid-credential'
+      ) {
+        msg = 'Incorrect administrative credentials. Please verify your email and password.';
+      } else if (err.code === 'auth/too-many-requests') {
+        msg = 'Too many failed login attempts. Please wait a moment and try again.';
+      }
+      setLoginError(msg);
     } finally {
       setIsSubmitting(false);
     }
@@ -74,29 +71,18 @@ export const AdminLoginPage: React.FC = () => {
         </div>
 
         {/* Security Warning Notice */}
-        <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-xs text-amber-900 dark:text-amber-300 space-y-2.5">
+        <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-xs text-amber-900 dark:text-amber-300 space-y-1.5">
           <div className="flex items-center gap-1.5 font-bold">
             <Info className="w-4 h-4 shrink-0 text-amber-600" />
             <span>Role-Based Access Control (RBAC)</span>
           </div>
           <p className="text-[11px] leading-relaxed">
-            Admin accounts require cryptographically verified custom claims (<code className="font-mono">role: &apos;ADMIN&apos;</code>). Public self-assignment is strictly blocked.
+            Administrator accounts require cryptographically verified custom claims (<code className="font-mono">role: &apos;ADMIN&apos;</code>). Public self-assignment is strictly blocked.
           </p>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="w-full text-xs font-bold border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-900 text-amber-800 dark:text-amber-200"
-            onClick={handleDemoFill}
-            disabled={isSubmitting}
-          >
-            <Sparkles className="w-3.5 h-3.5 mr-1 text-amber-500" />
-            1-Click Sign In as Admin (Dr. Vikram Malhotra)
-          </Button>
         </div>
 
         {loginError && (
-          <div className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2 animate-in fade-in">
+          <div role="alert" className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2 animate-in fade-in">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>{loginError}</span>
           </div>
@@ -107,7 +93,7 @@ export const AdminLoginPage: React.FC = () => {
             <Input
               label="Staff / Administrator Email"
               type="email"
-              placeholder="e.g. admin@campus.edu"
+              placeholder="e.g. admin@institution.edu"
               error={errors.email?.message}
               {...register('email')}
             />

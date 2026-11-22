@@ -320,7 +320,7 @@ export const AdminClubsPage: React.FC = () => {
               <div>
                 <label className="font-bold text-slate-300 block mb-1">Student Lead / President</label>
                 <Input
-                  placeholder="e.g. Aarav Patel"
+                  placeholder="e.g. Priya Sharma"
                   value={leadName}
                   onChange={(e) => setLeadName(e.target.value)}
                 />

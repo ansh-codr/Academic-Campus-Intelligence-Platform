@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { useAuth } from '@/hooks/useAuthDemo';
+import { useAuth } from '@/hooks/useAuth';
 import { ThemeToggle } from '@/components/common/ThemeToggle';
 import { Badge } from '@/components/ui/Badge';
 import {
@@ -24,6 +24,7 @@ import {
   Menu,
   X,
   ExternalLink,
+  LogOut,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -31,7 +32,7 @@ export const AdminPortalLayout: React.FC = () => {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
-  const { user, loginAsAdmin } = useAuth();
+  const { user, logout } = useAuth();
 
   const adminNavGroups = [
     {
@@ -185,12 +186,21 @@ export const AdminPortalLayout: React.FC = () => {
             {!collapsed && (
               <div className="truncate flex-1">
                 <p className="text-xs font-bold text-white truncate">
-                  {user?.fullName || 'Dr. Vikram Malhotra'}
+                  {user?.fullName || 'Administrator'}
                 </p>
                 <p className="text-[10px] text-slate-400 truncate">
-                  Admin Authority &bull; Ops
+                  {user?.email || 'Central Admin'}
                 </p>
               </div>
+            )}
+            {!collapsed && (
+              <button
+                onClick={logout}
+                title="Sign out"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
             )}
           </div>
         </div>

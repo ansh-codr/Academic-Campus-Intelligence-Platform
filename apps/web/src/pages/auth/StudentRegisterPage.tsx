@@ -3,12 +3,11 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { StudentRegisterSchema, StudentRegisterInput } from '@solvesphere/shared';
-import { useAuth } from '@/hooks/useAuthDemo';
+import { useAuth } from '@/hooks/useAuth';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Badge } from '@/components/ui/Badge';
-import { GraduationCap, ArrowRight, CheckCircle, Info, AlertCircle } from 'lucide-react';
+import { GraduationCap, ArrowRight, CheckCircle, Info, AlertCircle, Mail } from 'lucide-react';
 
 export const StudentRegisterPage: React.FC = () => {
   const navigate = useNavigate();
@@ -40,14 +39,16 @@ export const StudentRegisterPage: React.FC = () => {
       setRegisteredSuccess(true);
       setTimeout(() => {
         navigate('/portal/overview');
-      }, 800);
+      }, 1500);
     } catch (err: any) {
       console.error('Registration failed:', err);
       let msg = err.message || 'Registration failed. Please check your inputs.';
       if (err.code === 'auth/email-already-in-use') {
-        msg = 'This email is already registered. Please sign in instead.';
+        msg = 'This email address is already registered. Please sign in instead.';
       } else if (err.code === 'auth/weak-password') {
         msg = 'Password is too weak. Please use at least 8 characters with numbers and uppercase.';
+      } else if (err.code === 'auth/network-request-failed') {
+        msg = 'Network connection failure. Please check your internet connection.';
       }
       setAuthError(msg);
     } finally {
@@ -74,21 +75,27 @@ export const StudentRegisterPage: React.FC = () => {
         <div className="p-3.5 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 text-xs text-brand-blue dark:text-blue-300 flex items-start gap-2">
           <Info className="w-4 h-4 shrink-0 mt-0.5" />
           <span>
-            <strong>Firebase Authentication Active:</strong> Student credentials and profiles are securely stored in Firebase Auth and Cloud Firestore.
+            <strong>Official Authentication:</strong> Student credentials and profiles are securely stored in Firebase Auth and Cloud Firestore. A verification email will be dispatched upon registration.
           </span>
         </div>
 
         {authError && (
-          <div className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2 animate-in fade-in">
+          <div role="alert" className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2 animate-in fade-in">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>{authError}</span>
           </div>
         )}
 
         {registeredSuccess && (
-          <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 flex items-center gap-2 text-emerald-800 dark:text-emerald-300 text-xs font-bold animate-in zoom-in-95">
-            <CheckCircle className="w-4 h-4 text-emerald-500" />
-            <span>Account created in Firebase! Launching your portal...</span>
+          <div role="status" className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 space-y-1.5 text-emerald-800 dark:text-emerald-300 text-xs font-bold animate-in zoom-in-95">
+            <div className="flex items-center gap-2">
+              <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
+              <span>Account successfully created in Firebase!</span>
+            </div>
+            <p className="text-[11px] font-normal text-emerald-700 dark:text-emerald-400 pl-6 flex items-center gap-1">
+              <Mail className="w-3.5 h-3.5" />
+              Verification link dispatched to your email. Launching your student portal...
+            </p>
           </div>
         )}
 
@@ -96,7 +103,7 @@ export const StudentRegisterPage: React.FC = () => {
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
             <Input
               label="Full Name"
-              placeholder="e.g. Aarav Sharma"
+              placeholder="e.g. Priyanshu Verma"
               error={errors.fullName?.message}
               {...register('fullName')}
             />
@@ -104,15 +111,15 @@ export const StudentRegisterPage: React.FC = () => {
             <Input
               label="University Email"
               type="email"
-              placeholder="e.g. aarav.sharma@campus.edu"
+              placeholder="e.g. student@institution.edu"
               error={errors.email?.message}
               helperText="Must be a valid email for verification."
               {...register('email')}
             />
 
             <Input
-              label="Student ID / Login ID"
-              placeholder="e.g. CS26019"
+              label="Student ID / Enrollment Number"
+              placeholder="e.g. STU-2026-1042"
               error={errors.studentId?.message}
               helperText="Letters, numbers, and hyphens only."
               {...register('studentId')}
@@ -149,7 +156,7 @@ export const StudentRegisterPage: React.FC = () => {
           <div className="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800 text-center text-xs text-slate-500">
             Already have an account?{' '}
             <Link to="/auth/login" className="font-bold text-brand-blue hover:underline">
-              Sign In &rarr;
+              Sign In with Firebase &rarr;
             </Link>
           </div>
         </Card>

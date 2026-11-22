@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { useAuth } from '@/hooks/useAuthDemo';
+import { useAuth } from '@/hooks/useAuth';
 import { ThemeToggle } from '@/components/common/ThemeToggle';
 import { Badge } from '@/components/ui/Badge';
 import { NotificationDropdown } from '@/components/notifications/NotificationDropdown';
@@ -27,6 +27,8 @@ import {
   LogOut,
   ExternalLink,
   Sparkles,
+  Mail,
+  RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -34,8 +36,23 @@ export const StudentPortalLayout: React.FC = () => {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [resendStatus, setResendStatus] = useState<string | null>(null);
   const location = useLocation();
-  const { user, logout } = useAuth();
+  const { user, logout, isEmailVerified, sendVerificationEmail, reloadUser } = useAuth();
+
+  const handleResendVerification = async () => {
+    setResending(true);
+    setResendStatus(null);
+    try {
+      await sendVerificationEmail();
+      setResendStatus('Verification link dispatched! Check your inbox.');
+    } catch (err: any) {
+      setResendStatus(err.message || 'Could not send verification email.');
+    } finally {
+      setResending(false);
+    }
+  };
 
   const navigationGroups = [
     {
@@ -204,10 +221,10 @@ export const StudentPortalLayout: React.FC = () => {
             {!collapsed && (
               <div className="truncate flex-1">
                 <p className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">
-                  {user?.fullName || 'Demo Student'}
+                  {user?.fullName || 'Student'}
                 </p>
                 <p className="text-[10px] text-slate-400 truncate">
-                  {user?.studentId || 'CS26019'} &bull; Sem 1
+                  {user?.studentId ? user.studentId : (user?.email || 'Authenticated')}
                 </p>
               </div>
             )}
@@ -261,6 +278,36 @@ export const StudentPortalLayout: React.FC = () => {
             </Link>
           </div>
         </header>
+
+        {/* Email Verification Banner */}
+        {user && !isEmailVerified && (
+          <div role="status" className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2.5 text-xs text-amber-900 dark:text-amber-200 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Mail className="w-4 h-4 text-amber-500 shrink-0" />
+              <span>
+                <strong>Email verification pending:</strong> Please verify your university email ({user.email}) for full account security.
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-xs">
+              {resendStatus && <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">{resendStatus}</span>}
+              <button
+                onClick={handleResendVerification}
+                disabled={resending}
+                className="underline hover:text-amber-600 font-semibold"
+              >
+                {resending ? 'Sending...' : 'Resend Link'}
+              </button>
+              <span className="text-slate-300 dark:text-slate-700">&bull;</span>
+              <button
+                onClick={reloadUser}
+                className="underline hover:text-amber-600 font-semibold flex items-center gap-1"
+              >
+                <RefreshCw className="w-3 h-3" />
+                I&apos;ve verified
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Dynamic Nested Page Content */}
         <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full flex-1">

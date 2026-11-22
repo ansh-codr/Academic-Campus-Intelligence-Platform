@@ -7,10 +7,14 @@ The receiving owner can operate this repository using **their own** GitHub permi
 Read in this order:
 1. `README.md` — development overview (legacy seed instructions require real-data migration before production).
 2. `docs/BACKEND_ARCHITECTURE.md` — trusted services and boundaries.
-3. `docs/FIRESTORE_DATA_MODEL.md` — collections, Storage and access rules.
-4. `docs/REAL_DATA_ONBOARDING.md` — retire fixtures and enter authentic institutional data.
-5. `docs/DEPLOYMENT_RUNBOOK.md` — staging, verification, release and rollback.
-6. `docs/FRIEND_HANDOVER.md` — owner signoff.
+3. `docs/AUTHENTICATION_ARCHITECTURE.md` — Firebase Authentication, RBAC, and session lifecycle.
+4. `docs/FIRESTORE_DATA_MODEL.md` — collections, Storage and access rules.
+5. `docs/FIREBASE_PROJECT_SETUP.md` — step-by-step institutional project provisioning.
+6. `docs/ADMIN_ACCOUNT_PROVISIONING.md` — secure administrator bootstrap via Admin SDK.
+7. `docs/REAL_DATA_ONBOARDING.md` — retire fixtures and enter authentic institutional data.
+8. `docs/DEPLOYMENT_RUNBOOK.md` — staging, verification, release and rollback.
+9. `docs/AUTH_SECURITY_CHECKLIST.md` — pre-deployment security verification.
+10. `docs/FRIEND_HANDOVER.md` — owner signoff.
 
 ## Accounts and responsibility
 - Repository: invite/transfer to receiving owner through GitHub's own permission and ownership flow, only after explicit approval.
@@ -33,4 +37,4 @@ Read in this order:
 - [ ] Source transfer and any existing live data transfer separately authorized and documented.
 
 ## Current state
-As of Phase 8 completion, real Firestore-backed services, dedicated admin management interfaces (`/admin/departments`, `/admin/clubs`, `/admin/academic`), assessment publication integrity & draft protection, read-only sample auditing, and 52 automated emulator integration/security tests exist and pass. However, **no live production deployment to Google Cloud/Firebase, live Gemini inference against production billing quotas, or receiving-owner project provisioning has been independently executed**. Do not mark handover complete before those operational steps are carried out on the receiving owner's GCP project.
+As of Phase 8.5 completion, genuine student authentication with email verification, secure administrator RBAC with custom claims, zero demo credentials in client bundles, `useAuth.tsx` production architecture, and 53 automated emulator integration/security tests exist and pass. However, **no live production deployment to Google Cloud/Firebase, live Gemini inference against production billing quotas, or receiving-owner project provisioning has been independently executed**. Do not mark handover complete before those operational steps are carried out on the receiving owner's GCP project per `docs/FIREBASE_PROJECT_SETUP.md`.

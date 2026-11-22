@@ -36,9 +36,12 @@ service cloud.firestore {
     match /users/{userId} {
       // User can read their own profile; admins can read all profiles
       allow read: if isOwner(userId) || isAdmin();
-      // User can create their profile on registration with STUDENT role
-      allow create: if isOwner(userId) && request.resource.data.role == 'STUDENT';
-      // User can update non-privileged fields only; cannot alter registered student ID, role, id, or email
+      // User can create their profile on registration with STUDENT role only; ID must match auth UID
+      allow create: if isOwner(userId) 
+        && request.resource.data.role == 'STUDENT'
+        && request.resource.data.id == userId
+        && !('customClaims' in request.resource.data);
+      // User can update non-privileged fields only; cannot alter registered student ID, role, id, email, or emailVerified
       allow update: if isOwner(userId) && isAllowedProfileUpdate();
       // Admins have full access
       allow update, delete: if isAdmin();

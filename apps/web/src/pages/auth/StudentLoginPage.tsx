@@ -3,22 +3,21 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { StudentLoginSchema, StudentLoginInput } from '@solvesphere/shared';
-import { useAuth } from '@/hooks/useAuthDemo';
+import { useAuth } from '@/hooks/useAuth';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Sparkles, ArrowRight, ShieldAlert, GraduationCap, AlertCircle, Info } from 'lucide-react';
+import { ArrowRight, GraduationCap, AlertCircle } from 'lucide-react';
 
 export const StudentLoginPage: React.FC = () => {
   const navigate = useNavigate();
-  const { login, loginAsStudent } = useAuth();
+  const { login } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
   const {
     register,
     handleSubmit,
-    setValue,
     formState: { errors },
   } = useForm<StudentLoginInput>({
     resolver: zodResolver(StudentLoginSchema),
@@ -37,22 +36,20 @@ export const StudentLoginPage: React.FC = () => {
     } catch (err: any) {
       console.error('Login error:', err);
       let msg = 'Invalid university email or password.';
-      if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+      if (
+        err.code === 'auth/user-not-found' ||
+        err.code === 'auth/wrong-password' ||
+        err.code === 'auth/invalid-credential'
+      ) {
         msg = 'Incorrect credentials. Please verify your email and password.';
+      } else if (err.code === 'auth/user-disabled') {
+        msg = 'This student account has been disabled. Please contact the campus administrator.';
+      } else if (err.code === 'auth/too-many-requests') {
+        msg = 'Too many failed login attempts. Please wait a moment and try again or reset your password.';
+      } else if (err.code === 'auth/network-request-failed') {
+        msg = 'Network connection failure. Please verify your connection to Firebase services.';
       }
       setLoginError(msg);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleDemoFill = async () => {
-    setIsSubmitting(true);
-    try {
-      await loginAsStudent();
-      navigate('/portal/overview');
-    } catch (err: any) {
-      setLoginError(err.message || 'Demo student sign in failed.');
     } finally {
       setIsSubmitting(false);
     }
@@ -73,30 +70,8 @@ export const StudentLoginPage: React.FC = () => {
           </p>
         </div>
 
-        {/* 1-Click Instant Demo Button */}
-        <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 text-xs text-brand-blue dark:text-blue-300 space-y-2.5">
-          <div className="flex items-center gap-1.5 font-bold">
-            <Info className="w-4 h-4 shrink-0" />
-            <span>Firebase Authentication</span>
-          </div>
-          <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-400">
-            Use your registered credentials or 1-click test fill to sign in via Firebase Auth:
-          </p>
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            className="w-full text-xs font-bold"
-            onClick={handleDemoFill}
-            disabled={isSubmitting}
-          >
-            <Sparkles className="w-3.5 h-3.5 mr-1 text-brand-blue" />
-            1-Click Sign In as Student (Aarav Sharma)
-          </Button>
-        </div>
-
         {loginError && (
-          <div className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2 animate-in fade-in">
+          <div role="alert" className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2 animate-in fade-in">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>{loginError}</span>
           </div>
@@ -107,7 +82,7 @@ export const StudentLoginPage: React.FC = () => {
             <Input
               label="University Email"
               type="email"
-              placeholder="e.g. aarav.sharma@campus.edu"
+              placeholder="e.g. yourname@institution.edu"
               error={errors.email?.message}
               {...register('email')}
             />
@@ -155,7 +130,6 @@ export const StudentLoginPage: React.FC = () => {
             to="/auth/admin-login"
             className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-amber-500 transition-colors"
           >
-            <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />
             <span>Are you a faculty or estate administrator? Admin Login &rarr;</span>
           </Link>
         </div>

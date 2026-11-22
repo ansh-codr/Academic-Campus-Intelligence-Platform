@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useAuth } from '@/hooks/useAuthDemo';
+import { useAuth } from '@/hooks/useAuth';
 import { CampusService } from '@/services/campusService';
 import { CampusTicket, TicketStatus } from '@solvesphere/shared';
 import { Card } from '@/components/ui/Card';

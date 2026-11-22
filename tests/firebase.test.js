@@ -21,6 +21,10 @@ import {
   getAuth as getClientAuth,
   connectAuthEmulator as connectClientAuthEmulator,
   signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
+  sendEmailVerification,
+  updateProfile as updateClientProfile,
   signOut,
 } from 'firebase/auth';
 import {
@@ -2951,8 +2955,139 @@ async function runTests() {
 
   console.log(`✓ Test 52 Passed: Negative assessment validation, draft isolation, and unauthorized caller blocks confirmed.`);
 
+  // --------------------------------------------------------------------------
+  // TEST 53: Phase 8.5 Production Authentication & Profile Security Verification
+  // --------------------------------------------------------------------------
+  console.log(`\n[TEST 53] Verifying Phase 8.5 Production Student & Admin Authentication Workflows...`);
+
+  const uniqueStudentEmail = `student.phase85.${Date.now()}@university.edu`;
+  const uniqueStudentPassword = 'ComplexStudentPass@2026';
+
+  // 1. Real Student Account Creation via Firebase Auth client SDK
+  const studentCred53 = await createUserWithEmailAndPassword(clientAuth, uniqueStudentEmail, uniqueStudentPassword);
+  assert.ok(studentCred53.user.uid, 'Firebase Auth must generate valid UID');
+  const studentUid53 = studentCred53.user.uid;
+
+  // Update Auth displayName
+  await updateClientProfile(studentCred53.user, { displayName: 'Kavya Raman' });
+  assert.strictEqual(studentCred53.user.displayName, 'Kavya Raman');
+
+  // 2. Email verification dispatch
+  await sendEmailVerification(studentCred53.user);
+  console.log(`✓ Email verification message dispatched for ${uniqueStudentEmail}`);
+
+  // 3. Create initial student profile in `users/{uid}` matching Security Rules
+  const studentProfileNow = new Date().toISOString();
+  await setDoc(doc(clientDb, 'users', studentUid53), {
+    id: studentUid53,
+    email: uniqueStudentEmail,
+    fullName: 'Kavya Raman',
+    studentId: 'STU-2026-9042',
+    role: 'STUDENT',
+    department: 'Computer Science & AI',
+    semester: 2,
+    emailVerified: false,
+    createdAt: studentProfileNow,
+    updatedAt: studentProfileNow,
+  });
+
+  // Verify student profile exists
+  const profileSnap53 = await getDoc(doc(clientDb, 'users', studentUid53));
+  assert.ok(profileSnap53.exists(), 'Profile document must exist in Firestore');
+  assert.strictEqual(profileSnap53.data().role, 'STUDENT');
+  assert.strictEqual(profileSnap53.data().studentId, 'STU-2026-9042');
+
+  // 4. Duplicate Email Registration Rejection
+  await assert.rejects(
+    async () => {
+      await createUserWithEmailAndPassword(clientAuth, uniqueStudentEmail, 'AnotherPassword@2026');
+    },
+    /auth\/email-already-in-use/i,
+    'Registering an existing email must fail with auth/email-already-in-use'
+  );
+
+  // 5. Password Reset Request
+  await sendPasswordResetEmail(clientAuth, uniqueStudentEmail);
+  console.log(`✓ Password reset request succeeded for ${uniqueStudentEmail}`);
+
+  // 6. Security Rule: Student cannot self-escalate role to ADMIN
+  await assert.rejects(
+    async () => {
+      await updateDoc(doc(clientDb, 'users', studentUid53), {
+        role: 'ADMIN',
+      });
+    },
+    /permission-denied/i,
+    'Student attempting to update role to ADMIN must be blocked by Firestore Rules'
+  );
+
+  // 7. Security Rule: Student cannot alter immutable student ID
+  await assert.rejects(
+    async () => {
+      await updateDoc(doc(clientDb, 'users', studentUid53), {
+        studentId: 'STU-FORGED-9999',
+      });
+    },
+    /permission-denied/i,
+    'Student attempting to alter studentId must be blocked by Firestore Rules'
+  );
+
+  // 8. Security Rule: Student cannot read another student profile
+  await assert.rejects(
+    async () => {
+      await getDoc(doc(clientDb, 'users', testStudentUid));
+    },
+    /permission-denied/i,
+    'Student attempting to read another student profile must be blocked by Firestore Rules'
+  );
+
+  // 9. Permitted profile update succeeds (department, semester)
+  await updateDoc(doc(clientDb, 'users', studentUid53), {
+    department: 'AI & Data Science',
+    semester: 3,
+    updatedAt: new Date().toISOString(),
+  });
+  const updatedProfileSnap = await getDoc(doc(clientDb, 'users', studentUid53));
+  assert.strictEqual(updatedProfileSnap.data().department, 'AI & Data Science');
+  assert.strictEqual(updatedProfileSnap.data().semester, 3);
+
+  // 10. Non-admin student blocked from administrative Cloud Functions
+  const manageDeptFn53 = httpsCallable(clientFunctions, 'adminManageDepartment');
+  await assert.rejects(
+    async () => {
+      await manageDeptFn53({
+        action: 'create',
+        data: {
+          name: 'Unauthorized Student Department',
+          code: 'UNAUTH',
+          category: 'GENERAL_INFRASTRUCTURE',
+          headName: 'Imposter',
+          contactEmail: 'unauth@campus.edu',
+          isActive: true,
+        },
+      });
+    },
+    (err) => err.code?.includes('permission-denied') || /permission|unauthorized|denied/i.test(err.message),
+    'Non-admin student must be rejected with permission-denied from adminManageDepartment'
+  );
+
+  // Sign out student
+  await signOut(clientAuth);
+
+  // 11. Admin Authentication with Custom Claim Verification
+  const adminCred53 = await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+  const adminToken53 = await adminCred53.user.getIdTokenResult(true);
+  assert.strictEqual(adminToken53.claims.role, 'ADMIN', 'Admin user must have verified role: "ADMIN" custom claim');
+
+  // Admin can read any student profile
+  const adminReadStudentSnap = await getDoc(doc(clientDb, 'users', studentUid53));
+  assert.ok(adminReadStudentSnap.exists(), 'Admin must have permission to read any student profile');
+  assert.strictEqual(adminReadStudentSnap.data().fullName, 'Kavya Raman');
+
+  console.log(`✓ Test 53 Passed: Student registration, email verification dispatch, profile ownership, role escalation protection, and admin RBAC verified.`);
+
   console.log(`\n======================================================`);
-  console.log(`  ALL 52 INTEGRATION, AI & SECURITY TESTS PASSED!`);
+  console.log(`  ALL 53 INTEGRATION, AI & SECURITY TESTS PASSED!`);
   console.log(`======================================================\n`);
   process.exit(0);
 }

@@ -6,10 +6,12 @@ export interface UserProfile {
   studentId?: string;
   email: string;
   role: UserRole;
+  emailVerified?: boolean;
   department?: string;
   semester?: number;
   avatarUrl?: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface AuthSession {

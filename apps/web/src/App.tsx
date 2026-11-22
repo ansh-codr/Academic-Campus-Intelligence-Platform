@@ -1,7 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation, Link } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { AuthProvider, useAuth } from '@/hooks/useAuthDemo';
+import { AuthProvider, useAuth } from '@/hooks/useAuth';
 
 // Layouts
 import { PublicLayout } from '@/layouts/PublicLayout';

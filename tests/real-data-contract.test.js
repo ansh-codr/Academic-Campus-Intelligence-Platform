@@ -34,3 +34,19 @@ test('legacy seeded club membership and admin preview are absent', () => {
 test('fixtures directory is absent from production client source tree', () => {
   assert.equal(existsSync(new URL('../apps/web/src/fixtures', import.meta.url)), false, 'apps/web/src/fixtures must not exist in client source tree');
 });
+
+test('legacy useAuthDemo and 1-click demo credentials are absent from client source tree', () => {
+  assert.equal(existsSync(new URL('../apps/web/src/hooks/useAuthDemo.tsx', import.meta.url)), false, 'useAuthDemo.tsx must not exist in client source tree');
+  
+  const authHook = read('apps/web/src/hooks/useAuth.tsx');
+  assert.doesNotMatch(authHook, /student\.demo@campus\.edu|Student@2026|SolveSphereAdmin@2026|loginAsStudent|loginAsAdmin/);
+
+  const studentLogin = read('apps/web/src/pages/auth/StudentLoginPage.tsx');
+  assert.doesNotMatch(studentLogin, /1-Click Sign In|loginAsStudent|Aarav Sharma/);
+
+  const adminLogin = read('apps/web/src/pages/auth/AdminLoginPage.tsx');
+  assert.doesNotMatch(adminLogin, /1-Click Sign In|loginAsAdmin|Vikram Malhotra/);
+
+  const studentRegister = read('apps/web/src/pages/auth/StudentRegisterPage.tsx');
+  assert.doesNotMatch(studentRegister, /Aarav Sharma|CS26019/);
+});

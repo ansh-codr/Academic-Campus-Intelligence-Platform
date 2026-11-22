@@ -101,17 +101,17 @@ Access the application at `http://localhost:5173`.
 
 | Role | Email | Password | Display Name | Permissions |
 |---|---|---|---|---|
-| **Student** | `student.demo@campus.edu` | `Student@2026` | Aarav Sharma | Student Portal, Issue Reporting, My Tickets, Study Resources |
-| **Admin** | `admin@campus.edu` | `SolveSphereAdmin@2026` | Dr. Vikram Malhotra | Full Administrative Command, Triage, Status Changes, Assignments |
+| **Student** | `student.demo@campus.edu` | `Student@2026` | Test Student | Student Portal, Issue Reporting, My Tickets, Study Resources |
+| **Admin** | `admin@campus.edu` | `SolveSphereAdmin@2026` | Test Administrator | Full Administrative Command, Triage, Status Changes, Assignments |
 
-Both login pages also include **1-Click Instant Sign In** buttons for development evaluation.
+*Note: In production builds, login forms use genuine email/password authentication via Firebase Auth with email verification. One-click demo fill buttons and hardcoded credentials have been completely eradicated from production client bundles.*
 
 ---
 
 ## 5. Security & Access Control Implementation
 
 ### 1. Custom Claims Role Verification
-Public registration only creates accounts with `role: 'STUDENT'`. Admin accounts can only be provisioned using trusted tooling (`scripts/bootstrap-admin.js` via Admin SDK).
+Public registration only creates accounts with `role: 'STUDENT'`. Admin accounts can only be provisioned using trusted tooling (`scripts/bootstrap-admin.js` via Admin SDK). See [Admin Provisioning Runbook](docs/ADMIN_ACCOUNT_PROVISIONING.md).
 
 ### 2. Client-Side Route Protection (`apps/web/src/App.tsx`)
 - `<RequireAuth>`: Intercepts unauthenticated visits to `/portal/*` and redirects to `/auth/login`.
@@ -119,6 +119,7 @@ Public registration only creates accounts with `role: 'STUDENT'`. Admin accounts
 
 ### 3. Server-Side Security Rules (`firestore.rules`)
 - **Strict Ownership**: Students can only query and read their own complaints (`submittedById == request.auth.uid`).
+- **Profile Immutability**: Students cannot alter their own `role`, `id`, `studentId`, or add `customClaims`.
 - **Privilege Separation**: Only Admins can modify complaint status and department assignment.
 - **Resource Integrity**: Academic courses, topics, and verified resources are read-only for students.
 
@@ -131,7 +132,7 @@ A comprehensive integration test suite verifies the complete platform:
 firebase emulators:exec --only auth,firestore,functions,storage "node tests/firebase.test.js"
 ```
 
-**Verified Test Scenarios (52 automated test suites):**
+**Verified Test Scenarios (53 automated test suites):**
 1. Student Account Registration in Firebase Auth and Cloud Firestore.
 2. Privilege Escalation Prevention (Public users cannot self-assign ADMIN role).
 3. Admin Account Provisioning with verified `{ role: 'ADMIN' }` custom claims.
@@ -145,6 +146,7 @@ firebase emulators:exec --only auth,firestore,functions,storage "node tests/fire
 11. Dedicated Admin Real Data Management (`/admin/departments`, `/admin/clubs`, `/admin/academic`).
 12. Assessment Publication Validation & Unpublished Draft Isolation (Drafts protected from student access).
 13. Read-Only Sample Data Inventory & Safety Auditing.
+14. Production Authentication Workflows (Student Registration, Email Verification Dispatch, Profile Immutability, Password Reset, and Admin RBAC).
 
 ---
 
