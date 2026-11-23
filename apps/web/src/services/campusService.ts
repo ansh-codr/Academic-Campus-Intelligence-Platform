@@ -13,7 +13,7 @@ import {
   runTransaction,
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytes, getBlob } from 'firebase/storage';
 import { db, functions, auth, storage } from '@/lib/firebase';
 import {
   CampusTicket,
@@ -51,8 +51,18 @@ export const CampusService = {
       contentType: file.type || 'image/jpeg',
     });
 
-    const downloadUrl = await getDownloadURL(storageRef);
-    return downloadUrl;
+    return storageRef.toString();
+  },
+
+  async downloadAttachment(path: string): Promise<void> {
+    const object = ref(storage, path);
+    const blob = await getBlob(object, 10 * 1024 * 1024);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = object.name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
   },
 
   /**
