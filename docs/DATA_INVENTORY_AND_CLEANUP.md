@@ -9,7 +9,7 @@
 
 ## 1. Executive Policy & Non-Destructive Standard
 
-Under Phase 8 real-data handover, SolveSphere AI enforces that:
+SolveSphere AI uses these data sources:
 1. **The inventory tool (`scripts/inventory-sample-data.js`) is strictly read-only.** It contains zero deletion logic, performs zero mutations, and refuses destructive flags.
 2. **Ambiguous provenance is separated from explicit sample data.** A document with `[DEMO]` in its title is never automatically classified as disposable; human inspection is required to avoid deleting genuine university test-pilot courses or student clubs.
 3. **Candidate sample documents require explicit provenance tags**, such as `isSampleData: true` or `isDemoFixture: true`.

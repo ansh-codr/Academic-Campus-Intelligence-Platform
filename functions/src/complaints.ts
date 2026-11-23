@@ -112,7 +112,7 @@ async function verifyAndResolveAttachment(
     try {
       parsedUrl = new URL(inputRef);
     } catch {
-      throw new HttpsError('invalid-argument', `Invalid attachment URL format: ${inputRef}`);
+      throw new HttpsError('invalid-argument', 'Invalid attachment URL format.');
     }
 
     const allowedHosts = [
@@ -171,7 +171,7 @@ async function verifyAndResolveAttachment(
   if (pathUid !== uid) {
     throw new HttpsError(
       'permission-denied',
-      `Attachment ownership verification failed. Cannot claim files belonging to another student (owner: ${pathUid}).`
+      'You can only attach your own files.'
     );
   }
 
@@ -201,7 +201,7 @@ async function verifyAndResolveAttachment(
   if (!allowedMime.test(contentType)) {
     throw new HttpsError(
       'invalid-argument',
-      `Disallowed attachment content type '${contentType}'. Only images, PDFs, and plain text documents are permitted.`
+      'Choose a JPEG, PNG, WebP or PDF attachment.'
     );
   }
 

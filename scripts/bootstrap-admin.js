@@ -108,7 +108,7 @@ export function validateAdminBootstrapConfig(env = process.env) {
     isEmulator,
     email: email || 'admin@campus.edu',
     password: password || randomBytes(24).toString('base64url'),
-    fullName: env.ADMIN_NAME || 'Dr. Vikram Malhotra',
+    fullName: env.ADMIN_NAME || 'Campus administrator',
     projectId: projectId || 'solvesphere-ai-dev',
   };
 }

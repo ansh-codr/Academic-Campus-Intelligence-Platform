@@ -65,7 +65,7 @@ export const StudentPortalLayout: React.FC = () => {
       title: 'MODULE A: ACADEMIC INTELLIGENCE',
       items: [
         { label: 'Academic Dashboard', path: '/portal/academic', icon: GraduationCap },
-        { label: 'My 6 Subjects', path: '/portal/subjects', icon: BookOpen },
+        { label: 'My Subjects', path: '/portal/subjects', icon: BookOpen },
         { label: 'Topic Timeline', path: '/portal/timeline', icon: CalendarDays },
         { label: 'Study Resources', path: '/portal/resources', icon: FileText },
         { label: 'StudyMate AI', path: '/portal/studymate', icon: Bot, badge: 'AI' },

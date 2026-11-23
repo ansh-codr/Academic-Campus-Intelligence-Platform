@@ -33,6 +33,8 @@ export const TopicTimelinePage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  const [progressError, setProgressError] = useState<string | null>(null);
+
   // Load subject list and initial progress
   useEffect(() => {
     AcademicService.getSubjects()
@@ -42,7 +44,8 @@ export const TopicTimelinePage: React.FC = () => {
         setLoadError(err?.message || 'Failed to load course subjects.');
       });
     if (user?.id) {
-      AcademicService.getStudentStudyProgress(user.id).then(setStudyProgress);
+      AcademicService.getStudentStudyProgress(user.id).then(setStudyProgress)
+        .catch(() => setProgressError('Could not load your personal study progress.'));
     }
   }, [user?.id]);
 
@@ -80,6 +83,7 @@ export const TopicTimelinePage: React.FC = () => {
     const current = !!studyProgress[topic.id];
     const nextState = !current;
 
+    setProgressError(null);
     // Optimistic UI update
     setStudyProgress((prev) => ({ ...prev, [topic.id]: nextState }));
 
@@ -87,6 +91,7 @@ export const TopicTimelinePage: React.FC = () => {
       await AcademicService.togglePersonalTopicStudy(user.id, topic.id, topic.subjectId, nextState);
     } catch (err) {
       console.error('Failed to update personal study progress:', err);
+      setProgressError('Could not save your personal study progress.');
       // Revert on error
       setStudyProgress((prev) => ({ ...prev, [topic.id]: current }));
     }
@@ -112,12 +117,12 @@ export const TopicTimelinePage: React.FC = () => {
         </p>
       </div>
 
-      {loadError && (
+      {(loadError || progressError) && (
         <div
           role="alert"
           className="p-4 rounded-xl border border-red-500/30 bg-red-950/20 text-red-200 text-xs sm:text-sm flex items-center justify-between"
         >
-          <span>{loadError}</span>
+          <span>{loadError || progressError}</span>
         </div>
       )}
 

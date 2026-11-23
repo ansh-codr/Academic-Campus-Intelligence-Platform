@@ -78,7 +78,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Synchronize Firebase Auth state and Firestore profile
   useEffect(() => {
+    let revision = 0;
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
+      const current = ++revision;
       if (!firebaseUser) {
         setUser(null);
         setRole(null);
@@ -152,10 +154,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           };
         }
 
+        if (current !== revision || auth.currentUser?.uid !== firebaseUser.uid) return;
         setUser(profileData);
         setRole(customRole);
       } catch (err: any) {
-        console.error('Error synchronizing user profile from Firestore:', err);
+        if (current !== revision || auth.currentUser?.uid !== firebaseUser.uid) return;
         setProfileError('Unable to synchronize profile from Cloud Firestore. Using authenticated identity.');
         const customRole: UserRole = 'STUDENT';
         setUser({
@@ -169,11 +172,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
         setRole(customRole);
       } finally {
-        setIsLoading(false);
+        if (current === revision) setIsLoading(false);
       }
     });
 
-    return () => unsubscribe();
+    return () => { revision++; unsubscribe(); };
   }, []);
 
   // Check for Google Redirect Result on initial mount

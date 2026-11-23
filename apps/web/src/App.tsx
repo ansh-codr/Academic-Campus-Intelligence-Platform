@@ -163,7 +163,7 @@ export function App() {
                 <Route path="/" element={<LandingPage />} />
                 <Route path="/auth/login" element={<StudentLoginPage />} />
                 <Route path="/auth/register" element={<StudentRegisterPage />} />
-                <Route path="/auth/complete-profile" element={<CompleteProfilePage />} />
+                <Route path="/auth/complete-profile" element={<RequireAuth><CompleteProfilePage /></RequireAuth>} />
                 <Route path="/auth/forgot-password" element={<ForgotPasswordPage />} />
                 <Route path="/auth/admin-login" element={<AdminLoginPage />} />
                 <Route path="*" element={<NotFoundPage />} />

@@ -1,6 +1,6 @@
 # SolveSphere AI — Backend Architecture
 
-**Status:** Source-based architecture reference for the Phase 8 handover. This is not proof of a live deployment.
+**Status:** Source-based architecture reference. This is not proof of a live deployment.
 
 ## Stack and source of truth
 - Firebase Authentication manages identity; administrator authorization is the Firebase custom claim `role: 'ADMIN'`, not a client-supplied profile role.

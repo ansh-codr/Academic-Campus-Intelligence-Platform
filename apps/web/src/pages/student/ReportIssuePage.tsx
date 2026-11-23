@@ -158,7 +158,7 @@ export const ReportIssuePage: React.FC = () => {
       setUploadProgress('Submitting complaint to Firestore...');
       const payload: CreateTicketInput = {
         ...data,
-        attachmentUrls: uploadedUrls.length > 0 ? uploadedUrls : undefined,
+        attachmentUrls: uploadedUrls,
       };
 
       const result = await CampusService.createTicket(payload);
