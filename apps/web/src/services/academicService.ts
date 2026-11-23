@@ -249,10 +249,11 @@ export const AcademicService = {
   // Quizzes & Practice Modules
   // --------------------------------------------------------------------------
 
-  async getQuizzes(subjectId?: string): Promise<Quiz[]> {
+  async getQuizzes(subjectId?: string, includeDrafts = false): Promise<Quiz[]> {
     try {
       const col = collection(db, 'quizzes');
       let q = query(col, orderBy('createdAt', 'desc'));
+      if (!includeDrafts) q = query(q, where('published', '==', true));
       if (subjectId && subjectId !== 'ALL') {
         q = query(q, where('subjectId', '==', subjectId));
       }
@@ -282,9 +283,9 @@ export const AcademicService = {
   /**
    * Submits answers to trusted Cloud Function for server-side score calculation and persistence.
    */
-  async submitQuiz(quizId: string, answers: QuizAnswerSubmission[]): Promise<{ attempt: QuizAttempt }> {
-    const submitFn = httpsCallable<{ quizId: string; answers: QuizAnswerSubmission[] }, { success: boolean; attempt: QuizAttempt }>(functions, 'submitQuiz');
-    const result = await submitFn({ quizId, answers });
+  async submitQuiz(quizId: string, answers: QuizAnswerSubmission[], submissionId: string): Promise<{ attempt: QuizAttempt }> {
+    const submitFn = httpsCallable<{ quizId: string; answers: QuizAnswerSubmission[]; submissionId: string }, { success: boolean; attempt: QuizAttempt }>(functions, 'submitQuiz');
+    const result = await submitFn({ quizId, answers, submissionId });
     if (!result.data?.success || !result.data.attempt) {
       throw new Error('Quiz submission could not be verified by the server.');
     }

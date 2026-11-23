@@ -70,7 +70,7 @@ const COURSE_SUGGESTIONS: Record<string, string[]> = {
 export const StudyMateAiPage: React.FC = () => {
   const { user } = useAuth();
   const [subjects, setSubjects] = useState<SubjectSummary[]>([]);
-  const [selectedSubject, setSelectedSubject] = useState('CS101');
+  const [selectedSubject, setSelectedSubject] = useState('');
   const [mode, setMode] = useState<SyllabusMode>('WITHIN_SYLLABUS');
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -90,8 +90,8 @@ export const StudyMateAiPage: React.FC = () => {
       sender: 'assistant',
       content:
         'Hello! I am **StudyMate AI**, your syllabus-grounded academic tutor. I have direct access to your enrolled courses, active classroom topics, and faculty lecture notes. Ask any concept question, request step-by-step mathematical solutions, or test yourself with quick practice drills!',
-      timestamp: '10:00 AM',
-      subjectContext: 'CS101',
+      timestamp: '',
+      subjectContext: '',
       mode: 'WITHIN_SYLLABUS',
     },
   ]);
@@ -245,7 +245,7 @@ export const StudyMateAiPage: React.FC = () => {
         handleStartNewConversation();
       }
     } catch (err) {
-      console.error('Failed to delete conversation:', err);
+      setErrorMessage('The conversation could not be deleted.');
     }
   };
 

@@ -73,7 +73,7 @@ export const CampusCareAiPage: React.FC = () => {
       sender: 'assistant',
       content:
         'Hello! I am **Campus Care AI**, your smart campus support concierge. I can look up the real-time status of your maintenance tickets, draft detailed repair requests for technicians, and route facility issues to the proper campus departments.',
-      timestamp: '10:00 AM',
+      timestamp: '',
       suggestedFaqs: [
         'How do I report a classroom AC leak?',
         'What is the turnaround time for Wi-Fi repairs?',

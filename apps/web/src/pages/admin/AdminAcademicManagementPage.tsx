@@ -113,7 +113,7 @@ export const AdminAcademicManagementPage: React.FC = () => {
       const [loadedSubjs, loadedRes, loadedQuizzes, loadedAttempts] = await Promise.all([
         AcademicService.getSubjects(),
         AcademicService.getResources(),
-        AcademicService.getQuizzes(),
+        AcademicService.getQuizzes(undefined, true),
         AcademicService.getAllStudentAttempts(),
       ]);
       setSubjects(loadedSubjs);

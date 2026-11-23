@@ -1,5 +1,5 @@
-import { callableOptions } from './callable.js';
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { campusCallable, callableOptions, parseInput, docId } from './callable.js';
+import { HttpsError } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import admin from 'firebase-admin';
 import crypto from 'crypto';
@@ -446,7 +446,7 @@ export async function getOrCreateComplaintEmbedding(
  * Callable Cloud Function: askCampusCareAi
  * Intelligent campus assistant for support processes, ticket tracking, and complaint drafting.
  */
-export const askCampusCareAi = onCall(
+export const askCampusCareAi = campusCallable(
   {
     ...callableOptions,
     secrets: [geminiApiKey],
@@ -735,7 +735,7 @@ Hello! I am your **Campus Care AI** assistant. I can help you:
  * Enhances rough student issue descriptions into structured complaint suggestions.
  * Does NOT submit complaints automatically.
  */
-export const aiAssistComplaint = onCall(
+export const aiAssistComplaint = campusCallable(
   {
     ...callableOptions,
     secrets: [geminiApiKey],

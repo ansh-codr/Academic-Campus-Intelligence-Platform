@@ -3409,11 +3409,14 @@ async function runTests() {
   assert.equal(timeline.size, 1);
   assert.equal(timeline.docs[0].data().status, 'SUBMITTED');
   const verifiedQuizCallable = httpsCallable(clientFunctions, 'submitQuiz');
-  const googleQuizRes = await verifiedQuizCallable({
-    quizId: quizId,
+  const quizSubmission = {
+    quizId, submissionId: crypto.randomUUID(),
     answers: [{ questionId: 'q-math-1', selectedOptionIndex: 1 }],
-  });
-  assert.ok(googleQuizRes.data?.success, 'Verified student must now be permitted to take quizzes');
+  };
+  const [first, retry] = await Promise.all([verifiedQuizCallable(quizSubmission), verifiedQuizCallable(quizSubmission)]);
+  assert.ok(first.data?.success);
+  assert.equal(first.data.attempt.id, retry.data.attempt.id);
+  assert.deepEqual(first.data.attempt, retry.data.attempt);
 
   console.log(`✓ Test 57 Passed: Admin enrollment approval, audit trail, and student service unblocking verified.`);
 
@@ -3444,6 +3447,9 @@ async function runTests() {
 
   const dupClientDb = getClientFirestore(dupClientApp);
   connectClientFirestoreEmulator(dupClientDb, '127.0.0.1', 8080);
+
+  await assert.rejects(getDoc(doc(dupClientDb, 'complaints', googleCompRes.data.data.id)), e => e.code === 'permission-denied');
+  await assert.rejects(getDoc(doc(dupClientDb, 'complaints', googleCompRes.data.data.id, 'timeline', timeline.docs[0].id)), e => e.code === 'permission-denied');
 
   // Student 2 attempts to claim the exact same studentId in enrollmentRequests
   await setDoc(doc(dupClientDb, 'users', secondUid), {

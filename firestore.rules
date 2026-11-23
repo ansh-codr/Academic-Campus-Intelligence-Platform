@@ -189,7 +189,7 @@ service cloud.firestore {
 
     // Practice / Quizzes
     match /quizzes/{quizId} {
-      allow read: if isAuthenticated();
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.published == true);
       allow write: if isAdmin();
 
       // Protected Question Bank (prevents pre-submission answer leakage)

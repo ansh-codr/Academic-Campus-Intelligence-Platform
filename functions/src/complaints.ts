@@ -1,6 +1,7 @@
+import { z } from 'zod';
 import { createHash } from 'node:crypto';
-import { callableOptions } from './callable.js';
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { campusCallable, callableOptions, parseInput, docId } from './callable.js';
+import { HttpsError } from 'firebase-functions/v2/https';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import admin from 'firebase-admin';
@@ -14,6 +15,9 @@ import {
   cosineSimilarity,
   getSmartDepartmentRecommendation,
 } from './campusCare.js';
+
+// Deploy location-based clustering without provisioning an AI secret.
+const semanticClustering = process.env.ENABLE_GEMINI_CLUSTERING === 'true';
 
 // Mapping for default department routing
 export function getDepartmentForCategory(category: string): string {
@@ -114,10 +118,9 @@ async function verifyAndResolveAttachment(
     const allowedHosts = [
       'firebasestorage.googleapis.com',
       'storage.googleapis.com',
-      '127.0.0.1',
-      'localhost',
+      ...(process.env.FUNCTIONS_EMULATOR === 'true' ? ['127.0.0.1', 'localhost'] : []),
     ];
-    if (!allowedHosts.includes(parsedUrl.hostname)) {
+    if ((parsedUrl.protocol !== 'https:' && !['127.0.0.1', 'localhost'].includes(parsedUrl.hostname)) || !allowedHosts.includes(parsedUrl.hostname)) {
       throw new HttpsError('permission-denied', `Disallowed attachment storage host: ${parsedUrl.hostname}`);
     }
 
@@ -252,7 +255,7 @@ async function verifyAndResolveAttachment(
  * Enforces ownership from context.auth.uid
  * Validates attachment ownership, implements scalable semantic duplicate clustering, and idempotent notification
  */
-export const createComplaint = onCall(
+export const createComplaint = campusCallable(
   {
     ...callableOptions,
     timeoutSeconds: 60,
@@ -960,7 +963,7 @@ export async function runComplaintClustering(
 export const onComplaintCreatedClustering = onDocumentCreated(
   {
     document: 'complaints/{complaintId}',
-    secrets: [geminiApiKey],
+    secrets: semanticClustering ? [geminiApiKey] : [],
     timeoutSeconds: 60,
     memory: '256MiB',
     maxInstances: 5,
@@ -970,7 +973,7 @@ export const onComplaintCreatedClustering = onDocumentCreated(
     const snap = event.data;
     if (!snap) return;
     const complaintId = event.params.complaintId;
-    const apiKey = resolveGeminiApiKey();
+    const apiKey = semanticClustering ? resolveGeminiApiKey() : undefined;
     const db = admin.firestore();
     await runComplaintClustering(db, complaintId, apiKey);
   }
@@ -986,14 +989,14 @@ export const onComplaintCreatedClustering = onDocumentCreated(
 export const recoverStaleComplaintLeases = onSchedule(
   {
     schedule: 'every 5 minutes',
-    secrets: [geminiApiKey],
+    secrets: semanticClustering ? [geminiApiKey] : [],
     timeoutSeconds: 120,
     memory: '256MiB',
     maxInstances: 1,
   },
   async () => {
     const db = admin.firestore();
-    const apiKey = resolveGeminiApiKey();
+    const apiKey = semanticClustering ? resolveGeminiApiKey() : undefined;
     const nowIso = new Date().toISOString();
 
     // 1. Recover expired leases stuck in PROCESSING
@@ -1029,7 +1032,7 @@ export const recoverStaleComplaintLeases = onSchedule(
  * Callable Cloud Function: reopenTicket
  * Allows student (ticket owner) or administrator to reopen a RESOLVED or CLOSED ticket
  */
-export const reopenTicket = onCall(
+export const reopenTicket = campusCallable(
   {
     ...callableOptions,
     timeoutSeconds: 60,
@@ -1041,7 +1044,7 @@ export const reopenTicket = onCall(
       throw new HttpsError('unauthenticated', 'User must be authenticated to reopen a ticket.');
     }
 
-    const { ticketId, reason } = request.data || {};
+    const { ticketId, reason } = parseInput(z.object({ ticketId: docId, reason: z.string().trim().min(5).max(1000) }), request.data);
     if (!ticketId || typeof ticketId !== 'string') {
       throw new HttpsError('invalid-argument', 'ticketId is required.');
     }

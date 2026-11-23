@@ -48,7 +48,7 @@ const POPULAR_DEPARTMENTS = [
 export const CompleteProfilePage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, submitEnrollmentRequest } = useAuth();
+  const { user, reloadUser, submitEnrollmentRequest } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isEditingPending, setIsEditingPending] = useState(false);
@@ -158,6 +158,7 @@ export const CompleteProfilePage: React.FC = () => {
             </div>
 
             <div className="flex flex-col sm:flex-row gap-3 pt-2">
+              <Button type="button" variant="outline" onClick={reloadUser}>Refresh status</Button>
               <Button
                 variant="outline"
                 className="w-full text-xs"

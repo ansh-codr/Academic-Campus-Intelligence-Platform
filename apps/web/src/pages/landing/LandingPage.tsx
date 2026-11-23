@@ -43,12 +43,12 @@ export const LandingPage: React.FC = () => {
       a: 'When multiple students in the same wing or lecture hall report related issues (e.g., "Library AC not cooling" and "Reading room feels hot"), SolveSphere semantic algorithms cluster them into a single root-cause work order. This prevents duplicate tickets and helps campus technicians fix the master system faster.',
     },
     {
-      q: 'What are the 6 first-year subjects supported in Phase 1?',
-      a: 'The platform ships with structured syllabus models for CS101 Foundation in AI, Design Thinking, Digital Electronics, Digital Electronics Lab, Mathematics, and Business Communication.',
+      q: 'Which subjects appear in my academic portal?',
+      a: 'Campus administrators publish subjects, syllabus topics and learning resources for their institution.',
     },
     {
       q: 'What is currently available in SolveSphere AI?',
-      a: 'The platform includes Firebase sign-in and Firestore-backed academic and campus workflows, with sample data fallbacks. StudyMate currently demonstrates a conversational UI with example responses; live generative AI inference is not connected.',
+      a: 'The portal uses Firebase Authentication and Firestore. Verified students can submit maintenance tickets and take published assessments. StudyMate requires a configured AI service.',
     },
   ];
 
