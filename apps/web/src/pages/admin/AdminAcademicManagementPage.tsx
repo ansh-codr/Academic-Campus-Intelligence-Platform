@@ -1,3 +1,4 @@
+import { externalFileUrl } from '@/lib/utils';
 import React, { useEffect, useState } from 'react';
 import { AcademicService } from '@/services/academicService';
 import {
@@ -672,7 +673,7 @@ export const AdminAcademicManagementPage: React.FC = () => {
 
                     <div className="flex items-center gap-1">
                       {res.fileUrl && (
-                        <a href={res.fileUrl} target="_blank" rel="noreferrer">
+                        <a href={externalFileUrl(res.fileUrl)} target="_blank" rel="noreferrer">
                           <Button size="sm" variant="ghost" className="text-xs text-brand-blue">
                             <Eye className="w-3.5 h-3.5" />
                           </Button>

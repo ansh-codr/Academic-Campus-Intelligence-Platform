@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -46,6 +46,7 @@ const POPULAR_DEPARTMENTS = [
 ];
 
 export const CompleteProfilePage: React.FC = () => {
+  const location = useLocation();
   const navigate = useNavigate();
   const { user, submitEnrollmentRequest } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -64,7 +65,7 @@ export const CompleteProfilePage: React.FC = () => {
     resolver: zodResolver(CompleteProfileSchema),
     defaultValues: {
       fullName: user?.fullName || '',
-      studentId: user?.studentId || '',
+      studentId: user?.studentId || location.state?.studentId || '',
       department: user?.department || 'Computer Science & Engineering',
       semester: user?.semester || 1,
     },

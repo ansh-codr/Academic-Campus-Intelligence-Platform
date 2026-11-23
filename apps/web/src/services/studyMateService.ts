@@ -58,8 +58,7 @@ export const StudyMateService = {
       const snap = await getDocs(q);
       return snap.docs.map((d) => ({ id: d.id, ...d.data() } as StudyMateConversation));
     } catch (err) {
-      console.warn('Could not load conversations:', err);
-      return [];
+      throw err;
     }
   },
 
@@ -76,8 +75,7 @@ export const StudyMateService = {
       const snap = await getDocs(q);
       return snap.docs.map((d) => ({ id: d.id, ...d.data() } as StudyMateMessage));
     } catch (err) {
-      console.warn('Could not load messages:', err);
-      return [];
+      throw err;
     }
   },
 

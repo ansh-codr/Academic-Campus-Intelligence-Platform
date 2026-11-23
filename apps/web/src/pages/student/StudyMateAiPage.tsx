@@ -103,10 +103,10 @@ export const StudyMateAiPage: React.FC = () => {
       if (subjs.length > 0 && !selectedSubject) {
         setSelectedSubject(subjs[0].code);
       }
-    });
+    }).catch(() => setErrorMessage('Subjects could not be loaded.'));
 
     if (user?.id) {
-      StudyMateService.getConversations(user.id).then(setConversations);
+      StudyMateService.getConversations(user.id).then(setConversations).catch(() => setErrorMessage('Conversation history could not be loaded.'));
     }
   }, [user?.id]);
 
@@ -162,7 +162,7 @@ export const StudyMateAiPage: React.FC = () => {
         setCurrentConversationId(response.conversationId);
         // Refresh conversation history
         if (user?.id) {
-          StudyMateService.getConversations(user.id).then(setConversations);
+          StudyMateService.getConversations(user.id).then(setConversations).catch(() => setErrorMessage('Conversation history could not be loaded.'));
         }
       }
 
@@ -229,7 +229,7 @@ export const StudyMateAiPage: React.FC = () => {
         );
       }
     } catch (err) {
-      console.error('Failed to load conversation:', err);
+      setErrorMessage('Conversation messages could not be loaded.');
     } finally {
       setIsLoading(false);
       setShowHistorySidebar(false);

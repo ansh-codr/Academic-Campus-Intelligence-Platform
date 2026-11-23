@@ -22,9 +22,8 @@ export const ForgotPasswordPage: React.FC = () => {
       await resetPassword(email);
       setIsSent(true);
     } catch (err: any) {
-      console.error('Password reset notice:', err);
-      // To prevent account enumeration, return neutral response
-      setIsSent(true);
+      if (err.code === 'auth/user-not-found') setIsSent(true);
+      else setErrorMsg('The password reset request could not be sent. Check the email address and try again.');
     } finally {
       setIsSubmitting(false);
     }

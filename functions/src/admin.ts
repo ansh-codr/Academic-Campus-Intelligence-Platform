@@ -1,3 +1,4 @@
+import { callableOptions } from './callable.js';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import admin from 'firebase-admin';
 import { TicketStatus, AdminReviewClusterSchema } from '@solvesphere/shared';
@@ -17,7 +18,7 @@ const ALLOWED_TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
 /**
  * Callable Cloud Function: updateTicketStatus (Admin only)
  */
-export const updateTicketStatus = onCall({ cors: true }, async (request) => {
+export const updateTicketStatus = onCall(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -102,7 +103,7 @@ export const updateTicketStatus = onCall({ cors: true }, async (request) => {
   } catch (err: any) {
     console.error('Error in updateTicketStatus:', err);
     if (err instanceof HttpsError) throw err;
-    throw new HttpsError('internal', err.message || 'Failed to update ticket status.');
+    throw new HttpsError('internal', 'Failed to update ticket status.');
   }
 });
 
@@ -111,7 +112,7 @@ export const updateTicketStatus = onCall({ cors: true }, async (request) => {
  * Validates that the department exists and is active.
  * Prefers stable department IDs over unverified names.
  */
-export const assignTicketDepartment = onCall({ cors: true }, async (request) => {
+export const assignTicketDepartment = onCall(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -237,7 +238,7 @@ export const assignTicketDepartment = onCall({ cors: true }, async (request) => 
     };
   } catch (err: any) {
     if (err instanceof HttpsError) throw err;
-    throw new HttpsError('internal', err.message || 'Failed to assign ticket.');
+    throw new HttpsError('internal', 'Failed to assign ticket.');
   }
 });
 
@@ -246,7 +247,7 @@ export const assignTicketDepartment = onCall({ cors: true }, async (request) => 
  * Creates, updates, or toggles active status with strict field allowlist validation.
  * Prevents unauthorized modification of IDs, timestamps, or counters.
  */
-export const adminManageDepartment = onCall({ cors: true }, async (request) => {
+export const adminManageDepartment = onCall(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -318,7 +319,7 @@ export const adminManageDepartment = onCall({ cors: true }, async (request) => {
     }
   } catch (err: any) {
     if (err instanceof HttpsError) throw err;
-    throw new HttpsError('internal', err.message || 'Failed to manage department.');
+    throw new HttpsError('internal', 'Failed to manage department.');
   }
 });
 
@@ -327,7 +328,7 @@ export const adminManageDepartment = onCall({ cors: true }, async (request) => {
  * Creates, updates, or archives campus clubs with strict field allowlist validation.
  * Prevents unauthorized modification of IDs, timestamps, or system metadata.
  */
-export const adminManageClub = onCall({ cors: true }, async (request) => {
+export const adminManageClub = onCall(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -406,7 +407,7 @@ export const adminManageClub = onCall({ cors: true }, async (request) => {
     }
   } catch (err: any) {
     if (err instanceof HttpsError) throw err;
-    throw new HttpsError('internal', err.message || 'Failed to manage club.');
+    throw new HttpsError('internal', 'Failed to manage club.');
   }
 });
 
@@ -415,7 +416,7 @@ export const adminManageClub = onCall({ cors: true }, async (request) => {
  * Reviews, verifies, merges, resolves, rejects, or dismisses suggested rule-based and semantic issue clusters.
  * Enforces admin confirmation before converting a suggestion into an official active incident.
  */
-export const adminReviewCluster = onCall({ cors: true }, async (request) => {
+export const adminReviewCluster = onCall(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -508,7 +509,7 @@ export const adminReviewCluster = onCall({ cors: true }, async (request) => {
     };
   } catch (err: any) {
     if (err instanceof HttpsError) throw err;
-    throw new HttpsError('internal', err.message || 'Failed to review cluster.');
+    throw new HttpsError('internal', 'Failed to review cluster.');
   }
 });
 
@@ -516,7 +517,7 @@ export const adminReviewCluster = onCall({ cors: true }, async (request) => {
  * Callable Cloud Function: adminApproveEnrollment (Admin only)
  * Atomically verifies student enrollment, reserves roll number, and updates user profile.
  */
-export const adminApproveEnrollment = onCall({ cors: true }, async (request) => {
+export const adminApproveEnrollment = onCall(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -629,7 +630,7 @@ export const adminApproveEnrollment = onCall({ cors: true }, async (request) => 
     });
   } catch (err: any) {
     if (err instanceof HttpsError) throw err;
-    throw new HttpsError('internal', err.message || 'Failed to approve enrollment request.');
+    throw new HttpsError('internal', 'Failed to approve enrollment request.');
   }
 });
 
@@ -637,7 +638,7 @@ export const adminApproveEnrollment = onCall({ cors: true }, async (request) => 
  * Callable Cloud Function: adminRejectEnrollment (Admin only)
  * Rejects an enrollment request with a mandatory explanation and frees any pending reservation.
  */
-export const adminRejectEnrollment = onCall({ cors: true }, async (request) => {
+export const adminRejectEnrollment = onCall(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -730,6 +731,6 @@ export const adminRejectEnrollment = onCall({ cors: true }, async (request) => {
     });
   } catch (err: any) {
     if (err instanceof HttpsError) throw err;
-    throw new HttpsError('internal', err.message || 'Failed to reject enrollment request.');
+    throw new HttpsError('internal', 'Failed to reject enrollment request.');
   }
 });

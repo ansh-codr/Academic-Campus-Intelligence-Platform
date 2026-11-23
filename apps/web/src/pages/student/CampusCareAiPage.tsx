@@ -85,7 +85,7 @@ export const CampusCareAiPage: React.FC = () => {
   // Load conversations on mount
   useEffect(() => {
     if (user?.id) {
-      CampusCareService.getConversations(user.id).then(setConversations);
+      CampusCareService.getConversations(user.id).then(setConversations).catch(() => setErrorMessage('Conversation history could not be loaded.'));
     }
   }, [user?.id]);
 
@@ -130,7 +130,7 @@ export const CampusCareAiPage: React.FC = () => {
       if (response.conversationId && response.conversationId !== currentConversationId) {
         setCurrentConversationId(response.conversationId);
         if (user?.id) {
-          CampusCareService.getConversations(user.id).then(setConversations);
+          CampusCareService.getConversations(user.id).then(setConversations).catch(() => setErrorMessage('Conversation history could not be loaded.'));
         }
       }
 

@@ -1,3 +1,4 @@
+import { useAuth } from '@/hooks/useAuth';
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CampusService } from '@/services/campusService';
@@ -21,17 +22,19 @@ import {
 } from 'lucide-react';
 
 export const CampusDashboardPage: React.FC = () => {
+  const { user } = useAuth();
   const [tickets, setTickets] = useState<CampusTicket[]>([]);
   const [incidents, setIncidents] = useState<PublicCampusIncident[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!user?.id) return;
     const unsubTickets = CampusService.subscribeTickets(
       (t) => {
         setTickets(t);
         setLoadError(null);
       },
-      undefined,
+      user.id,
       (err) => {
         console.error('Tickets subscription error:', err);
         setLoadError('Failed to synchronize campus tickets.');
@@ -42,7 +45,7 @@ export const CampusDashboardPage: React.FC = () => {
         setIncidents(inc);
       },
       (err) => {
-        console.error('Public incidents subscription error:', err);
+        setLoadError('Failed to synchronize campus incidents.');
       }
     );
 
@@ -50,7 +53,7 @@ export const CampusDashboardPage: React.FC = () => {
       unsubTickets();
       unsubIncidents();
     };
-  }, []);
+  }, [user?.id]);
 
   const activeCount = tickets.filter(
     (t) => t.status !== 'RESOLVED' && t.status !== 'CLOSED'

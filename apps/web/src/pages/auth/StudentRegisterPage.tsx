@@ -58,7 +58,7 @@ export const StudentRegisterPage: React.FC = () => {
       await registerStudent(data);
       setRegisteredSuccess(true);
       setTimeout(() => {
-        navigate('/portal/overview');
+        navigate('/auth/complete-profile', { state: { studentId: data.studentId } });
       }, 1500);
     } catch (err: any) {
       console.error('Registration failed:', err);

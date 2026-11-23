@@ -1,3 +1,4 @@
+import { callableOptions } from './callable.js';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import admin from 'firebase-admin';
 import {
@@ -15,7 +16,7 @@ import {
  * Returns sanitized questions (stripping correctOptionIndex and explanation)
  * to prevent students from cheating prior to submission.
  */
-export const getQuizQuestions = onCall({ cors: true }, async (request) => {
+export const getQuizQuestions = onCall(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to access quizzes.');
   }
@@ -67,7 +68,7 @@ export const getQuizQuestions = onCall({ cors: true }, async (request) => {
  * Grades submissions against true keys stored in Firestore, generates explanations,
  * records the attempt in quizAttempts, and returns the verified score.
  */
-export const submitQuiz = onCall({ cors: true }, async (request) => {
+export const submitQuiz = onCall(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to submit quiz.');
   }
@@ -183,7 +184,7 @@ export const submitQuiz = onCall({ cors: true }, async (request) => {
  * Callable Function: adminSaveQuiz (Admin only)
  * Provisions or updates a complete quiz with question keys.
  */
-export const adminSaveQuiz = onCall({ cors: true }, async (request) => {
+export const adminSaveQuiz = onCall(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -257,7 +258,7 @@ export const adminSaveQuiz = onCall({ cors: true }, async (request) => {
 /**
  * Callable Function: adminDeleteQuiz (Admin only)
  */
-export const adminDeleteQuiz = onCall({ cors: true }, async (request) => {
+export const adminDeleteQuiz = onCall(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -289,7 +290,7 @@ export const adminDeleteQuiz = onCall({ cors: true }, async (request) => {
  * Callable Function: adminUpdateTopicStatus (Admin only)
  * Updates topic status, logs timestamp and editor.
  */
-export const adminUpdateTopicStatus = onCall({ cors: true }, async (request) => {
+export const adminUpdateTopicStatus = onCall(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -328,7 +329,7 @@ export const adminUpdateTopicStatus = onCall({ cors: true }, async (request) => 
  * Lets a student independently track personal study completion of a topic
  * without modifying official classroom teaching records.
  */
-export const toggleStudentTopicProgress = onCall({ cors: true }, async (request) => {
+export const toggleStudentTopicProgress = onCall(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }

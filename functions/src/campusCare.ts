@@ -1,3 +1,4 @@
+import { callableOptions } from './callable.js';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import admin from 'firebase-admin';
@@ -447,7 +448,7 @@ export async function getOrCreateComplaintEmbedding(
  */
 export const askCampusCareAi = onCall(
   {
-    cors: true,
+    ...callableOptions,
     secrets: [geminiApiKey],
     timeoutSeconds: 60,
     memory: '256MiB',
@@ -488,7 +489,7 @@ export const askCampusCareAi = onCall(
       if (!snap.exists) {
         throw new HttpsError('not-found', 'The specified conversation does not exist.');
       }
-      if (snap.data()?.userId !== uid && request.auth.token.role !== 'ADMIN') {
+      if (snap.data()?.userId !== uid) {
         throw new HttpsError('permission-denied', 'You do not own this conversation.');
       }
     }
@@ -671,6 +672,9 @@ Hello! I am your **Campus Care AI** assistant. I can help you:
         throw new HttpsError('not-found', 'The specified conversation does not exist.');
       }
 
+      if (convSnap.exists && convSnap.data()?.userId !== uid) {
+        throw new HttpsError('permission-denied', 'You do not own this conversation.');
+      }
       const title = convSnap.exists
         ? convSnap.data()?.title
         : trimmedPrompt.slice(0, 48) + (trimmedPrompt.length > 48 ? '...' : '');
@@ -733,7 +737,7 @@ Hello! I am your **Campus Care AI** assistant. I can help you:
  */
 export const aiAssistComplaint = onCall(
   {
-    cors: true,
+    ...callableOptions,
     secrets: [geminiApiKey],
     timeoutSeconds: 60,
     memory: '256MiB',

@@ -40,7 +40,8 @@ export CONFIRM_PROD_ADMIN_BOOTSTRAP="true"
 export GCLOUD_PROJECT="your-production-firebase-project-id"
 export ADMIN_EMAIL="verified-admin@institution.edu"
 export ADMIN_NAME="Prof. Executive Name"
-export ADMIN_PASSWORD="A_Complex_High_Entropy_Password_2026!#"
+read -rs -p "Administrator password: " ADMIN_PASSWORD
+export ADMIN_PASSWORD
 
 # 2. Run bootstrap script with Node.js
 node scripts/bootstrap-admin.js

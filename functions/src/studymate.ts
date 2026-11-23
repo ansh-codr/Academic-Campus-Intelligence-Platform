@@ -1,3 +1,4 @@
+import { callableOptions } from './callable.js';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import admin from 'firebase-admin';
@@ -223,7 +224,7 @@ PEDAGOGICAL POLICIES:
  */
 export const askStudyMateAi = onCall(
   {
-    cors: true,
+    ...callableOptions,
     secrets: [geminiApiKey],
     timeoutSeconds: 60,
     memory: '256MiB',

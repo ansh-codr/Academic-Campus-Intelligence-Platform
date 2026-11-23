@@ -18,15 +18,15 @@ export const CreateTicketSchema = z.object({
     .min(5, 'Title must be at least 5 characters')
     .max(120, 'Title cannot exceed 120 characters'),
   category: TicketCategoryEnum,
-  building: z.string().min(2, 'Building is required'),
-  floor: z.string().min(1, 'Floor is required'),
-  room: z.string().min(1, 'Room or specific location is required'),
+  building: z.string().trim().max(100).min(2, 'Building is required'),
+  floor: z.string().trim().max(50).min(1, 'Floor is required'),
+  room: z.string().trim().max(100).min(1, 'Room or specific location is required'),
   description: z
     .string()
     .min(15, 'Please provide more details (at least 15 characters)')
     .max(1000, 'Description cannot exceed 1000 characters'),
   priority: TicketPriorityEnum.default('MEDIUM'),
-  attachmentUrls: z.array(z.string().min(1)).optional(),
+  attachmentUrls: z.array(z.string().min(1).max(2048)).max(5).refine(urls => new Set(urls).size === urls.length, 'Duplicate attachment').optional(),
 });
 
 export type CreateTicketInput = z.infer<typeof CreateTicketSchema>;

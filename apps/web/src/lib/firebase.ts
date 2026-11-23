@@ -1,3 +1,4 @@
+import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator } from 'firebase/auth';
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
@@ -29,12 +30,16 @@ const config = {
 };
 
 export const app = getApps().length ? getApp() : initializeApp(config);
+const siteKey = import.meta.env.VITE_APP_CHECK_SITE_KEY;
+if (siteKey && import.meta.env.VITE_USE_FIREBASE_EMULATOR !== 'true') {
+  initializeAppCheck(app, { provider: new ReCaptchaV3Provider(siteKey), isTokenAutoRefreshEnabled: true });
+}
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const functions = getFunctions(app);
 export const storage = getStorage(app);
 
-if (import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_EMULATOR === 'true') {
+if (import.meta.env.VITE_USE_FIREBASE_EMULATOR === 'true') {
   // Hot module replacement must not reconnect already-configured emulators.
   const globalKey = '__solvesphereEmulatorsConnected';
   const state = globalThis as typeof globalThis & { [key: string]: unknown };

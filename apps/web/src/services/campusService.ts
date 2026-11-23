@@ -67,25 +67,25 @@ export const CampusService = {
     const user = auth.currentUser;
     if (!user) throw new Error('User must be logged in to submit a ticket.');
 
-    const createComplaintFn = httpsCallable<{ data: CreateTicketInput }, { success: boolean; data: CampusTicket }>(
+    const createComplaintFn = httpsCallable<CreateTicketInput, { success: boolean; data: CampusTicket }>(
       functions,
       'createComplaint'
     );
     try {
-      const res = await createComplaintFn(input as any);
+      const res = await createComplaintFn(input);
       if (res.data?.success && res.data.data) {
         return { ticket: res.data.data, isRemote: true };
       }
       throw new Error('Failed to create ticket via authenticated service.');
     } catch (err: any) {
       if (
-        err.code === 'functions/not-found' ||
+        (err.code === 'functions/not-found' && !err.message?.includes('Attachment')) ||
         err.code === 'functions/unavailable' ||
         err.message?.includes('NOT_FOUND') ||
         err.message?.includes('Failed to fetch')
       ) {
         throw new Error(
-          'Campus maintenance ticket creation is currently unserviceable because Cloud Functions are undeployed on the Spark plan. Please notify campus administration or contact estate management directly.'
+          'The ticket service could not be reached. Check your connection. Campus administrators can check the createComplaint deployment.'
         );
       }
       throw err;
@@ -189,7 +189,7 @@ export const CampusService = {
       (error) => {
         console.error('Live complaints subscription failed:', error);
         if (onError) onError(error as Error);
-        callback([]);
+        else callback([]);
       }
     );
 
