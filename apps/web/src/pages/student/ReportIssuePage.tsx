@@ -1,3 +1,4 @@
+import type { z } from 'zod';
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
@@ -44,7 +45,7 @@ export const ReportIssuePage: React.FC = () => {
     reset,
     setValue,
     watch,
-  } = useForm<CreateTicketInput>({
+  } = useForm<z.input<typeof CreateTicketSchema>, unknown, CreateTicketInput>({
     resolver: zodResolver(CreateTicketSchema),
     defaultValues: {
       category: 'AC_HVAC',

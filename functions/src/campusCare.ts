@@ -464,7 +464,7 @@ export const askCampusCareAi = onCall(
     if (!parseResult.success) {
       throw new HttpsError(
         'invalid-argument',
-        `Invalid request: ${parseResult.error.errors.map((e) => e.message).join(', ')}`
+        `Invalid request: ${parseResult.error.issues.map((e) => e.message).join(', ')}`
       );
     }
     const data = parseResult.data;
@@ -749,7 +749,7 @@ export const aiAssistComplaint = onCall(
     if (!parseResult.success) {
       throw new HttpsError(
         'invalid-argument',
-        `Invalid request: ${parseResult.error.errors.map((e) => e.message).join(', ')}`
+        `Invalid request: ${parseResult.error.issues.map((e) => e.message).join(', ')}`
       );
     }
     const data = parseResult.data;

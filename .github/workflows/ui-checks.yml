@@ -1,35 +1,39 @@
-name: SolveSphere UI checks
-
+name: SolveSphere checks
 on:
-  pull_request:
-    paths:
-      - "apps/web/**"
-      - "packages/shared/**"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/ui-checks.yml"
   push:
-    branches:
-      - "feature/solvesphere-premium-ui"
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
 
 jobs:
-  frontend:
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: '22'
           cache: npm
-      - name: Install dependencies
-        run: npm ci
-      - name: Build shared contracts
-        run: npm run build --workspace=@solvesphere/shared
-      - name: Typecheck frontend
-        run: npm run typecheck --workspace=@solvesphere/web
-      - name: Production build
-        run: npm run build:web
-      - name: Frontend structure assertions
-        run: node --test tests/ui-structure.test.js
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm run test:unit
+      - run: npm audit --audit-level=high
+  emulators:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci
+      - run: npm run build
+      - run: npm exec --yes --package firebase-tools@15.37.0 -- firebase emulators:exec --project demo-solvesphere --only auth,firestore,functions,storage 'node tests/firebase.test.js'

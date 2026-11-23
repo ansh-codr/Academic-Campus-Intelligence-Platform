@@ -200,13 +200,13 @@ export const adminSaveQuiz = onCall({ cors: true }, async (request) => {
   if (isPublishing) {
     const parseResult = publishedQuizSubmissionSchema.safeParse({ quiz, questions });
     if (!parseResult.success) {
-      const firstError = parseResult.error.errors[0]?.message || 'Assessment publication validation failed.';
+      const firstError = parseResult.error.issues[0]?.message || 'Assessment publication validation failed.';
       throw new HttpsError('invalid-argument', `Cannot publish assessment: ${firstError}`);
     }
   } else {
     const parseResult = draftQuizSubmissionSchema.safeParse({ quiz, questions: questions || [] });
     if (!parseResult.success) {
-      const firstError = parseResult.error.errors[0]?.message || 'Draft validation failed.';
+      const firstError = parseResult.error.issues[0]?.message || 'Draft validation failed.';
       throw new HttpsError('invalid-argument', `Cannot save draft assessment: ${firstError}`);
     }
   }

@@ -427,7 +427,7 @@ export const adminReviewCluster = onCall({ cors: true }, async (request) => {
   if (!parseResult.success) {
     throw new HttpsError(
       'invalid-argument',
-      `Invalid cluster review request: ${parseResult.error.errors.map((e) => e.message).join(', ')}`
+      `Invalid cluster review request: ${parseResult.error.issues.map((e) => e.message).join(', ')}`
     );
   }
   const { clusterId, action, note } = parseResult.data;

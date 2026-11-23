@@ -60,7 +60,7 @@ export const CompleteProfilePage: React.FC = () => {
     register,
     handleSubmit,
     formState: { errors },
-  } = useForm<CompleteProfileInput>({
+  } = useForm<z.input<typeof CompleteProfileSchema>, unknown, CompleteProfileInput>({
     resolver: zodResolver(CompleteProfileSchema),
     defaultValues: {
       fullName: user?.fullName || '',

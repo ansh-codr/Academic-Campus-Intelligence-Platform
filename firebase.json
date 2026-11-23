@@ -6,6 +6,7 @@
   "functions": [
     {
       "source": "functions",
+      "predeploy": ["npm --prefix \"$PROJECT_DIR\" run build --workspace=@solvesphere/shared", "npm --prefix \"$PROJECT_DIR\" run build:functions"],
       "codebase": "default",
       "ignore": [
         "node_modules",
