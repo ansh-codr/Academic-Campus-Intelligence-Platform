@@ -1,3 +1,4 @@
+import { externalFileUrl } from '@/lib/utils';
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
@@ -60,10 +61,7 @@ export const MyTicketsPage: React.FC = () => {
         setTickets(updatedTickets);
         setLoadError(null);
         // Also update selectedTicket if it is open in modal
-        if (selectedTicket) {
-          const found = updatedTickets.find((t) => t.id === selectedTicket.id);
-          if (found) setSelectedTicket(found);
-        }
+        setSelectedTicket(current => current ? updatedTickets.find(t => t.id === current.id) ?? null : null);
       },
       userId,
       (err) => {
@@ -365,16 +363,18 @@ export const MyTicketsPage: React.FC = () => {
                 </h5>
                 <div className="flex flex-wrap gap-2">
                   {selectedTicket.attachmentUrls.map((url, idx) => (
-                    <a
-                      key={idx}
-                      href={url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-brand-blue dark:text-cyan-400 hover:underline text-xs"
-                    >
-                      <Paperclip className="w-3.5 h-3.5" />
-                      Attachment #{idx + 1}
-                    </a>
+                    selectedTicket.attachmentPaths?.[idx] ? (
+                      <Button key={idx} size="sm" variant="outline" onClick={() => {
+                        CampusService.downloadAttachment(selectedTicket.attachmentPaths![idx]).catch(() =>
+                          setLoadError('Attachment download failed. Check your connection and file access.'));
+                      }}>
+                        <Paperclip className="w-3.5 h-3.5" /> Download attachment {idx + 1}
+                      </Button>
+                    ) : externalFileUrl(url) && (
+                      <a key={idx} href={externalFileUrl(url)} target="_blank" rel="noopener noreferrer">
+                        Attachment {idx + 1}
+                      </a>
+                    )
                   ))}
                 </div>
               </div>

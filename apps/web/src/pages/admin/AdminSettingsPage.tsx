@@ -1,3 +1,4 @@
+import { app } from '@/lib/firebase';
 import React from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { Card } from '@/components/ui/Card';
@@ -16,8 +17,8 @@ import {
 
 export const AdminSettingsPage: React.FC = () => {
   const { user, role } = useAuth();
-  const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID || 'solvesphere-ai-dev-2026';
-  const authDomain = import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'solvesphere-ai-dev-2026.firebaseapp.com';
+  const projectId = app.options.projectId;
+  const authDomain = app.options.authDomain;
 
   return (
     <div className="space-y-6">
@@ -53,17 +54,17 @@ export const AdminSettingsPage: React.FC = () => {
             </div>
             <div className="flex justify-between py-1.5 border-b border-slate-800/60">
               <span className="text-slate-400">Firestore Location</span>
-              <span className="font-mono text-slate-300">asia-south1 (Mumbai)</span>
+              <span className="font-mono text-slate-300">See Firestore console</span>
             </div>
             <div className="flex justify-between py-1.5 border-b border-slate-800/60">
               <span className="text-slate-400">Current Plan</span>
-              <Badge variant="amber">SPARK PLAN (NO BILLING)</Badge>
+              <Badge variant="amber">See billing console</Badge>
             </div>
           </div>
 
           <div className="p-3.5 rounded-xl bg-amber-950/30 border border-amber-900/60 text-xs text-amber-300 leading-relaxed">
             <span className="font-bold block mb-1">Infrastructure Boundary:</span>
-            Backend operations currently run in no-cost Spark mode. Cloud Functions and Gemini embeddings require owner authorization to upgrade to the Blaze plan before live serverless functions can be deployed.
+            Production Functions and Storage require a billing-enabled Firebase project.
           </div>
         </Card>
 

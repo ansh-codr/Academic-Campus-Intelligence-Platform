@@ -1,4 +1,4 @@
-# SolveSphere AI — Technical Architecture (Phase 2: Firebase Platform)
+# SolveSphere AI — Technical Architecture
 
 **Tagline:** "Your Problems. Our Smart Solutions."
 

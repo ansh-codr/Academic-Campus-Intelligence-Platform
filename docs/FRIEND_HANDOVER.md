@@ -36,5 +36,6 @@ Read in this order:
 - [ ] Owner knows rollback procedures and recovery contact.
 - [ ] Source transfer and any existing live data transfer separately authorized and documented.
 
-## Current state
-As of Phase 8.5 completion, genuine student authentication with email verification, Google Sign-In (`GoogleAuthProvider` with onboarding at `/auth/complete-profile`), secure administrator RBAC with custom claims, zero demo credentials in client bundles, `useAuth.tsx` production architecture, and 54 automated emulator integration/security tests exist and pass. The official development project (`solvesphere-ai-dev-2026`, Spark plan, `asia-south1`) has been verified and connected with registered Web App `SolveSphere AI Web Dev`, tested Firestore rules and composite indexes deployed, and the web frontend successfully hosted at `https://solvesphere-ai-dev-2026.web.app`. However, **Cloud Functions, Cloud Storage, and live Gemini AI inference remain undeployed to live Firebase pending Blaze billing upgrade by the owner per `docs/FIREBASE_PROJECT_SETUP.md`**. Do not mark handover complete before those operational steps are carried out on the receiving owner's GCP project.
+## Current verification
+
+See [audit results](AUDIT_RESULTS.md) for executed checks and [owner setup](AUDIT_OPERATIONS.md) for deployment and real-account checks.

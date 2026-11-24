@@ -1,5 +1,6 @@
+import type { z } from 'zod';
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { CreateTicketSchema, CreateTicketInput, AiAssistComplaintResponse, TicketCategory, TicketPriority } from '@solvesphere/shared';
@@ -30,6 +31,8 @@ export const ReportIssuePage: React.FC = () => {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submissionSuccess, setSubmissionSuccess] = useState<any | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [omittedFiles, setOmittedFiles] = useState<string[]>([]);
+  const [showEnrollmentLink, setShowEnrollmentLink] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
 
   // AI Assist States
@@ -44,7 +47,7 @@ export const ReportIssuePage: React.FC = () => {
     reset,
     setValue,
     watch,
-  } = useForm<CreateTicketInput>({
+  } = useForm<z.input<typeof CreateTicketSchema>, unknown, CreateTicketInput>({
     resolver: zodResolver(CreateTicketSchema),
     defaultValues: {
       category: 'AC_HVAC',
@@ -122,7 +125,8 @@ export const ReportIssuePage: React.FC = () => {
         }
         return true;
       });
-      setSelectedFiles((prev) => [...prev, ...validFiles]);
+      if (validFiles.length + selectedFiles.length > 5) alert('You can attach up to five files.');
+      setSelectedFiles((prev) => [...prev, ...validFiles].slice(0, 5));
     }
   };
 
@@ -132,6 +136,9 @@ export const ReportIssuePage: React.FC = () => {
 
   const onSubmit = async (data: CreateTicketInput) => {
     setIsSubmitting(true);
+    setSubmissionSuccess(null);
+    setShowEnrollmentLink(false);
+    setOmittedFiles([]);
     setSubmitError(null);
     setUploadProgress(null);
     try {
@@ -140,15 +147,18 @@ export const ReportIssuePage: React.FC = () => {
         setUploadProgress('Uploading attachments to secure storage...');
         for (let i = 0; i < selectedFiles.length; i++) {
           const file = selectedFiles[i];
-          const url = await CampusService.uploadAttachment(file);
-          uploadedUrls.push(url);
+          try {
+            uploadedUrls.push(await CampusService.uploadAttachment(file));
+          } catch {
+            setOmittedFiles(prev => [...prev, file.name]);
+          }
         }
       }
 
       setUploadProgress('Submitting complaint to Firestore...');
       const payload: CreateTicketInput = {
         ...data,
-        attachmentUrls: uploadedUrls.length > 0 ? uploadedUrls : undefined,
+        attachmentUrls: uploadedUrls,
       };
 
       const result = await CampusService.createTicket(payload);
@@ -156,7 +166,7 @@ export const ReportIssuePage: React.FC = () => {
       setSelectedFiles([]);
       reset();
     } catch (err: any) {
-      console.error('Error submitting complaint to Firestore:', err);
+      setShowEnrollmentLink(err.details?.reason === 'enrollment');
       setSubmitError(err.message || 'Failed to submit complaint. Please try again.');
     } finally {
       setIsSubmitting(false);
@@ -188,10 +198,11 @@ export const ReportIssuePage: React.FC = () => {
         </div>
       </div>
 
+      {omittedFiles.length > 0 && <p role="status">These files could not be uploaded and were omitted: {omittedFiles.join(', ')}.</p>}
       {submitError && (
         <div role="alert" className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2 animate-in fade-in">
           <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-          <span>{submitError}</span>
+          <span>{submitError} {showEnrollmentLink && <Link className="underline" to="/auth/complete-profile">View enrollment</Link>}</span>
         </div>
       )}
 
@@ -411,7 +422,7 @@ export const ReportIssuePage: React.FC = () => {
                 id="attachment-input"
                 type="file"
                 multiple
-                accept="image/*,application/pdf"
+                accept="image/jpeg,image/png,image/webp,application/pdf"
                 onChange={handleFileChange}
                 className="hidden"
               />

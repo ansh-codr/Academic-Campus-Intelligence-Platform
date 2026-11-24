@@ -1,7 +1,19 @@
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { z } from 'zod';
+import { campusCallable, callableOptions, parseInput, docId } from './callable.js';
+import { HttpsError } from 'firebase-functions/v2/https';
 import admin from 'firebase-admin';
 import { TicketStatus, AdminReviewClusterSchema } from '@solvesphere/shared';
 import { sendInAppNotification } from './notifications.js';
+
+const label = z.string().trim().max(150);
+const departmentFields = z.object({
+  name: label, code: label, category: label, contactEmail: label, headName: label, isActive: z.boolean(),
+}).partial();
+const clubFields = z.object({
+  name: label, category: label, leadName: label, contactEmail: label, description: z.string().max(4000),
+  memberCount: z.number().int().nonnegative(), meetingSchedule: label, bannerGradient: label,
+  tags: z.array(label).max(50), recentActivities: z.array(z.string().max(500)).max(50), isArchived: z.boolean(),
+}).partial();
 
 // Permitted status transitions in ticket lifecycle
 const ALLOWED_TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
@@ -17,7 +29,7 @@ const ALLOWED_TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
 /**
  * Callable Cloud Function: updateTicketStatus (Admin only)
  */
-export const updateTicketStatus = onCall({ cors: true }, async (request) => {
+export const updateTicketStatus = campusCallable(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -27,7 +39,9 @@ export const updateTicketStatus = onCall({ cors: true }, async (request) => {
     throw new HttpsError('permission-denied', 'Only administrators can update ticket status.');
   }
 
-  const { ticketId, newStatus, note } = request.data || {};
+  const { ticketId, newStatus, note } = parseInput(z.object({
+    ticketId: docId, newStatus: z.enum(['SUBMITTED','UNDER_REVIEW','ASSIGNED','IN_PROGRESS','RESOLVED','CLOSED','REOPENED']), note: z.string().max(2000).optional()
+  }), request.data);
   if (!ticketId || !newStatus) {
     throw new HttpsError('invalid-argument', 'ticketId and newStatus are required.');
   }
@@ -102,7 +116,7 @@ export const updateTicketStatus = onCall({ cors: true }, async (request) => {
   } catch (err: any) {
     console.error('Error in updateTicketStatus:', err);
     if (err instanceof HttpsError) throw err;
-    throw new HttpsError('internal', err.message || 'Failed to update ticket status.');
+    throw new HttpsError('internal', 'Failed to update ticket status.');
   }
 });
 
@@ -111,7 +125,7 @@ export const updateTicketStatus = onCall({ cors: true }, async (request) => {
  * Validates that the department exists and is active.
  * Prefers stable department IDs over unverified names.
  */
-export const assignTicketDepartment = onCall({ cors: true }, async (request) => {
+export const assignTicketDepartment = campusCallable(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -120,7 +134,9 @@ export const assignTicketDepartment = onCall({ cors: true }, async (request) => 
     throw new HttpsError('permission-denied', 'Only administrators can assign tickets.');
   }
 
-  const { ticketId, departmentName, departmentId, note } = request.data || {};
+  const { ticketId, departmentName, departmentId, note } = parseInput(z.object({
+    ticketId: docId, departmentName: z.string().max(150).optional(), departmentId: docId.optional(), note: z.string().max(2000).optional()
+  }), request.data);
   if (!ticketId) {
     throw new HttpsError('invalid-argument', 'ticketId is required.');
   }
@@ -164,7 +180,7 @@ export const assignTicketDepartment = onCall({ cors: true }, async (request) => 
         'Housekeeping & Sanitation',
         'Hostel Administration Office',
       ];
-      if (!allowedCategories.includes(departmentName)) {
+      if (!departmentName || !allowedCategories.includes(departmentName)) {
         throw new HttpsError('not-found', `Department "${departmentName}" does not exist.`);
       }
     }
@@ -237,7 +253,7 @@ export const assignTicketDepartment = onCall({ cors: true }, async (request) => 
     };
   } catch (err: any) {
     if (err instanceof HttpsError) throw err;
-    throw new HttpsError('internal', err.message || 'Failed to assign ticket.');
+    throw new HttpsError('internal', 'Failed to assign ticket.');
   }
 });
 
@@ -246,7 +262,7 @@ export const assignTicketDepartment = onCall({ cors: true }, async (request) => 
  * Creates, updates, or toggles active status with strict field allowlist validation.
  * Prevents unauthorized modification of IDs, timestamps, or counters.
  */
-export const adminManageDepartment = onCall({ cors: true }, async (request) => {
+export const adminManageDepartment = campusCallable(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -254,7 +270,9 @@ export const adminManageDepartment = onCall({ cors: true }, async (request) => {
     throw new HttpsError('permission-denied', 'Only administrators can manage departments.');
   }
 
-  const { action, departmentId, data } = request.data || {};
+  const { action, departmentId, data } = parseInput(z.object({
+    action: z.enum(['create','update','toggleActive']), departmentId: docId.optional(), data: departmentFields.optional()
+  }), request.data);
   if (!action || !['create', 'update', 'toggleActive'].includes(action)) {
     throw new HttpsError('invalid-argument', 'Valid action (create, update, toggleActive) is required.');
   }
@@ -318,7 +336,7 @@ export const adminManageDepartment = onCall({ cors: true }, async (request) => {
     }
   } catch (err: any) {
     if (err instanceof HttpsError) throw err;
-    throw new HttpsError('internal', err.message || 'Failed to manage department.');
+    throw new HttpsError('internal', 'Failed to manage department.');
   }
 });
 
@@ -327,7 +345,7 @@ export const adminManageDepartment = onCall({ cors: true }, async (request) => {
  * Creates, updates, or archives campus clubs with strict field allowlist validation.
  * Prevents unauthorized modification of IDs, timestamps, or system metadata.
  */
-export const adminManageClub = onCall({ cors: true }, async (request) => {
+export const adminManageClub = campusCallable(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -335,7 +353,9 @@ export const adminManageClub = onCall({ cors: true }, async (request) => {
     throw new HttpsError('permission-denied', 'Only administrators can manage campus clubs.');
   }
 
-  const { action, clubId, data } = request.data || {};
+  const { action, clubId, data } = parseInput(z.object({
+    action: z.enum(['create','update','archive']), clubId: docId.optional(), data: clubFields.optional()
+  }), request.data);
   if (!action || !['create', 'update', 'archive'].includes(action)) {
     throw new HttpsError('invalid-argument', 'Valid action (create, update, archive) is required.');
   }
@@ -406,7 +426,7 @@ export const adminManageClub = onCall({ cors: true }, async (request) => {
     }
   } catch (err: any) {
     if (err instanceof HttpsError) throw err;
-    throw new HttpsError('internal', err.message || 'Failed to manage club.');
+    throw new HttpsError('internal', 'Failed to manage club.');
   }
 });
 
@@ -415,7 +435,7 @@ export const adminManageClub = onCall({ cors: true }, async (request) => {
  * Reviews, verifies, merges, resolves, rejects, or dismisses suggested rule-based and semantic issue clusters.
  * Enforces admin confirmation before converting a suggestion into an official active incident.
  */
-export const adminReviewCluster = onCall({ cors: true }, async (request) => {
+export const adminReviewCluster = campusCallable(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -427,7 +447,7 @@ export const adminReviewCluster = onCall({ cors: true }, async (request) => {
   if (!parseResult.success) {
     throw new HttpsError(
       'invalid-argument',
-      `Invalid cluster review request: ${parseResult.error.errors.map((e) => e.message).join(', ')}`
+      `Invalid cluster review request: ${parseResult.error.issues.map((e) => e.message).join(', ')}`
     );
   }
   const { clusterId, action, note } = parseResult.data;
@@ -508,7 +528,7 @@ export const adminReviewCluster = onCall({ cors: true }, async (request) => {
     };
   } catch (err: any) {
     if (err instanceof HttpsError) throw err;
-    throw new HttpsError('internal', err.message || 'Failed to review cluster.');
+    throw new HttpsError('internal', 'Failed to review cluster.');
   }
 });
 
@@ -516,7 +536,7 @@ export const adminReviewCluster = onCall({ cors: true }, async (request) => {
  * Callable Cloud Function: adminApproveEnrollment (Admin only)
  * Atomically verifies student enrollment, reserves roll number, and updates user profile.
  */
-export const adminApproveEnrollment = onCall({ cors: true }, async (request) => {
+export const adminApproveEnrollment = campusCallable(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -524,7 +544,9 @@ export const adminApproveEnrollment = onCall({ cors: true }, async (request) => 
     throw new HttpsError('permission-denied', 'Only administrators can approve enrollment requests.');
   }
 
-  const { requestId, studentId, department, semester } = request.data || {};
+  const { requestId, studentId, department, semester } = parseInput(z.object({
+    requestId: docId, studentId: z.string().trim().regex(/^[A-Za-z0-9_-]{4,30}$/), department: z.string().trim().min(2).max(100), semester: z.number().int().min(1).max(12)
+  }), request.data);
   if (!requestId || typeof requestId !== 'string') {
     throw new HttpsError('invalid-argument', 'requestId string is required.');
   }
@@ -565,6 +587,9 @@ export const adminApproveEnrollment = onCall({ cors: true }, async (request) => 
         throw new HttpsError('failed-precondition', `Cannot approve request with current status "${reqData.status}".`);
       }
 
+      if (reqData.studentId !== cleanStudentId || reqData.department !== cleanDept || reqData.semester !== sem) {
+        throw new HttpsError('failed-precondition', 'The student updated this request. Refresh and review the latest details.');
+      }
       // 2. Check reservation registry for roll number uniqueness
       const reservationSnap = await transaction.get(reservationRef);
       if (reservationSnap.exists) {
@@ -629,7 +654,7 @@ export const adminApproveEnrollment = onCall({ cors: true }, async (request) => 
     });
   } catch (err: any) {
     if (err instanceof HttpsError) throw err;
-    throw new HttpsError('internal', err.message || 'Failed to approve enrollment request.');
+    throw new HttpsError('internal', 'Failed to approve enrollment request.');
   }
 });
 
@@ -637,7 +662,7 @@ export const adminApproveEnrollment = onCall({ cors: true }, async (request) => 
  * Callable Cloud Function: adminRejectEnrollment (Admin only)
  * Rejects an enrollment request with a mandatory explanation and frees any pending reservation.
  */
-export const adminRejectEnrollment = onCall({ cors: true }, async (request) => {
+export const adminRejectEnrollment = campusCallable(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -645,7 +670,9 @@ export const adminRejectEnrollment = onCall({ cors: true }, async (request) => {
     throw new HttpsError('permission-denied', 'Only administrators can reject enrollment requests.');
   }
 
-  const { requestId, rejectionReason } = request.data || {};
+  const { requestId, rejectionReason } = parseInput(z.object({
+    requestId: docId, rejectionReason: z.string().trim().min(1).max(500)
+  }), request.data);
   if (!requestId || typeof requestId !== 'string') {
     throw new HttpsError('invalid-argument', 'requestId string is required.');
   }
@@ -730,6 +757,6 @@ export const adminRejectEnrollment = onCall({ cors: true }, async (request) => {
     });
   } catch (err: any) {
     if (err instanceof HttpsError) throw err;
-    throw new HttpsError('internal', err.message || 'Failed to reject enrollment request.');
+    throw new HttpsError('internal', 'Failed to reject enrollment request.');
   }
 });

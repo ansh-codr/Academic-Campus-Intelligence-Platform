@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const quizQuestionSchema = z
   .object({
-    id: z.string().optional(),
+    id: z.string().min(1).max(128).regex(/^[^/]+$/).optional(),
     questionText: z.string().trim().min(3, 'Question text must be at least 3 characters'),
     options: z.array(z.string().trim().min(1, 'Option cannot be empty')).min(2, 'Must have at least 2 options'),
     correctOptionIndex: z.number().int().min(0, 'correctOptionIndex must be non-negative'),
@@ -15,8 +15,9 @@ export const quizQuestionSchema = z
   });
 
 export const quizMetadataSchema = z.object({
-  id: z.string().optional(),
-  subjectId: z.string().trim().min(1, 'Subject ID is required'),
+  id: z.string().min(1).max(128).regex(/^[^/]+$/).optional(),
+  topicId: z.string().max(128).optional(),
+  subjectId: z.string().trim().max(128).min(1, 'Subject ID is required'),
   title: z.string().trim().min(3, 'Quiz title must be at least 3 characters'),
   description: z.string().trim().default(''),
   durationMinutes: z.number().int().min(1, 'Duration must be at least 1 minute').default(15),
@@ -27,7 +28,7 @@ export const quizMetadataSchema = z.object({
 
 export const publishedQuizSubmissionSchema = z.object({
   quiz: quizMetadataSchema,
-  questions: z.array(quizQuestionSchema).min(1, 'Published assessment must contain at least 1 valid question'),
+  questions: z.array(quizQuestionSchema).max(200).min(1, 'Published assessment must contain at least 1 valid question'),
 });
 
 export const draftQuizSubmissionSchema = z.object({
@@ -35,7 +36,7 @@ export const draftQuizSubmissionSchema = z.object({
   questions: z
     .array(
       z.object({
-        id: z.string().optional(),
+        id: z.string().min(1).max(128).regex(/^[^/]+$/).optional(),
         questionText: z.string().trim().default(''),
         options: z.array(z.string().trim()).default([]),
         correctOptionIndex: z.number().int().default(0),
@@ -43,7 +44,7 @@ export const draftQuizSubmissionSchema = z.object({
         order: z.number().int().optional(),
       })
     )
-    .default([]),
+    .max(200).default([]),
 });
 
 export type QuizQuestionInput = z.infer<typeof quizQuestionSchema>;

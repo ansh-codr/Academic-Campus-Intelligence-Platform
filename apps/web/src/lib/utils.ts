@@ -14,3 +14,13 @@ export function formatDate(value?: string | number | Date | null): string {
     ? 'Date unavailable'
     : new Intl.DateTimeFormat('en-US', { day: 'numeric', month: 'short', year: 'numeric' }).format(date);
 }
+
+export function externalFileUrl(value?: string): string | undefined {
+  if (!value) return;
+  try {
+    const url = new URL(value);
+    if (url.username || url.password) return;
+    if (url.protocol === 'https:') return url.href;
+    if (import.meta.env.VITE_USE_FIREBASE_EMULATOR === 'true' && url.origin === 'http://127.0.0.1:9199') return url.href;
+  } catch { /* Older records may contain incomplete URLs. */ }
+}

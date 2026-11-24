@@ -20,13 +20,17 @@ When testing locally against the Firebase Emulator Suite:
 
 ```bash
 # Start emulators in terminal 1
-npm run emulators
+firebase emulators:start --project demo-solvesphere --only auth,firestore,functions,storage
 
-# Provision default test administrator in terminal 2
+# Point terminal 2 to the same demo project as the emulators.
+export FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 FIRESTORE_EMULATOR_HOST=127.0.0.1:8080
+export GCLOUD_PROJECT=demo-solvesphere ADMIN_EMAIL=admin@example.test
+read -rs -p "Local password: " ADMIN_PASSWORD
+export ADMIN_PASSWORD
 npm run admin:bootstrap
 ```
 
-This provisions `admin@campus.edu` in the Auth Emulator with `{ role: 'ADMIN' }` claims.
+This provisions the supplied email in the Auth Emulator with `{ role: 'ADMIN' }` claims.
 
 ---
 
@@ -40,7 +44,8 @@ export CONFIRM_PROD_ADMIN_BOOTSTRAP="true"
 export GCLOUD_PROJECT="your-production-firebase-project-id"
 export ADMIN_EMAIL="verified-admin@institution.edu"
 export ADMIN_NAME="Prof. Executive Name"
-export ADMIN_PASSWORD="A_Complex_High_Entropy_Password_2026!#"
+read -rs -p "Administrator password: " ADMIN_PASSWORD
+export ADMIN_PASSWORD
 
 # 2. Run bootstrap script with Node.js
 node scripts/bootstrap-admin.js
@@ -58,5 +63,5 @@ export OVERWRITE_EXISTING_ADMIN_PASSWORD="true"
 ## 4. Verification
 
 1. Log into the administrative portal at `/auth/admin-login` with the provisioned credentials.
-2. Confirm access to `/admin/dashboard`, `/admin/departments`, `/admin/clubs`, and `/admin/academic`.
+2. Confirm access to `/admin/dashboard`, `/admin/departments`, `/admin/clubs`, and `/admin/subjects`.
 3. Inspect `adminAuditLogs` collection in Firestore to verify the audit trail.

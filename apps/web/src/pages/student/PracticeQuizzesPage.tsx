@@ -31,6 +31,7 @@ export const PracticeQuizzesPage: React.FC = () => {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // Active Quiz State
+  const [submissionId, setSubmissionId] = useState('');
   const [activeQuiz, setActiveQuiz] = useState<Quiz | null>(null);
   const [questions, setQuestions] = useState<SanitizedQuizQuestion[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -80,6 +81,7 @@ export const PracticeQuizzesPage: React.FC = () => {
     setIsSubmitting(true);
     try {
       const data = await AcademicService.getQuizQuestions(quiz.id);
+      setSubmissionId(crypto.randomUUID());
       setActiveQuiz(quiz);
       setQuestions(data.questions);
       setCurrentQuestionIndex(0);
@@ -111,16 +113,15 @@ export const PracticeQuizzesPage: React.FC = () => {
         selectedOptionIndex: selectedAnswers[q.id] !== undefined ? selectedAnswers[q.id] : -1,
       }));
 
-      const res = await AcademicService.submitQuiz(activeQuiz.id, submission);
+      const res = await AcademicService.submitQuiz(activeQuiz.id, submission, submissionId);
       setLatestAttemptResult(res.attempt);
 
       // Refresh attempts
       if (user?.id) {
-        AcademicService.getQuizAttempts(user.id).then(setAttempts);
+        AcademicService.getQuizAttempts(user.id).then(setAttempts).catch(() => setLoadError('Could not refresh attempt history.'));
       }
     } catch (err) {
-      console.error('Failed to submit quiz:', err);
-      alert('Error submitting answers.');
+      alert(err instanceof Error ? err.message : 'Error submitting answers.');
     } finally {
       setIsSubmitting(false);
     }

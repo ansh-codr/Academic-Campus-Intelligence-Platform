@@ -52,7 +52,11 @@ process.env.FIREBASE_AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOS
 process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
 process.env.FIREBASE_STORAGE_EMULATOR_HOST = process.env.FIREBASE_STORAGE_EMULATOR_HOST || '127.0.0.1:9199';
 
-const testProjectId = process.env.GCLOUD_PROJECT || 'fluetas-a1914';
+const testProjectId = process.env.GCLOUD_PROJECT || 'demo-solvesphere';
+if (!testProjectId.startsWith('demo-') || process.env.GEMINI_API_KEY) throw new Error('Run with a demo project and no Gemini key.');
+const studentPassword = crypto.randomUUID();
+const adminPassword = crypto.randomUUID();
+const googlePassword = crypto.randomUUID();
 
 if (!admin.apps.length) {
   admin.initializeApp({
@@ -83,7 +87,8 @@ async function runTests() {
   const studentEmail = `student.test.${Date.now()}@campus.edu`;
   const studentRecord = await auth.createUser({
     email: studentEmail,
-    password: 'Password@2026',
+    emailVerified: true,
+    password: studentPassword,
     displayName: 'Aarav Sharma',
   });
   testStudentUid = studentRecord.uid;
@@ -118,7 +123,7 @@ async function runTests() {
   const adminEmail = `admin.test.${Date.now()}@campus.edu`;
   const adminRecord = await auth.createUser({
     email: adminEmail,
-    password: 'SolveSphereAdmin@2026',
+    password: adminPassword,
     displayName: 'Dr. Vikram Malhotra',
   });
   testAdminUid = adminRecord.uid;
@@ -560,7 +565,7 @@ async function runTests() {
   connectClientStorageEmulator(clientStorage, '127.0.0.1', 9199);
 
   // Authenticate student in client SDK
-  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth, studentEmail, studentPassword);
 
   // --------------------------------------------------------------------------
   // TEST 14: Direct Client Quiz-Score Forgery Block (Negative Security Test)
@@ -633,7 +638,7 @@ async function runTests() {
   console.log(`✓ Test 16b Passed: Unauthenticated user rejected by Cloud Function.`);
 
   // Re-authenticate student
-  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth, studentEmail, studentPassword);
 
   // --------------------------------------------------------------------------
   // TEST 17: Per-User AI Rate Limiting & Quota Accounting
@@ -674,7 +679,7 @@ async function runTests() {
 
   // Second student client
   const s2Email = `student2.test.${Date.now()}@campus.edu`;
-  await auth.createUser({ email: s2Email, password: 'Password@2026' });
+  await auth.createUser({ email: s2Email, password: studentPassword });
 
   const clientApp2 = initClientApp(
     { apiKey: 'fake-api-key', projectId: testProjectId },
@@ -685,7 +690,7 @@ async function runTests() {
   const clientDb2 = getClientFirestore(clientApp2);
   connectClientFirestoreEmulator(clientDb2, '127.0.0.1', 8080);
 
-  await signInWithEmailAndPassword(clientAuth2, s2Email, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth2, s2Email, studentPassword);
 
   // Student 2 attempts to read Student 1 conversation
   await assert.rejects(
@@ -915,7 +920,7 @@ async function runTests() {
   // TEST 26: Complaint Creation with Attachments & Notification via Callable
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 26] Creating Complaint with Attachments & In-App Notification...`);
-  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth, studentEmail, studentPassword);
 
   // Negative test 26a: Direct student creation of complaints in Firestore must be blocked
   await assert.rejects(
@@ -936,7 +941,7 @@ async function runTests() {
   const createComplaintCallable = httpsCallable(clientFunctions, 'createComplaint');
 
   // Pre-upload valid test attachment leak1.jpg to Student 1's authorized storage path
-  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth, studentEmail, studentPassword);
   const validAttachmentStorageRef = storageRef(clientStorage, `attachments/${testStudentUid}/tkt-sample/leak1.jpg`);
   await uploadBytes(validAttachmentStorageRef, new Uint8Array([255, 216, 255, 224, 0, 16, 74, 70, 73, 70]), {
     contentType: 'image/jpeg',
@@ -1161,7 +1166,7 @@ async function runTests() {
   assert.strictEqual(clusterData.confidenceScore, undefined, 'Must not invent artificial confidence scores');
 
   // Administrator confirms and verifies the cluster as an active shared incident
-  await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+  await signInWithEmailAndPassword(clientAuth, adminEmail, adminPassword);
   const reviewClusterCallable = httpsCallable(clientFunctions, 'adminReviewCluster');
   const reviewRes = await reviewClusterCallable({
     clusterId: comp2Data.clusterId,
@@ -1261,7 +1266,7 @@ async function runTests() {
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 29] Verifying Ticket Reopening Workflow...`);
   // Sign in back as student
-  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth, studentEmail, studentPassword);
   const reopenCallable = httpsCallable(clientFunctions, 'reopenTicket');
 
   // Student reopens their own RESOLVED ticket
@@ -1299,7 +1304,7 @@ async function runTests() {
   const student2Email = `student2.test.${Date.now()}@campus.edu`;
   const student2Record = await auth.createUser({
     email: student2Email,
-    password: 'Password@2026',
+    password: studentPassword,
     displayName: 'Priya Patel',
   });
   await db.collection('users').doc(student2Record.uid).set({
@@ -1310,7 +1315,7 @@ async function runTests() {
     createdAt: new Date().toISOString(),
   });
 
-  await signInWithEmailAndPassword(clientAuth, student2Email, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth, student2Email, studentPassword);
   await assert.rejects(
     async () => {
       await reopenCallable({
@@ -1364,7 +1369,7 @@ async function runTests() {
   );
 
   // Switch back to Student 1
-  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth, studentEmail, studentPassword);
   // Student 1 reads their own notification -> allowed
   const readNotifSnap = await getDoc(doc(clientDb, 'notifications', notifId));
   assert.ok(readNotifSnap.exists);
@@ -1478,7 +1483,7 @@ async function runTests() {
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 31] Verifying Department Management & Safe Admin Updates...`);
   // Switch to Admin
-  await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+  await signInWithEmailAndPassword(clientAuth, adminEmail, adminPassword);
   const manageDeptCallable = httpsCallable(clientFunctions, 'adminManageDepartment');
 
   // Admin creates department
@@ -1535,7 +1540,7 @@ async function runTests() {
   );
 
   // Switch to Student -> direct write to departments collection is rejected
-  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth, studentEmail, studentPassword);
   await assert.rejects(
     async () => {
       await setDoc(doc(clientDb, 'departments', 'forged-dept'), {
@@ -1553,7 +1558,7 @@ async function runTests() {
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 32] Verifying Campus Clubs Management & Safe Field Allowlist...`);
   // Admin creates club
-  await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+  await signInWithEmailAndPassword(clientAuth, adminEmail, adminPassword);
   const manageClubCallable = httpsCallable(clientFunctions, 'adminManageClub');
 
   const createClubRes = await manageClubCallable({
@@ -1595,7 +1600,7 @@ async function runTests() {
   assert.ok(archiveClubRes.data?.success);
 
   // Student can read clubs
-  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth, studentEmail, studentPassword);
   const readClubDoc = await getDoc(doc(clientDb, 'campusClubs', createdClub.id));
   assert.ok(readClubDoc.exists);
   assert.strictEqual(readClubDoc.data().isArchived, true);
@@ -1618,7 +1623,7 @@ async function runTests() {
   console.log(`\n[TEST 33] Verifying Cloud Storage Security Rules & Tenant Isolation...`);
 
   // Student 1 uploads valid image to their own attachment path -> allowed
-  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth, studentEmail, studentPassword);
   const validAttachmentRef = storageRef(clientStorage, `attachments/${testStudentUid}/tkt-sample/photo.png`);
   const sampleImageData = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]); // PNG magic bytes
   await uploadBytes(validAttachmentRef, sampleImageData, { contentType: 'image/png' });
@@ -1634,7 +1639,7 @@ async function runTests() {
   );
 
   // Negative test 33b: Student 2 attempts to upload to Student 1's path -> rejected
-  await signInWithEmailAndPassword(clientAuth, student2Email, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth, student2Email, studentPassword);
   const forbiddenUploadRef = storageRef(clientStorage, `attachments/${testStudentUid}/tkt-sample/hacked.png`);
   await assert.rejects(
     async () => {
@@ -1678,7 +1683,7 @@ async function runTests() {
   // TEST 34: Speak Freely Direct Submission Denial & Strict Access Control
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 34] Verifying Speak Freely Submission Denial & Strict Access Control...`);
-  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth, studentEmail, studentPassword);
   const anonReportId = `anon-test-${Date.now()}`;
   const anonDocRef = doc(clientDb, 'anonymousReports', anonReportId);
 
@@ -1720,7 +1725,7 @@ async function runTests() {
   );
 
   // Admin can read anonymousReports
-  await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+  await signInWithEmailAndPassword(clientAuth, adminEmail, adminPassword);
   const adminReadAnonSnap = await getDoc(anonDocRef);
   assert.ok(adminReadAnonSnap.exists, 'Admin must be able to read anonymous report');
   assert.strictEqual(adminReadAnonSnap.data().trackingCode, 'ANON-XYZ123');
@@ -1730,7 +1735,7 @@ async function runTests() {
   // TEST 35: Campus Care AI Assistant - Querying & Grounded Ticket Tracking
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 35] Verifying Campus Care AI Assistant & Grounded Ticket Tracking...`);
-  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth, studentEmail, studentPassword);
   const askCampusCareFn = httpsCallable(clientFunctions, 'askCampusCareAi');
 
   // Student 1 queries status of their tickets
@@ -1778,7 +1783,7 @@ async function runTests() {
   // TEST 37: Cross-Student Ticket & Conversation Isolation in Campus Care AI
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 37] Verifying Cross-Student Ticket & Conversation Isolation...`);
-  await signInWithEmailAndPassword(clientAuth, student2Email, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth, student2Email, studentPassword);
 
   // Student 2 queries ticket status -> must NOT receive Student 1's ticket
   const student2CareRes = await askCampusCareFn({
@@ -1806,7 +1811,7 @@ async function runTests() {
   // TEST 38: AI-Assisted Complaint Reporting (aiAssistComplaint)
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 38] Verifying AI-Assisted Complaint Reporting (aiAssistComplaint)...`);
-  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth, studentEmail, studentPassword);
   const aiAssistFn = httpsCallable(clientFunctions, 'aiAssistComplaint');
 
   await new Promise((r) => setTimeout(r, 2100));
@@ -1949,7 +1954,7 @@ async function runTests() {
   // TEST 40: Admin Review Cluster Actions (Verify & Reject)
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 40] Verifying Admin Review Cluster Actions (Verify & Reject)...`);
-  await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+  await signInWithEmailAndPassword(clientAuth, adminEmail, adminPassword);
 
   // 1. Admin verifies AC cluster
   const verifyRes = await reviewClusterCallable({
@@ -2018,7 +2023,7 @@ async function runTests() {
   // TEST 41: Firestore Security Rules for Campus Care, Public Incidents & Embeddings
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 41] Verifying Security Rules for Campus Care, Public Incidents & Embeddings...`);
-  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth, studentEmail, studentPassword);
   const student1ConvRef = doc(clientDb, 'campusCareConversations', careRes1.data.conversationId);
 
   // Student 1 can read own conversation
@@ -2026,7 +2031,7 @@ async function runTests() {
   assert.ok(student1ReadSnap.exists, 'Student 1 must be able to read own conversation');
 
   // Student 2 CANNOT read Student 1 conversation
-  await signInWithEmailAndPassword(clientAuth, student2Email, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth, student2Email, studentPassword);
   await assert.rejects(
     async () => {
       await getDoc(student1ConvRef);
@@ -2100,7 +2105,7 @@ async function runTests() {
   // TEST 42: Production Mock Restrictions, Rate Limit & Schema Validation
   // --------------------------------------------------------------------------
   console.log(`\n[TEST 42] Verifying Rate Limit Cooldown, Input Validation & Mock Restrictions...`);
-  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth, studentEmail, studentPassword);
 
   // Input validation: empty prompt must be rejected
   await assert.rejects(
@@ -2635,7 +2640,7 @@ async function runTests() {
   console.log(`\n[TEST 51] Verifying Phase 8 Admin-to-Student Real Data Visibility & Key Protection...`);
 
   // Switch to Admin
-  await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+  await signInWithEmailAndPassword(clientAuth, adminEmail, adminPassword);
 
   // 1. Admin creates accredited subject
   const realSubjId = 'subj-algorithms-real';
@@ -2738,7 +2743,7 @@ async function runTests() {
   assert.ok(realClubId);
 
   // Switch to Student
-  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth, studentEmail, studentPassword);
 
   // Verify Student can read the newly created real Subject
   const studentSubjSnap = await getDoc(doc(clientDb, 'subjects', realSubjId));
@@ -2787,7 +2792,7 @@ async function runTests() {
   console.log(`\n[TEST 52] Verifying Negative Assessment Publication Integrity & Draft Protection...`);
 
   // Switch back to Admin
-  await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+  await signInWithEmailAndPassword(clientAuth, adminEmail, adminPassword);
 
   // Negative 1: Admin tries to publish quiz with empty question text
   await assert.rejects(
@@ -2918,7 +2923,7 @@ async function runTests() {
   assert.ok(draftQuizId);
 
   // Switch to Student
-  await signInWithEmailAndPassword(clientAuth, studentEmail, 'Password@2026');
+  await signInWithEmailAndPassword(clientAuth, studentEmail, studentPassword);
 
   // Negative 5: Student cannot fetch questions for unpublished draft quiz
   await assert.rejects(
@@ -2968,7 +2973,7 @@ async function runTests() {
   console.log(`\n[TEST 53] Verifying Phase 8.5 Production Student & Admin Authentication Workflows...`);
 
   const uniqueStudentEmail = `student.phase85.${Date.now()}@university.edu`;
-  const uniqueStudentPassword = 'ComplexStudentPass@2026';
+  const uniqueStudentPassword = crypto.randomUUID();
 
   // 1. Real Student Account Creation via Firebase Auth client SDK
   const studentCred53 = await createUserWithEmailAndPassword(clientAuth, uniqueStudentEmail, uniqueStudentPassword);
@@ -2985,11 +2990,13 @@ async function runTests() {
 
   // 3. Create initial student profile in `users/{uid}` matching Security Rules
   const studentProfileNow = new Date().toISOString();
+  await assert.rejects(setDoc(doc(clientDb, 'users', studentUid53), {
+    id: studentUid53, role: 'STUDENT', email: uniqueStudentEmail, studentId: 'UNAPPROVED'
+  }), err => err.code === 'permission-denied');
   await setDoc(doc(clientDb, 'users', studentUid53), {
     id: studentUid53,
     email: uniqueStudentEmail,
     fullName: 'Kavya Raman',
-    studentId: 'STU-2026-9042',
     role: 'STUDENT',
     department: 'Computer Science & AI',
     semester: 2,
@@ -3002,12 +3009,12 @@ async function runTests() {
   const profileSnap53 = await getDoc(doc(clientDb, 'users', studentUid53));
   assert.ok(profileSnap53.exists(), 'Profile document must exist in Firestore');
   assert.strictEqual(profileSnap53.data().role, 'STUDENT');
-  assert.strictEqual(profileSnap53.data().studentId, 'STU-2026-9042');
+  assert.equal(profileSnap53.data().studentId, undefined);
 
   // 4. Duplicate Email Registration Rejection
   await assert.rejects(
     async () => {
-      await createUserWithEmailAndPassword(clientAuth, uniqueStudentEmail, 'AnotherPassword@2026');
+      await createUserWithEmailAndPassword(clientAuth, uniqueStudentEmail, crypto.randomUUID());
     },
     /auth\/email-already-in-use/i,
     'Registering an existing email must fail with auth/email-already-in-use'
@@ -3082,7 +3089,7 @@ async function runTests() {
   await signOut(clientAuth);
 
   // 11. Admin Authentication with Custom Claim Verification
-  const adminCred53 = await signInWithEmailAndPassword(clientAuth, adminEmail, 'SolveSphereAdmin@2026');
+  const adminCred53 = await signInWithEmailAndPassword(clientAuth, adminEmail, adminPassword);
   const adminToken53 = await adminCred53.user.getIdTokenResult(true);
   assert.strictEqual(adminToken53.claims.role, 'ADMIN', 'Admin user must have verified role: "ADMIN" custom claim');
 
@@ -3107,12 +3114,12 @@ async function runTests() {
     email: googleEmail,
     emailVerified: true,
     displayName: 'Priyanshu Google Student',
-    password: 'GoogleUser@Pass2026',
+    password: googlePassword,
   });
   const googleUid = googleUserRecord.uid;
 
   // 2. Sign in as the Google authenticated student
-  const googleCred = await signInWithEmailAndPassword(clientAuth, googleEmail, 'GoogleUser@Pass2026');
+  const googleCred = await signInWithEmailAndPassword(clientAuth, googleEmail, googlePassword);
   const googleToken = await googleCred.user.getIdTokenResult(true);
 
   // 3. Verify Google sign-in grants NO admin claim by default (must be STUDENT role)
@@ -3338,7 +3345,7 @@ async function runTests() {
   );
   const adminClientAuth = getClientAuth(adminClientApp);
   connectClientAuthEmulator(adminClientAuth, 'http://127.0.0.1:9099', { disableWarnings: true });
-  await signInWithEmailAndPassword(adminClientAuth, adminEmail, 'SolveSphereAdmin@2026');
+  await signInWithEmailAndPassword(adminClientAuth, adminEmail, adminPassword);
 
   const adminClientDb = getClientFirestore(adminClientApp);
   connectClientFirestoreEmulator(adminClientDb, '127.0.0.1', 8080);
@@ -3398,12 +3405,18 @@ async function runTests() {
   assert.ok(googleCompRes.data?.success, 'Verified student must now be permitted to submit complaints');
   assert.match(googleCompRes.data?.data?.referenceNumber, /^SS-2026-\d{4}$/);
 
+  const timeline = await db.collection('complaints').doc(googleCompRes.data.data.id).collection('timeline').get();
+  assert.equal(timeline.size, 1);
+  assert.equal(timeline.docs[0].data().status, 'SUBMITTED');
   const verifiedQuizCallable = httpsCallable(clientFunctions, 'submitQuiz');
-  const googleQuizRes = await verifiedQuizCallable({
-    quizId: quizId,
+  const quizSubmission = {
+    quizId, submissionId: crypto.randomUUID(),
     answers: [{ questionId: 'q-math-1', selectedOptionIndex: 1 }],
-  });
-  assert.ok(googleQuizRes.data?.success, 'Verified student must now be permitted to take quizzes');
+  };
+  const [first, retry] = await Promise.all([verifiedQuizCallable(quizSubmission), verifiedQuizCallable(quizSubmission)]);
+  assert.ok(first.data?.success);
+  assert.equal(first.data.attempt.id, retry.data.attempt.id);
+  assert.deepEqual(first.data.attempt, retry.data.attempt);
 
   console.log(`✓ Test 57 Passed: Admin enrollment approval, audit trail, and student service unblocking verified.`);
 
@@ -3415,7 +3428,7 @@ async function runTests() {
   const secondStudentEmail = `student2.${Date.now()}@campus.edu`;
   const secondRecord = await auth.createUser({
     email: secondStudentEmail,
-    password: 'Password@2026',
+    password: studentPassword,
     displayName: 'Duplicate Student Claimer',
   });
   const secondUid = secondRecord.uid;
@@ -3430,10 +3443,13 @@ async function runTests() {
   );
   const dupClientAuth = getClientAuth(dupClientApp);
   connectClientAuthEmulator(dupClientAuth, 'http://127.0.0.1:9099', { disableWarnings: true });
-  await signInWithEmailAndPassword(dupClientAuth, secondStudentEmail, 'Password@2026');
+  await signInWithEmailAndPassword(dupClientAuth, secondStudentEmail, studentPassword);
 
   const dupClientDb = getClientFirestore(dupClientApp);
   connectClientFirestoreEmulator(dupClientDb, '127.0.0.1', 8080);
+
+  await assert.rejects(getDoc(doc(dupClientDb, 'complaints', googleCompRes.data.data.id)), e => e.code === 'permission-denied');
+  await assert.rejects(getDoc(doc(dupClientDb, 'complaints', googleCompRes.data.data.id, 'timeline', timeline.docs[0].id)), e => e.code === 'permission-denied');
 
   // Student 2 attempts to claim the exact same studentId in enrollmentRequests
   await setDoc(doc(dupClientDb, 'users', secondUid), {

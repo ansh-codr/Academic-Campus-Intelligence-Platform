@@ -1,4 +1,7 @@
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { z } from 'zod';
+import { createHash } from 'node:crypto';
+import { campusCallable, callableOptions, parseInput, docId } from './callable.js';
+import { HttpsError } from 'firebase-functions/v2/https';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import admin from 'firebase-admin';
@@ -12,6 +15,9 @@ import {
   cosineSimilarity,
   getSmartDepartmentRecommendation,
 } from './campusCare.js';
+
+// Deploy location-based clustering without provisioning an AI secret.
+const semanticClustering = process.env.ENABLE_GEMINI_CLUSTERING === 'true';
 
 // Mapping for default department routing
 export function getDepartmentForCategory(category: string): string {
@@ -47,7 +53,8 @@ function getExpectedBucketName(): string {
       if (cfg.projectId) return `${cfg.projectId}.appspot.com`;
     } catch { }
   }
-  const projectId = process.env.GCLOUD_PROJECT || process.env.FIREBASE_PROJECT || 'fluetas-a1914';
+  const projectId = process.env.GCLOUD_PROJECT || process.env.FIREBASE_PROJECT;
+  if (!projectId) throw new HttpsError('failed-precondition', 'Storage bucket is not configured.');
   return `${projectId}.appspot.com`;
 }
 
@@ -105,16 +112,15 @@ async function verifyAndResolveAttachment(
     try {
       parsedUrl = new URL(inputRef);
     } catch {
-      throw new HttpsError('invalid-argument', `Invalid attachment URL format: ${inputRef}`);
+      throw new HttpsError('invalid-argument', 'Invalid attachment URL format.');
     }
 
     const allowedHosts = [
       'firebasestorage.googleapis.com',
       'storage.googleapis.com',
-      '127.0.0.1',
-      'localhost',
+      ...(process.env.FUNCTIONS_EMULATOR === 'true' ? ['127.0.0.1', 'localhost'] : []),
     ];
-    if (!allowedHosts.includes(parsedUrl.hostname)) {
+    if ((parsedUrl.protocol !== 'https:' && !['127.0.0.1', 'localhost'].includes(parsedUrl.hostname)) || !allowedHosts.includes(parsedUrl.hostname)) {
       throw new HttpsError('permission-denied', `Disallowed attachment storage host: ${parsedUrl.hostname}`);
     }
 
@@ -139,13 +145,7 @@ async function verifyAndResolveAttachment(
 
   const expectedBucket = getExpectedBucketName();
   if (bucketName) {
-    const isAuthorized =
-      bucketName === expectedBucket ||
-      bucketName === 'fluetas-a1914.appspot.com' ||
-      bucketName === 'solvesphere-ai-dev.appspot.com' ||
-      bucketName.startsWith('fluetas-') ||
-      bucketName.startsWith('solvesphere-');
-    if (!isAuthorized) {
+    if (bucketName !== expectedBucket) {
       throw new HttpsError(
         'permission-denied',
         `Attachment bucket '${bucketName}' does not match authorized project bucket '${expectedBucket}'.`
@@ -160,7 +160,7 @@ async function verifyAndResolveAttachment(
   const segments = cleanPath.split('/');
 
   // Must match attachments/{userId}/{contextId}/{fileName}
-  if (segments.length < 4 || segments[0] !== 'attachments') {
+  if (segments.length !== 4 || segments[0] !== 'attachments') {
     throw new HttpsError(
       'permission-denied',
       'Attachment must reside within the authorized /attachments/{userId}/{contextId}/ directory structure.'
@@ -171,7 +171,7 @@ async function verifyAndResolveAttachment(
   if (pathUid !== uid) {
     throw new HttpsError(
       'permission-denied',
-      `Attachment ownership verification failed. Cannot claim files belonging to another student (owner: ${pathUid}).`
+      'You can only attach your own files.'
     );
   }
 
@@ -197,11 +197,11 @@ async function verifyAndResolveAttachment(
   // Verify content type and size limits
   const [metadata] = await fileObj.getMetadata();
   const contentType = metadata.contentType || '';
-  const allowedMime = /^(image\/(jpeg|png|webp|gif|svg\+xml)|application\/pdf|text\/plain)$/i;
+  const allowedMime = /^(image\/(jpeg|png|webp)|application\/pdf)$/i;
   if (!allowedMime.test(contentType)) {
     throw new HttpsError(
       'invalid-argument',
-      `Disallowed attachment content type '${contentType}'. Only images, PDFs, and plain text documents are permitted.`
+      'Choose a JPEG, PNG, WebP or PDF attachment.'
     );
   }
 
@@ -255,10 +255,9 @@ async function verifyAndResolveAttachment(
  * Enforces ownership from context.auth.uid
  * Validates attachment ownership, implements scalable semantic duplicate clustering, and idempotent notification
  */
-export const createComplaint = onCall(
+export const createComplaint = campusCallable(
   {
-    cors: true,
-    secrets: [geminiApiKey],
+    ...callableOptions,
     timeoutSeconds: 60,
     memory: '256MiB',
     maxInstances: 10,
@@ -277,15 +276,6 @@ export const createComplaint = onCall(
     const db = admin.firestore();
     const uid = request.auth.uid;
 
-    // Validate all attachments belong to the authenticated student and exist in storage
-    const verifiedAttachments: VerifiedAttachment[] = [];
-    if (data.attachmentUrls && data.attachmentUrls.length > 0) {
-      for (const rawUrl of data.attachmentUrls) {
-        const verified = await verifyAndResolveAttachment(rawUrl, uid, db);
-        verifiedAttachments.push(verified);
-      }
-    }
-
     // Retrieve user name / student ID from user profile or auth token
     let submitterName = request.auth.token.name || request.auth.token.email || 'Student';
     const userDoc = await db.collection('users').doc(uid).get();
@@ -295,14 +285,27 @@ export const createComplaint = onCall(
       if (request.auth.token.role !== 'ADMIN' && userData?.enrollmentStatus !== 'VERIFIED') {
         throw new HttpsError(
           'permission-denied',
-          'Official campus maintenance complaint submission requires verified institutional enrollment. Your verification status is pending or incomplete.'
+          'Your enrollment is not verified yet. Check your enrollment request.', { reason: 'enrollment' }
         );
       }
       if (userData?.fullName) {
         submitterName = `${userData.fullName} (${userData.studentId || ''})`.trim();
       }
     } else if (request.auth.token.role !== 'ADMIN') {
-      throw new HttpsError('permission-denied', 'Student user profile not found. Please complete profile registration.');
+      throw new HttpsError('permission-denied', 'Complete your student profile before submitting a ticket.', { reason: 'enrollment' });
+    }
+
+    if (request.auth.token.role !== 'ADMIN' && !request.auth.token.email_verified) {
+      throw new HttpsError('failed-precondition', 'Verify your email address before submitting a ticket.');
+    }
+
+    // Validate all attachments belong to the authenticated student and exist in storage
+    const verifiedAttachments: VerifiedAttachment[] = [];
+    if (data.attachmentUrls && data.attachmentUrls.length > 0) {
+      for (const rawUrl of data.attachmentUrls) {
+        const verified = await verifyAndResolveAttachment(rawUrl, uid, db);
+        verifiedAttachments.push(verified);
+      }
     }
 
     const now = new Date().toISOString();
@@ -311,6 +314,15 @@ export const createComplaint = onCall(
     try {
       const newComplaint: Record<string, any> = await db.runTransaction(async (transaction) => {
         const counterSnap = await transaction.get(counterRef);
+        const claims = verifiedAttachments.map(a => db.collection('attachmentClaims').doc(createHash('sha256').update(a.canonicalPath).digest('hex')));
+        const claimed = await Promise.all(claims.map(ref => transaction.get(ref)));
+        if (claimed.some(snap => snap.exists)) throw new HttpsError('failed-precondition', 'Attachment already belongs to a ticket.');
+        const dailyRef = db.collection('ticketUsage').doc(uid);
+        const daily = (await transaction.get(dailyRef)).data();
+        const day = now.slice(0, 10);
+        const count = daily?.day === day ? Number(daily.count) : 0;
+        if (count >= 50) throw new HttpsError('resource-exhausted', 'Daily ticket limit reached.');
+        transaction.set(dailyRef, { day, count: count + 1 });
         let nextSeq = 1;
         if (counterSnap.exists) {
           nextSeq = (counterSnap.data()?.currentSequence || 0) + 1;
@@ -320,6 +332,7 @@ export const createComplaint = onCall(
         const refNum = `SS-2026-${String(nextSeq).padStart(4, '0')}`;
         const complaintRef = db.collection('complaints').doc();
         const complaintId = complaintRef.id;
+        for (const ref of claims) transaction.create(ref, { complaintId });
 
         const complaintData: Record<string, any> = {
           id: complaintId,
@@ -390,7 +403,7 @@ export const createComplaint = onCall(
     } catch (error: any) {
       console.error('Error creating complaint transaction:', error);
       if (error instanceof HttpsError) throw error;
-      throw new HttpsError('internal', error.message || 'Failed to submit complaint.');
+      throw new HttpsError('internal', 'Failed to submit complaint.');
     }
   });
 
@@ -950,7 +963,7 @@ export async function runComplaintClustering(
 export const onComplaintCreatedClustering = onDocumentCreated(
   {
     document: 'complaints/{complaintId}',
-    secrets: [geminiApiKey],
+    secrets: semanticClustering ? [geminiApiKey] : [],
     timeoutSeconds: 60,
     memory: '256MiB',
     maxInstances: 5,
@@ -960,7 +973,7 @@ export const onComplaintCreatedClustering = onDocumentCreated(
     const snap = event.data;
     if (!snap) return;
     const complaintId = event.params.complaintId;
-    const apiKey = resolveGeminiApiKey();
+    const apiKey = semanticClustering ? resolveGeminiApiKey() : undefined;
     const db = admin.firestore();
     await runComplaintClustering(db, complaintId, apiKey);
   }
@@ -976,14 +989,14 @@ export const onComplaintCreatedClustering = onDocumentCreated(
 export const recoverStaleComplaintLeases = onSchedule(
   {
     schedule: 'every 5 minutes',
-    secrets: [geminiApiKey],
+    secrets: semanticClustering ? [geminiApiKey] : [],
     timeoutSeconds: 120,
     memory: '256MiB',
     maxInstances: 1,
   },
   async () => {
     const db = admin.firestore();
-    const apiKey = resolveGeminiApiKey();
+    const apiKey = semanticClustering ? resolveGeminiApiKey() : undefined;
     const nowIso = new Date().toISOString();
 
     // 1. Recover expired leases stuck in PROCESSING
@@ -1019,9 +1032,9 @@ export const recoverStaleComplaintLeases = onSchedule(
  * Callable Cloud Function: reopenTicket
  * Allows student (ticket owner) or administrator to reopen a RESOLVED or CLOSED ticket
  */
-export const reopenTicket = onCall(
+export const reopenTicket = campusCallable(
   {
-    cors: true,
+    ...callableOptions,
     timeoutSeconds: 60,
     memory: '256MiB',
     maxInstances: 10,
@@ -1031,7 +1044,7 @@ export const reopenTicket = onCall(
       throw new HttpsError('unauthenticated', 'User must be authenticated to reopen a ticket.');
     }
 
-    const { ticketId, reason } = request.data || {};
+    const { ticketId, reason } = parseInput(z.object({ ticketId: docId, reason: z.string().trim().min(5).max(1000) }), request.data);
     if (!ticketId || typeof ticketId !== 'string') {
       throw new HttpsError('invalid-argument', 'ticketId is required.');
     }
@@ -1118,6 +1131,6 @@ export const reopenTicket = onCall(
     } catch (error: any) {
       console.error('Error reopening ticket:', error);
       if (error instanceof HttpsError) throw error;
-      throw new HttpsError('internal', error.message || 'Failed to reopen ticket.');
+      throw new HttpsError('internal', 'Failed to reopen ticket.');
     }
   });

@@ -13,7 +13,7 @@ import {
   GoogleAuthProvider,
   User as FirebaseUser,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 import {
   UserProfile,
@@ -78,7 +78,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Synchronize Firebase Auth state and Firestore profile
   useEffect(() => {
+    let revision = 0;
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
+      const current = ++revision;
       if (!firebaseUser) {
         setUser(null);
         setRole(null);
@@ -121,7 +123,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const raw = userDocSnap.data();
           const finalStatus: EnrollmentStatus = customRole === 'ADMIN'
             ? 'VERIFIED'
-            : (raw.enrollmentStatus === 'VERIFIED' ? 'VERIFIED' : (raw.enrollmentStatus || enrollmentStatus || 'INCOMPLETE'));
+            : (raw.enrollmentStatus === 'VERIFIED' ? 'VERIFIED' : (enrollmentStatus !== 'INCOMPLETE' ? enrollmentStatus : raw.enrollmentStatus || 'INCOMPLETE'));
 
           profileData = {
             id: firebaseUser.uid,
@@ -152,10 +154,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           };
         }
 
+        if (current !== revision || auth.currentUser?.uid !== firebaseUser.uid) return;
         setUser(profileData);
         setRole(customRole);
       } catch (err: any) {
-        console.error('Error synchronizing user profile from Firestore:', err);
+        if (current !== revision || auth.currentUser?.uid !== firebaseUser.uid) return;
         setProfileError('Unable to synchronize profile from Cloud Firestore. Using authenticated identity.');
         const customRole: UserRole = 'STUDENT';
         setUser({
@@ -169,11 +172,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
         setRole(customRole);
       } finally {
-        setIsLoading(false);
+        if (current === revision) setIsLoading(false);
       }
     });
 
-    return () => unsubscribe();
+    return () => { revision++; unsubscribe(); };
   }, []);
 
   // Check for Google Redirect Result on initial mount
@@ -193,7 +196,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             role: 'STUDENT',
             emailVerified: firebaseUser.emailVerified,
             enrollmentStatus: 'INCOMPLETE',
-            avatarUrl: firebaseUser.photoURL || undefined,
+            ...(firebaseUser.photoURL ? { avatarUrl: firebaseUser.photoURL } : {}),
             createdAt: now,
             updatedAt: now,
           };
@@ -243,7 +246,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           emailVerified: refreshed.emailVerified,
           enrollmentStatus: customRole === 'ADMIN'
             ? 'VERIFIED'
-            : (data.enrollmentStatus === 'VERIFIED' ? 'VERIFIED' : (data.enrollmentStatus || currentEnrollment || 'INCOMPLETE')),
+            : (data.enrollmentStatus === 'VERIFIED' ? 'VERIFIED' : (currentEnrollment !== 'INCOMPLETE' ? currentEnrollment : data.enrollmentStatus || 'INCOMPLETE')),
         } as UserProfile);
       } else {
         setUser((prev) => (prev ? { ...prev, emailVerified: refreshed.emailVerified, role: customRole } : null));
@@ -281,44 +284,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const now = new Date().toISOString();
       const newProfile: UserProfile = {
-        id: userCred.user.uid,
-        email: input.email.trim(),
-        fullName: input.fullName.trim(),
-        role: 'STUDENT',
-        emailVerified: false,
-        enrollmentStatus: 'PENDING',
-        department: 'General Studies',
-        semester: 1,
-        createdAt: now,
-        updatedAt: now,
+        id: userCred.user.uid, email: userCred.user.email!, fullName: input.fullName.trim(),
+        role: 'STUDENT', emailVerified: false, enrollmentStatus: 'INCOMPLETE',
+        createdAt: now, updatedAt: now,
       };
-
       try {
         await setDoc(doc(db, 'users', userCred.user.uid), newProfile);
-      } catch (firestoreErr: any) {
-        console.error('Firestore profile persistence failed:', firestoreErr);
-        setProfileError('Account created, but initial profile initialization encountered a network issue. Please sign in to retry.');
-      }
-
-      // Record formal enrollment request for administrative verification
-      try {
-        const reqDoc: EnrollmentRequest = {
-          id: userCred.user.uid,
-          userId: userCred.user.uid,
-          fullName: input.fullName.trim(),
-          email: input.email.trim(),
-          studentId: input.studentId.trim(),
-          department: 'General Studies',
-          semester: 1,
-          status: 'PENDING',
-          submittedAt: now,
-          reviewedAt: null,
-          reviewedBy: null,
-          rejectionReason: null,
-        };
-        await setDoc(doc(db, 'enrollmentRequests', userCred.user.uid), reqDoc);
-      } catch (reqErr: any) {
-        console.warn('Could not persist initial enrollment request:', reqErr);
+      } catch {
+        throw new Error('Account created. Sign in and open Complete Profile to finish enrollment.');
       }
 
       setUser(newProfile);
@@ -372,7 +345,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const raw = userDocSnap.data();
           const finalStatus: EnrollmentStatus = userRole === 'ADMIN'
             ? 'VERIFIED'
-            : (raw.enrollmentStatus === 'VERIFIED' ? 'VERIFIED' : (raw.enrollmentStatus || enrollmentStatus || 'INCOMPLETE'));
+            : (raw.enrollmentStatus === 'VERIFIED' ? 'VERIFIED' : (enrollmentStatus !== 'INCOMPLETE' ? enrollmentStatus : raw.enrollmentStatus || 'INCOMPLETE'));
 
           profile = {
             ...raw,
@@ -475,7 +448,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const raw = userDocSnap.data();
         const finalStatus: EnrollmentStatus = customRole === 'ADMIN'
           ? 'VERIFIED'
-          : (raw.enrollmentStatus === 'VERIFIED' ? 'VERIFIED' : (raw.enrollmentStatus || enrollmentStatus || 'INCOMPLETE'));
+          : (raw.enrollmentStatus === 'VERIFIED' ? 'VERIFIED' : (enrollmentStatus !== 'INCOMPLETE' ? enrollmentStatus : raw.enrollmentStatus || 'INCOMPLETE'));
 
         profile = {
           ...raw,
@@ -500,7 +473,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           role: 'STUDENT',
           emailVerified: firebaseUser.emailVerified,
           enrollmentStatus: customRole === 'ADMIN' ? 'VERIFIED' : 'INCOMPLETE',
-          avatarUrl: firebaseUser.photoURL || undefined,
+          ...(firebaseUser.photoURL ? { avatarUrl: firebaseUser.photoURL } : {}),
           createdAt: now,
           updatedAt: now,
         };
@@ -556,9 +529,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const reqDocRef = doc(db, 'enrollmentRequests', user.id);
     const reqSnap = await getDoc(reqDocRef);
 
+    const batch = writeBatch(db);
     if (reqSnap.exists()) {
       // Controlled update preserving administrative audit fields (reviewedAt, reviewedBy, rejectionReason)
-      await updateDoc(reqDocRef, {
+      batch.update(reqDocRef, {
         fullName: cleanName,
         studentId: cleanStudentId,
         department: cleanDept,
@@ -569,7 +543,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
     } else {
       // Initial creation
-      await setDoc(reqDocRef, {
+      batch.set(reqDocRef, {
         id: user.id,
         userId: user.id,
         fullName: cleanName,
@@ -585,12 +559,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // 2. Update non-privileged user profile fields (without setting verified studentId)
     const userDocRef = doc(db, 'users', user.id);
-    await updateDoc(userDocRef, {
+    const existingProfile = await getDoc(userDocRef);
+    batch.set(userDocRef, {
+      ...(existingProfile.exists() ? {} : {
+        id: user.id, email: auth.currentUser.email, role: 'STUDENT', createdAt: now,
+        enrollmentStatus: 'PENDING', emailVerified: auth.currentUser.emailVerified,
+      }),
       fullName: cleanName,
       department: cleanDept,
       semester: data.semester,
       updatedAt: now,
-    });
+    }, { merge: true });
+    await batch.commit();
 
     setUser((prev) =>
       prev

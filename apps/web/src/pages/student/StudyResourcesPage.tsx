@@ -1,3 +1,4 @@
+import { externalFileUrl } from '@/lib/utils';
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AcademicService } from '@/services/academicService';
@@ -261,7 +262,7 @@ export const StudyResourcesPage: React.FC = () => {
                 </Button>
                 {res.fileUrl && (
                   <a
-                    href={res.fileUrl}
+                    href={externalFileUrl(res.fileUrl)}
                     target="_blank"
                     rel="noreferrer"
                     className="flex-1"
@@ -316,7 +317,7 @@ export const StudyResourcesPage: React.FC = () => {
                 Close
               </Button>
               {previewResource.fileUrl && (
-                <a href={previewResource.fileUrl} target="_blank" rel="noreferrer">
+                <a href={externalFileUrl(previewResource.fileUrl)} target="_blank" rel="noreferrer">
                   <Button variant="gradient" size="sm">
                     <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
                     Open Full Resource

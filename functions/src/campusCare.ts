@@ -1,4 +1,5 @@
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { campusCallable, callableOptions, parseInput, docId } from './callable.js';
+import { HttpsError } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import admin from 'firebase-admin';
 import crypto from 'crypto';
@@ -445,9 +446,9 @@ export async function getOrCreateComplaintEmbedding(
  * Callable Cloud Function: askCampusCareAi
  * Intelligent campus assistant for support processes, ticket tracking, and complaint drafting.
  */
-export const askCampusCareAi = onCall(
+export const askCampusCareAi = campusCallable(
   {
-    cors: true,
+    ...callableOptions,
     secrets: [geminiApiKey],
     timeoutSeconds: 60,
     memory: '256MiB',
@@ -464,7 +465,7 @@ export const askCampusCareAi = onCall(
     if (!parseResult.success) {
       throw new HttpsError(
         'invalid-argument',
-        `Invalid request: ${parseResult.error.errors.map((e) => e.message).join(', ')}`
+        `Invalid request: ${parseResult.error.issues.map((e) => e.message).join(', ')}`
       );
     }
     const data = parseResult.data;
@@ -488,7 +489,7 @@ export const askCampusCareAi = onCall(
       if (!snap.exists) {
         throw new HttpsError('not-found', 'The specified conversation does not exist.');
       }
-      if (snap.data()?.userId !== uid && request.auth.token.role !== 'ADMIN') {
+      if (snap.data()?.userId !== uid) {
         throw new HttpsError('permission-denied', 'You do not own this conversation.');
       }
     }
@@ -671,6 +672,9 @@ Hello! I am your **Campus Care AI** assistant. I can help you:
         throw new HttpsError('not-found', 'The specified conversation does not exist.');
       }
 
+      if (convSnap.exists && convSnap.data()?.userId !== uid) {
+        throw new HttpsError('permission-denied', 'You do not own this conversation.');
+      }
       const title = convSnap.exists
         ? convSnap.data()?.title
         : trimmedPrompt.slice(0, 48) + (trimmedPrompt.length > 48 ? '...' : '');
@@ -731,9 +735,9 @@ Hello! I am your **Campus Care AI** assistant. I can help you:
  * Enhances rough student issue descriptions into structured complaint suggestions.
  * Does NOT submit complaints automatically.
  */
-export const aiAssistComplaint = onCall(
+export const aiAssistComplaint = campusCallable(
   {
-    cors: true,
+    ...callableOptions,
     secrets: [geminiApiKey],
     timeoutSeconds: 60,
     memory: '256MiB',
@@ -749,7 +753,7 @@ export const aiAssistComplaint = onCall(
     if (!parseResult.success) {
       throw new HttpsError(
         'invalid-argument',
-        `Invalid request: ${parseResult.error.errors.map((e) => e.message).join(', ')}`
+        `Invalid request: ${parseResult.error.issues.map((e) => e.message).join(', ')}`
       );
     }
     const data = parseResult.data;

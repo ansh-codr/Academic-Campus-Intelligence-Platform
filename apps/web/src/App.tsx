@@ -1,3 +1,4 @@
+import { AdminAnonymousReportsPage } from '@/pages/admin/AdminAnonymousReportsPage';
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation, Link } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -162,7 +163,7 @@ export function App() {
                 <Route path="/" element={<LandingPage />} />
                 <Route path="/auth/login" element={<StudentLoginPage />} />
                 <Route path="/auth/register" element={<StudentRegisterPage />} />
-                <Route path="/auth/complete-profile" element={<CompleteProfilePage />} />
+                <Route path="/auth/complete-profile" element={<RequireAuth><CompleteProfilePage /></RequireAuth>} />
                 <Route path="/auth/forgot-password" element={<ForgotPasswordPage />} />
                 <Route path="/auth/admin-login" element={<AdminLoginPage />} />
                 <Route path="*" element={<NotFoundPage />} />
@@ -215,7 +216,7 @@ export function App() {
                 <Route path="clusters" element={<AdminComplaintsClustersPage />} />
                 <Route path="assignments" element={<AdminComplaintsClustersPage />} />
                 <Route path="departments" element={<AdminDepartmentsPage />} />
-                <Route path="anonymous-reports" element={<AdminComplaintsClustersPage />} />
+                <Route path="anonymous-reports" element={<AdminAnonymousReportsPage />} />
                 <Route path="clubs" element={<AdminClubsPage />} />
                 <Route path="analytics" element={<AdminAnalyticsPage />} />
                 <Route path="settings" element={<AdminSettingsPage />} />

@@ -229,7 +229,7 @@ export const AcademicService = {
         const fileRef = ref(storage, storagePath);
         await deleteObject(fileRef);
       } catch (err) {
-        console.warn('Could not delete storage file:', err);
+        if ((err as { code?: string }).code !== 'storage/object-not-found') throw err;
       }
     }
     await deleteDoc(doc(db, 'resources', resourceId));
@@ -249,10 +249,11 @@ export const AcademicService = {
   // Quizzes & Practice Modules
   // --------------------------------------------------------------------------
 
-  async getQuizzes(subjectId?: string): Promise<Quiz[]> {
+  async getQuizzes(subjectId?: string, includeDrafts = false): Promise<Quiz[]> {
     try {
       const col = collection(db, 'quizzes');
       let q = query(col, orderBy('createdAt', 'desc'));
+      if (!includeDrafts) q = query(q, where('published', '==', true));
       if (subjectId && subjectId !== 'ALL') {
         q = query(q, where('subjectId', '==', subjectId));
       }
@@ -282,9 +283,9 @@ export const AcademicService = {
   /**
    * Submits answers to trusted Cloud Function for server-side score calculation and persistence.
    */
-  async submitQuiz(quizId: string, answers: QuizAnswerSubmission[]): Promise<{ attempt: QuizAttempt }> {
-    const submitFn = httpsCallable<{ quizId: string; answers: QuizAnswerSubmission[] }, { success: boolean; attempt: QuizAttempt }>(functions, 'submitQuiz');
-    const result = await submitFn({ quizId, answers });
+  async submitQuiz(quizId: string, answers: QuizAnswerSubmission[], submissionId: string): Promise<{ attempt: QuizAttempt }> {
+    const submitFn = httpsCallable<{ quizId: string; answers: QuizAnswerSubmission[]; submissionId: string }, { success: boolean; attempt: QuizAttempt }>(functions, 'submitQuiz');
+    const result = await submitFn({ quizId, answers, submissionId });
     if (!result.data?.success || !result.data.attempt) {
       throw new Error('Quiz submission could not be verified by the server.');
     }
@@ -295,33 +296,23 @@ export const AcademicService = {
    * Retrieves student's previous quiz attempts from Firestore.
    */
   async getQuizAttempts(userId: string): Promise<QuizAttempt[]> {
-    try {
-      const q = query(
-        collection(db, 'quizAttempts'),
-        where('userId', '==', userId),
-        orderBy('completedAt', 'desc'),
-        limit(20)
-      );
-      const snap = await getDocs(q);
-      return snap.docs.map((d) => ({ id: d.id, ...d.data() } as QuizAttempt));
-    } catch (err) {
-      console.warn('Error fetching quiz attempts:', err);
-      return [];
-    }
+    const q = query(
+      collection(db, 'quizAttempts'),
+      where('userId', '==', userId),
+      orderBy('completedAt', 'desc'),
+      limit(20)
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() } as QuizAttempt));
   },
 
   /**
    * Retrieves all student attempts for admin learning analytics.
    */
   async getAllStudentAttempts(): Promise<QuizAttempt[]> {
-    try {
-      const q = query(collection(db, 'quizAttempts'), orderBy('completedAt', 'desc'), limit(50));
-      const snap = await getDocs(q);
-      return snap.docs.map((d) => ({ id: d.id, ...d.data() } as QuizAttempt));
-    } catch (err) {
-      console.warn('Error fetching all attempts:', err);
-      return [];
-    }
+    const q = query(collection(db, 'quizAttempts'), orderBy('completedAt', 'desc'), limit(50));
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() } as QuizAttempt));
   },
 
   // --------------------------------------------------------------------------
@@ -329,19 +320,14 @@ export const AcademicService = {
   // --------------------------------------------------------------------------
 
   async getStudentStudyProgress(userId: string): Promise<Record<string, boolean>> {
-    try {
-      const q = query(collection(db, 'studentStudyProgress'), where('userId', '==', userId));
-      const snap = await getDocs(q);
-      const map: Record<string, boolean> = {};
-      snap.docs.forEach((doc) => {
-        const data = doc.data() as StudentStudyProgress;
-        map[data.topicId] = data.completed;
-      });
-      return map;
-    } catch (err) {
-      console.warn('Error fetching study progress:', err);
-      return {};
-    }
+    const q = query(collection(db, 'studentStudyProgress'), where('userId', '==', userId));
+    const snap = await getDocs(q);
+    const map: Record<string, boolean> = {};
+    snap.docs.forEach((doc) => {
+      const data = doc.data() as StudentStudyProgress;
+      map[data.topicId] = data.completed;
+    });
+    return map;
   },
 
   async togglePersonalTopicStudy(userId: string, topicId: string, subjectId: string, completed: boolean): Promise<void> {

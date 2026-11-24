@@ -76,37 +76,27 @@ export const CampusCareService = {
    * Loads recent chat conversations owned by the authenticated student.
    */
   async getConversations(userId: string): Promise<CampusCareConversation[]> {
-    try {
-      const q = query(
-        collection(db, 'campusCareConversations'),
-        where('userId', '==', userId),
-        orderBy('updatedAt', 'desc'),
-        limit(20)
-      );
-      const snap = await getDocs(q);
-      return snap.docs.map((d) => ({ id: d.id, ...d.data() } as CampusCareConversation));
-    } catch (err) {
-      console.warn('Could not load campus care conversations:', err);
-      return [];
-    }
+    const q = query(
+      collection(db, 'campusCareConversations'),
+      where('userId', '==', userId),
+      orderBy('updatedAt', 'desc'),
+      limit(20)
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() } as CampusCareConversation));
   },
 
   /**
    * Loads messages from a specific conversation subcollection.
    */
   async getConversationMessages(conversationId: string): Promise<CampusCareMessage[]> {
-    try {
-      const q = query(
-        collection(db, 'campusCareConversations', conversationId, 'messages'),
-        orderBy('timestamp', 'asc'),
-        limit(50)
-      );
-      const snap = await getDocs(q);
-      return snap.docs.map((d) => ({ id: d.id, ...d.data() } as CampusCareMessage));
-    } catch (err) {
-      console.warn('Could not load campus care messages:', err);
-      return [];
-    }
+    const q = query(
+      collection(db, 'campusCareConversations', conversationId, 'messages'),
+      orderBy('timestamp', 'asc'),
+      limit(50)
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() } as CampusCareMessage));
   },
 
   /**

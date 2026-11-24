@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -46,8 +46,9 @@ const POPULAR_DEPARTMENTS = [
 ];
 
 export const CompleteProfilePage: React.FC = () => {
+  const location = useLocation();
   const navigate = useNavigate();
-  const { user, submitEnrollmentRequest } = useAuth();
+  const { user, reloadUser, submitEnrollmentRequest } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isEditingPending, setIsEditingPending] = useState(false);
@@ -60,11 +61,11 @@ export const CompleteProfilePage: React.FC = () => {
     register,
     handleSubmit,
     formState: { errors },
-  } = useForm<CompleteProfileInput>({
+  } = useForm<z.input<typeof CompleteProfileSchema>, unknown, CompleteProfileInput>({
     resolver: zodResolver(CompleteProfileSchema),
     defaultValues: {
       fullName: user?.fullName || '',
-      studentId: user?.studentId || '',
+      studentId: user?.studentId || location.state?.studentId || '',
       department: user?.department || 'Computer Science & Engineering',
       semester: user?.semester || 1,
     },
@@ -157,6 +158,7 @@ export const CompleteProfilePage: React.FC = () => {
             </div>
 
             <div className="flex flex-col sm:flex-row gap-3 pt-2">
+              <Button type="button" variant="outline" onClick={reloadUser}>Refresh status</Button>
               <Button
                 variant="outline"
                 className="w-full text-xs"

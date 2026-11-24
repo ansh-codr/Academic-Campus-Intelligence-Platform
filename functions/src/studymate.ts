@@ -1,4 +1,6 @@
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { z } from 'zod';
+import { campusCallable, callableOptions, parseInput, docId } from './callable.js';
+import { HttpsError } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import admin from 'firebase-admin';
 import { GoogleGenAI } from '@google/genai';
@@ -221,9 +223,9 @@ PEDAGOGICAL POLICIES:
  * Callable Cloud Function: askStudyMateAi
  * Syllabus-grounded AI tutoring using Google Gemini API or controlled test double.
  */
-export const askStudyMateAi = onCall(
+export const askStudyMateAi = campusCallable(
   {
-    cors: true,
+    ...callableOptions,
     secrets: [geminiApiKey],
     timeoutSeconds: 60,
     memory: '256MiB',
@@ -236,7 +238,11 @@ export const askStudyMateAi = onCall(
     }
 
     const uid = request.auth.uid;
-    const data = request.data as AskStudyMateRequest;
+    const data = parseInput(z.object({
+      prompt: z.string().trim().min(1).max(1500), subjectId: docId.max(64).optional(),
+      mode: z.enum(['WITHIN_SYLLABUS', 'EXPLORE_BEYOND']).optional(), conversationId: docId.optional(),
+      conversationHistory: z.array(z.object({ role: z.enum(['user','model']), text: z.string().max(2000) })).max(30).optional(),
+    }), request.data);
 
     // 2. Validate Request Inputs
     if (!data || typeof data !== 'object') {

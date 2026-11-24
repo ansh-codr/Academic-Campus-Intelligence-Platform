@@ -6,7 +6,6 @@ node_modules/
 # Build Outputs
 dist/
 build/
-lib/
 functions/lib/
 .next/
 out/
@@ -45,6 +44,3 @@ ui-debug.log*
 !.vscode/extensions.json
 .idea/
 .playwright-mcp/
-
-# Prisma
-apps/api/prisma/migrations/dev.db*

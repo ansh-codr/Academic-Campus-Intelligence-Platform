@@ -155,10 +155,10 @@ The application frontend and Cloud Firestore rules run on the no-cost Spark tier
 
 | Service / Feature | Why Blaze is Required | Cost Risk / Mitigation |
 |---|---|---|
-| **Cloud Functions (Node 20 LTS)** | Google Cloud Run & Cloud Build engines require a linked billing account. | Free tier covers 2M invocations/month. Set Cloud Run `maxInstances: 10`. |
+| **Cloud Functions (Node 22)** | Google Cloud Run & Cloud Build engines require a linked billing account. | Free tier covers 2M invocations/month. Set Cloud Run `maxInstances: 10`. |
 | **Outbound Gemini API Invocations** | Spark blocks outbound network calls from Cloud Functions to external APIs. | Token pricing for `gemini-2.5-flash` ($0.075 / 1M input tokens). |
 | **Google Cloud Secret Manager** | Secure storage and runtime injection of `GEMINI_API_KEY`. | 6 active secret versions free; negligible cost. |
-| **Ticket Attachment Storage** | Cloud Storage default bucket creation requires project billing. | 5 GB free storage; enforce 5MB client upload limit. |
+| **Ticket Attachment Storage** | Cloud Storage default bucket creation requires project billing. | Up to 10 MiB per ticket file, enforced by Storage rules and the callable. |
 | **Scheduled Worker (`recoverStaleComplaintLeases`)** | Cloud Scheduler and Pub/Sub require billing enablement. | 3 free Cloud Scheduler jobs/month. |
 
 > [!WARNING]

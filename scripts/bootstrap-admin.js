@@ -12,16 +12,16 @@
  * 
  * Usage:
  *   # Local Emulator Mode (default when emulators are running):
- *   ADMIN_EMAIL="admin@campus.edu" ADMIN_PASSWORD="MySecureDevPassword123!" node scripts/bootstrap-admin.js
+ *   ADMIN_EMAIL="admin@campus.edu" node scripts/bootstrap-admin.js
  * 
  *   # Live Production Mode (strictly requires deliberate authorization):
  *   CONFIRM_PROD_ADMIN_BOOTSTRAP=true \
  *   GCLOUD_PROJECT="my-prod-project" \
  *   ADMIN_EMAIL="admin@institution.edu" \
- *   ADMIN_PASSWORD="MyHighEntropyProductionPassword987!" \
  *   node scripts/bootstrap-admin.js
  */
 
+import { randomBytes } from 'node:crypto';
 import admin from 'firebase-admin';
 
 const BANNED_EXAMPLE_PASSWORDS = [
@@ -81,7 +81,7 @@ export function validateAdminBootstrapConfig(env = process.env) {
     const lowerPw = password.toLowerCase();
     for (const banned of BANNED_EXAMPLE_PASSWORDS) {
       if (lowerPw.includes(banned)) {
-        throw new Error(`INSECURE PASSWORD: "${password}" contains a known example or weak password pattern.`);
+        throw new Error(`INSECURE PASSWORD: Administrator password contains a known example or weak password pattern.`);
       }
     }
 
@@ -107,8 +107,8 @@ export function validateAdminBootstrapConfig(env = process.env) {
   return {
     isEmulator,
     email: email || 'admin@campus.edu',
-    password: password || 'DevAdminTestPassword@2026',
-    fullName: env.ADMIN_NAME || 'Dr. Vikram Malhotra',
+    password: password || randomBytes(24).toString('base64url'),
+    fullName: env.ADMIN_NAME || 'Campus administrator',
     projectId: projectId || 'solvesphere-ai-dev',
   };
 }

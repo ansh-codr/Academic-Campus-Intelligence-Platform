@@ -4,30 +4,34 @@
   "private": true,
   "description": "SolveSphere AI - Academic & Campus Intelligence Platform (Firebase Architecture)",
   "workspaces": [
-    "packages/*",
-    "apps/*",
+    "packages/shared",
+    "apps/web",
     "functions"
   ],
   "scripts": {
     "dev": "npm run dev:web",
     "dev:web": "npm run dev --workspace=@solvesphere/web",
-    "dev:api": "npm run dev --workspace=@solvesphere/api",
     "build": "npm run build --workspaces --if-present",
     "build:web": "npm run build --workspace=@solvesphere/web",
     "build:functions": "npm run build --workspace=@solvesphere/functions",
-    "build:api": "npm run build --workspace=@solvesphere/api",
-    "typecheck": "npm run typecheck --workspaces --if-present",
+    "typecheck": "npm run build --workspace=@solvesphere/shared && npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "emulators": "firebase emulators:start --only auth,firestore,functions,storage,hosting",
     "seed": "tsx scripts/seed-firebase.js",
-    "admin:bootstrap": "node --input-type=module scripts/bootstrap-admin.js",
+    "admin:bootstrap": "node scripts/bootstrap-admin.js",
     "test:ui": "node tests/ui-structure.test.js",
     "test:smoke-ai": "node scripts/smoke-test-live-ai.js",
-    "test:unit": "tsx --test tests/seed-safety.test.js tests/smoke-ai-parser.test.js tests/bootstrap-admin.test.js tests/ui-structure.test.js tests/real-data-contract.test.js tests/inventory-safety.test.js",
+    "test:unit": "node --import tsx --test tests/seed-safety.test.js tests/smoke-ai-parser.test.js tests/bootstrap-admin.test.js tests/ui-structure.test.js tests/real-data-contract.test.js tests/inventory-safety.test.js tests/audit.test.js",
     "test": "npm run test:unit && npm run test:smoke-ai",
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules functions/node_modules apps/*/dist functions/lib"
   },
   "devDependencies": {
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "tsx": "^4.23.15",
+    "esbuild": "^0.28.2"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "^1.14.4",
+    "uuid": "^11.1.1"
   }
 }

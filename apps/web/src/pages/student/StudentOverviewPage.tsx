@@ -31,11 +31,13 @@ export const StudentOverviewPage: React.FC = () => {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
+    const uid = user?.id;
+    if (!uid) return;
     async function loadOverview() {
       try {
         const [subjs, tkts, timeline] = await Promise.all([
           AcademicService.getSubjects(),
-          CampusService.getTickets(),
+          CampusService.getTickets(uid),
           AcademicService.getTimeline(),
         ]);
         setSubjects(subjs);
@@ -50,7 +52,7 @@ export const StudentOverviewPage: React.FC = () => {
       }
     }
     loadOverview();
-  }, []);
+  }, [user?.id]);
 
   const activeTickets = tickets.filter(
     (t) => t.status !== 'RESOLVED' && t.status !== 'CLOSED'
@@ -63,7 +65,7 @@ export const StudentOverviewPage: React.FC = () => {
         <div className="relative z-10 max-w-2xl space-y-3">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 text-white text-xs font-semibold backdrop-blur-sm">
             <Sparkles className="w-3.5 h-3.5" />
-            <span>Semester 1 &bull; Academic Year 2026-27</span>
+            <span>{user?.semester ? `Semester ${user.semester}` : 'Student overview'}</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
             Welcome back, {user?.fullName || 'Student'}!

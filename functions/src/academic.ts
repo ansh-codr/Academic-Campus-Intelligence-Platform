@@ -1,4 +1,6 @@
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { z } from 'zod';
+import { campusCallable, callableOptions, parseInput, docId } from './callable.js';
+import { HttpsError } from 'firebase-functions/v2/https';
 import admin from 'firebase-admin';
 import {
   SanitizedQuizQuestion,
@@ -15,12 +17,12 @@ import {
  * Returns sanitized questions (stripping correctOptionIndex and explanation)
  * to prevent students from cheating prior to submission.
  */
-export const getQuizQuestions = onCall({ cors: true }, async (request) => {
+export const getQuizQuestions = campusCallable(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to access quizzes.');
   }
 
-  const { quizId } = request.data || {};
+  const { quizId } = parseInput(z.object({ quizId: docId }), request.data);
   if (!quizId) {
     throw new HttpsError('invalid-argument', 'quizId is required.');
   }
@@ -67,19 +69,15 @@ export const getQuizQuestions = onCall({ cors: true }, async (request) => {
  * Grades submissions against true keys stored in Firestore, generates explanations,
  * records the attempt in quizAttempts, and returns the verified score.
  */
-export const submitQuiz = onCall({ cors: true }, async (request) => {
+export const submitQuiz = campusCallable(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'User must be authenticated to submit quiz.');
   }
 
-  const { quizId, answers } = request.data as {
-    quizId: string;
-    answers: QuizAnswerSubmission[];
-  };
-
-  if (!quizId || !Array.isArray(answers)) {
-    throw new HttpsError('invalid-argument', 'quizId and answers array are required.');
-  }
+  const { quizId, answers, submissionId } = parseInput(z.object({
+    quizId: docId, submissionId: z.uuid().optional(),
+    answers: z.array(z.object({ questionId: docId, selectedOptionIndex: z.number().int().min(-1).max(99) })).max(200),
+  }), request.data);
 
   const db = admin.firestore();
   const uid = request.auth.uid;
@@ -98,6 +96,10 @@ export const submitQuiz = onCall({ cors: true }, async (request) => {
     studentName = userData?.fullName || studentName;
   } else if (request.auth.token.role !== 'ADMIN') {
     throw new HttpsError('permission-denied', 'Student user profile not found.');
+  }
+
+  if (request.auth.token.role !== 'ADMIN' && !request.auth.token.email_verified) {
+    throw new HttpsError('failed-precondition', 'Verify your email address before submitting an assessment.');
   }
 
   const quizDoc = await db.collection('quizzes').doc(quizId).get();
@@ -156,7 +158,8 @@ export const submitQuiz = onCall({ cors: true }, async (request) => {
   const now = new Date().toISOString();
 
   // Create persistent attempt record
-  const attemptRef = db.collection('quizAttempts').doc();
+  const attempts = db.collection('quizAttempts');
+  const attemptRef = submissionId ? attempts.doc(`${uid}_${submissionId}`) : attempts.doc();
   const attemptData: QuizAttempt = {
     id: attemptRef.id,
     userId: uid,
@@ -171,11 +174,19 @@ export const submitQuiz = onCall({ cors: true }, async (request) => {
     completedAt: now,
   };
 
-  await attemptRef.set(attemptData);
+  const saved = await db.runTransaction(async tx => {
+    const previous = await tx.get(attemptRef);
+    if (previous.exists) {
+      if (previous.data()?.quizId !== quizId) throw new HttpsError('already-exists', 'This submission belongs to another quiz.');
+      return previous.data();
+    }
+    tx.create(attemptRef, attemptData);
+    return attemptData;
+  });
 
   return {
     success: true,
-    attempt: attemptData,
+    attempt: saved,
   };
 });
 
@@ -183,7 +194,7 @@ export const submitQuiz = onCall({ cors: true }, async (request) => {
  * Callable Function: adminSaveQuiz (Admin only)
  * Provisions or updates a complete quiz with question keys.
  */
-export const adminSaveQuiz = onCall({ cors: true }, async (request) => {
+export const adminSaveQuiz = campusCallable(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -191,61 +202,31 @@ export const adminSaveQuiz = onCall({ cors: true }, async (request) => {
     throw new HttpsError('permission-denied', 'Only administrators can manage quizzes.');
   }
 
-  const { quiz, questions } = request.data || {};
-  if (!quiz || typeof quiz !== 'object') {
-    throw new HttpsError('invalid-argument', 'Valid quiz metadata object is required.');
-  }
-
-  const isPublishing = quiz.published === true;
-  if (isPublishing) {
-    const parseResult = publishedQuizSubmissionSchema.safeParse({ quiz, questions });
-    if (!parseResult.success) {
-      const firstError = parseResult.error.errors[0]?.message || 'Assessment publication validation failed.';
-      throw new HttpsError('invalid-argument', `Cannot publish assessment: ${firstError}`);
-    }
-  } else {
-    const parseResult = draftQuizSubmissionSchema.safeParse({ quiz, questions: questions || [] });
-    if (!parseResult.success) {
-      const firstError = parseResult.error.errors[0]?.message || 'Draft validation failed.';
-      throw new HttpsError('invalid-argument', `Cannot save draft assessment: ${firstError}`);
-    }
-  }
-
+  const schema = request.data?.quiz?.published === true ? publishedQuizSubmissionSchema : draftQuizSubmissionSchema;
+  const parsed = schema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', parsed.error.issues[0].message);
+  const { quiz, questions } = parsed.data;
   const db = admin.firestore();
   const quizId = quiz.id || db.collection('quizzes').doc().id;
   const now = new Date().toISOString();
 
-  const batch = db.batch();
   const quizRef = db.collection('quizzes').doc(quizId);
-
-  batch.set(
-    quizRef,
-    {
-      ...quiz,
-      id: quizId,
-      published: Boolean(quiz.published),
-      questionsCount: Array.isArray(questions) ? questions.length : 0,
-      updatedAt: now,
-      createdAt: quiz.createdAt || now,
-    },
-    { merge: true }
-  );
-
-  // Write question subcollection
-  if (Array.isArray(questions)) {
-    for (const q of questions) {
-      const qId = q.id || quizRef.collection('questions').doc().id;
-      const qRef = quizRef.collection('questions').doc(qId);
-      batch.set(qRef, {
-        ...q,
-        id: qId,
-        quizId,
-        subjectId: quiz.subjectId,
-      });
+  await db.runTransaction(async tx => {
+    const existing = await tx.get(quizRef);
+    const oldQuestions = await tx.get(quizRef.collection('questions'));
+    const keep = new Set<string>();
+    for (const question of questions) {
+      const ref = question.id ? quizRef.collection('questions').doc(question.id) : quizRef.collection('questions').doc();
+      if (keep.has(ref.id)) throw new HttpsError('invalid-argument', 'Question identifiers must be unique.');
+      keep.add(ref.id);
+      tx.set(ref, { ...question, id: ref.id, quizId, subjectId: quiz.subjectId });
     }
-  }
-
-  await batch.commit();
+    for (const old of oldQuestions.docs) if (!keep.has(old.id)) tx.delete(old.ref);
+    tx.set(quizRef, {
+      ...quiz, id: quizId, questionsCount: questions.length, updatedAt: now,
+      createdAt: existing.data()?.createdAt || now,
+    });
+  });
 
   return {
     success: true,
@@ -257,7 +238,7 @@ export const adminSaveQuiz = onCall({ cors: true }, async (request) => {
 /**
  * Callable Function: adminDeleteQuiz (Admin only)
  */
-export const adminDeleteQuiz = onCall({ cors: true }, async (request) => {
+export const adminDeleteQuiz = campusCallable(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -265,7 +246,7 @@ export const adminDeleteQuiz = onCall({ cors: true }, async (request) => {
     throw new HttpsError('permission-denied', 'Only administrators can delete quizzes.');
   }
 
-  const { quizId } = request.data || {};
+  const { quizId } = parseInput(z.object({ quizId: docId }), request.data);
   if (!quizId) {
     throw new HttpsError('invalid-argument', 'quizId is required.');
   }
@@ -289,7 +270,7 @@ export const adminDeleteQuiz = onCall({ cors: true }, async (request) => {
  * Callable Function: adminUpdateTopicStatus (Admin only)
  * Updates topic status, logs timestamp and editor.
  */
-export const adminUpdateTopicStatus = onCall({ cors: true }, async (request) => {
+export const adminUpdateTopicStatus = campusCallable(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
@@ -297,15 +278,9 @@ export const adminUpdateTopicStatus = onCall({ cors: true }, async (request) => 
     throw new HttpsError('permission-denied', 'Only administrators can update syllabus topics.');
   }
 
-  const { topicId, status, completedAt } = request.data as {
-    topicId: string;
-    status: TopicStatus;
-    completedAt?: string;
-  };
-
-  if (!topicId || !status) {
-    throw new HttpsError('invalid-argument', 'topicId and status are required.');
-  }
+  const { topicId, status, completedAt } = parseInput(z.object({
+    topicId: docId, status: z.enum(['COMPLETED','ONGOING','UPCOMING']), completedAt: z.string().max(40).optional(),
+  }), request.data);
 
   const db = admin.firestore();
   const topicRef = db.collection('syllabusTopics').doc(topicId);
@@ -328,20 +303,14 @@ export const adminUpdateTopicStatus = onCall({ cors: true }, async (request) => 
  * Lets a student independently track personal study completion of a topic
  * without modifying official classroom teaching records.
  */
-export const toggleStudentTopicProgress = onCall({ cors: true }, async (request) => {
+export const toggleStudentTopicProgress = campusCallable(callableOptions, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
 
-  const { topicId, subjectId, completed } = request.data as {
-    topicId: string;
-    subjectId: string;
-    completed: boolean;
-  };
-
-  if (!topicId || typeof completed !== 'boolean') {
-    throw new HttpsError('invalid-argument', 'topicId and completed boolean are required.');
-  }
+  const { topicId, subjectId, completed } = parseInput(z.object({
+    topicId: docId, subjectId: docId, completed: z.boolean(),
+  }), request.data);
 
   const db = admin.firestore();
   const uid = request.auth.uid;
