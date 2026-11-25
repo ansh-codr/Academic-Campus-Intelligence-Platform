@@ -98,24 +98,35 @@ export default async function handler(req: VercelApiRequest, res: VercelApiRespo
       res.end(JSON.stringify({ status: 'NO_KEY', message: 'GEMINI_API_KEY is not set in environment.' }));
       return;
     }
-    try {
-      const { GoogleGenAI } = await import('@google/genai');
-      const ai = new GoogleGenAI({ apiKey: key, apiVersion: 'v1beta', httpOptions: { apiVersion: 'v1beta' } });
-      const testRes = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: [{ role: 'user', parts: [{ text: 'Respond with: OK' }] }],
-        config: { maxOutputTokens: 10 },
-      });
-      res.statusCode = 200;
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ status: 'SUCCESS', model: 'gemini-3.8-flash', text: testRes.text }));
-      return;
-    } catch (e: any) {
-      res.statusCode = 200;
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ status: 'GENAI_ERROR', error: e.message, code: e.status }));
-      return;
+    const { GoogleGenAI } = await import('@google/genai');
+    const ai = new GoogleGenAI({ apiKey: key, apiVersion: 'v1beta', httpOptions: { apiVersion: 'v1beta' } });
+
+    const modelsToTry = [
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+      'gemini-2.0-flash-exp',
+      'gemini-1.5-pro',
+      'gemini-3.8-flash',
+    ];
+
+    const results: Record<string, any> = {};
+    for (const model of modelsToTry) {
+      try {
+        const testRes = await ai.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [{ text: 'Respond with: OK' }] }],
+          config: { maxOutputTokens: 10 },
+        });
+        results[model] = { success: true, text: testRes.text?.trim() };
+      } catch (e: any) {
+        results[model] = { success: false, error: e.message, status: e.status };
+      }
     }
+
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ status: 'PROBED', results }));
+    return;
   }
 
   const targetFn = (functionsBundle as Record<string, any>)[fnName];
