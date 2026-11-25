@@ -602,7 +602,7 @@ CURRENT STUDENT CONTEXT:
         });
 
         const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
+          model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
           contents,
           config: {
             systemInstruction,
@@ -614,7 +614,7 @@ CURRENT STUDENT CONTEXT:
         replyText = response.text || 'I am ready to help you with campus maintenance and support questions.';
       } catch (err: any) {
         console.error('Gemini Campus Care Provider Error:', err);
-        throw new HttpsError('internal', 'The Campus Care AI service encountered a provider error. Please try again.');
+        throw new HttpsError('internal', `Campus Care Gemini Error: ${err.message || 'Unknown error'}`);
       }
     } else {
       // Fail safely in production if API key is missing
@@ -789,7 +789,7 @@ Return JSON strictly matching this schema:
 
         const prompt = `Student Input: "${rawInput}". Location: Building: ${data.building || 'Not specified'}, Floor: ${data.floor || 'Not specified'}, Room: ${data.room || 'Not specified'}`;
         const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
+          model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           config: {
             systemInstruction,

@@ -423,7 +423,7 @@ var askStudyMateAi = campusCallable(
     const { subject, topics, resources, groundingContext } = await fetchAcademicGrounding(db, rawSubjectId);
     const systemInstruction = buildSystemInstruction(subject, topics, resources, mode);
     const apiKey = resolveGeminiApiKey();
-    const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const modelName = process.env.GEMINI_MODEL || "gemini-1.5-flash";
     let aiReplyText = "";
     let isMock = false;
     if (apiKey) {
@@ -460,7 +460,7 @@ ${trimmedPrompt}
         aiReplyText = response.text || "I could not generate an answer for this topic. Please try rephrasing your question.";
       } catch (err) {
         console.error("Gemini Provider Error:", err);
-        throw new HttpsError2("internal", "The AI tutoring service encountered a provider error. Please try again in a moment.");
+        throw new HttpsError2("internal", `Gemini Provider Error: ${err.message || "Unknown error"}`);
       }
     } else {
       if (!isEmulatorOrTestEnvironment()) {
@@ -960,7 +960,7 @@ ${trimmedPrompt}
 </student_query>` }]
         });
         const response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
+          model: process.env.GEMINI_MODEL || "gemini-1.5-flash",
           contents,
           config: {
             systemInstruction,
@@ -971,7 +971,7 @@ ${trimmedPrompt}
         replyText = response.text || "I am ready to help you with campus maintenance and support questions.";
       } catch (err) {
         console.error("Gemini Campus Care Provider Error:", err);
-        throw new HttpsError3("internal", "The Campus Care AI service encountered a provider error. Please try again.");
+        throw new HttpsError3("internal", `Campus Care Gemini Error: ${err.message || "Unknown error"}`);
       }
     } else {
       if (!isEmulatorOrTestEnvironment()) {
@@ -1120,7 +1120,7 @@ Return JSON strictly matching this schema:
 }`;
         const prompt = `Student Input: "${rawInput}". Location: Building: ${data.building || "Not specified"}, Floor: ${data.floor || "Not specified"}, Room: ${data.room || "Not specified"}`;
         const response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
+          model: process.env.GEMINI_MODEL || "gemini-1.5-flash",
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           config: {
             systemInstruction,

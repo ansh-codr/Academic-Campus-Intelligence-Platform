@@ -325,7 +325,7 @@ export const askStudyMateAi = campusCallable(
 
     // 7. Gemini Inference or Controlled Test Double
     const apiKey = resolveGeminiApiKey();
-    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
     let aiReplyText = '';
     let isMock = false;
 
@@ -366,7 +366,7 @@ export const askStudyMateAi = campusCallable(
         aiReplyText = response.text || 'I could not generate an answer for this topic. Please try rephrasing your question.';
       } catch (err: any) {
         console.error('Gemini Provider Error:', err);
-        throw new HttpsError('internal', 'The AI tutoring service encountered a provider error. Please try again in a moment.');
+        throw new HttpsError('internal', `Gemini Provider Error: ${err.message || 'Unknown error'}`);
       }
     } else {
       // In production, when GEMINI_API_KEY is not configured, fail safely.
