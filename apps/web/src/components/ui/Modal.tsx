@@ -6,15 +6,23 @@ const widths={sm:'max-w-sm',md:'max-w-md',lg:'max-w-lg',xl:'max-w-xl','2xl':'max
 export const Modal:React.FC<ModalProps>=({isOpen,onClose,title,description,children,maxWidth='lg'})=>{
   const dialogRef=useRef<HTMLDivElement>(null);
   const closeRef=useRef<HTMLButtonElement>(null);
+  const onCloseRef=useRef(onClose);
+  onCloseRef.current=onClose;
   const titleId=useId(),descId=useId();
+
   useEffect(()=>{
     if(!isOpen)return;
     const active=document.activeElement as HTMLElement|null;
     const previousOverflow=document.body.style.overflow;
     document.body.style.overflow='hidden';
-    closeRef.current?.focus();
+
+    // Only set initial focus if focus is not already inside the dialog
+    if(!dialogRef.current?.contains(document.activeElement)){
+      closeRef.current?.focus();
+    }
+
     const handleKey=(e:KeyboardEvent)=>{
-      if(e.key==='Escape'){e.preventDefault();onClose();}
+      if(e.key==='Escape'){e.preventDefault();onCloseRef.current();}
       if(e.key!=='Tab')return;
       const focusable=Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')||[]);
       if(!focusable.length)return;
@@ -24,7 +32,7 @@ export const Modal:React.FC<ModalProps>=({isOpen,onClose,title,description,child
     };
     window.addEventListener('keydown',handleKey);
     return ()=>{window.removeEventListener('keydown',handleKey);document.body.style.overflow=previousOverflow;active?.focus();};
-  },[isOpen,onClose]);
+  },[isOpen]);
   if(!isOpen)return null;
   return <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
     <div aria-hidden="true" className="fixed inset-0 bg-slate-950/65 backdrop-blur-md" onClick={onClose}/>
