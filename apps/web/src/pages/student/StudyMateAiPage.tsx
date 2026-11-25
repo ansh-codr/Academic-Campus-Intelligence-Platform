@@ -10,6 +10,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { MarkdownRenderer } from '@/components/ui/MarkdownRenderer';
 import {
   Bot,
   Send,
@@ -472,7 +473,11 @@ export const StudyMateAiPage: React.FC = () => {
                       <span>{msg.timestamp}</span>
                     </div>
 
-                    <div className="whitespace-pre-line mt-1">{msg.content}</div>
+                    {isUser ? (
+                      <div className="whitespace-pre-line mt-1">{msg.content}</div>
+                    ) : (
+                      <MarkdownRenderer content={msg.content} className="mt-1" />
+                    )}
 
                     {/* Grounding Context pill */}
                     {msg.groundingContext && msg.groundingContext.topicTitles.length > 0 && (

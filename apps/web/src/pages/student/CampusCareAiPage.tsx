@@ -10,6 +10,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { MarkdownRenderer } from '@/components/ui/MarkdownRenderer';
 import {
   Sparkles,
   Send,
@@ -361,7 +362,11 @@ export const CampusCareAiPage: React.FC = () => {
                           : 'bg-slate-100 dark:bg-slate-800/90 text-slate-800 dark:text-slate-100 rounded-tl-none border border-slate-200/80 dark:border-slate-700/60'
                       }`}
                     >
-                      <div className="whitespace-pre-wrap">{msg.content}</div>
+                      {msg.sender === 'user' ? (
+                        <div className="whitespace-pre-wrap">{msg.content}</div>
+                      ) : (
+                        <MarkdownRenderer content={msg.content} />
+                      )}
 
                       {/* Drafted Complaint Suggestion CTA */}
                       {msg.draftComplaint && (
