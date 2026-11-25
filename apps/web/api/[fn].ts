@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import admin from 'firebase-admin';
-import * as functionsBundle from '../../../functions/lib/index.js';
+import * as functionsBundle from '@solvesphere/functions';
 
 interface VercelApiRequest extends IncomingMessage {
   query: Record<string, string | string[]>;
