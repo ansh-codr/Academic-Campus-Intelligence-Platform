@@ -19,34 +19,32 @@ function initFirebaseAdmin() {
 
   const projectId = process.env.FIREBASE_PROJECT_ID || process.env.GCLOUD_PROJECT || 'solvesphere-ai-dev-2026';
 
-  // 1. Raw Service Account JSON key
+  let certObject: any = null;
+
   if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
     try {
-      const parsed = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
-      admin.initializeApp({
-        credential: admin.credential.cert(parsed),
-        projectId: parsed.project_id || projectId,
-      });
-      return;
+      const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY.trim();
+      const jsonStr = raw.startsWith('{') ? raw : Buffer.from(raw, 'base64').toString('utf8');
+      certObject = JSON.parse(jsonStr);
     } catch (err: any) {
       console.error('[Vercel API] Error parsing FIREBASE_SERVICE_ACCOUNT_KEY:', err.message);
     }
+  } else if (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
+    certObject = {
+      projectId,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+    };
   }
 
-  // 2. Individual Service Account Environment Variables
-  if (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
+  if (certObject && certObject.private_key) {
     admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-      }),
-      projectId,
+      credential: admin.credential.cert(certObject),
+      projectId: certObject.project_id || projectId,
     });
     return;
   }
 
-  // 3. Fallback to default ADC / project configuration
   admin.initializeApp({ projectId });
 }
 
@@ -102,7 +100,16 @@ export default async function handler(req: VercelApiRequest, res: VercelApiRespo
         token: decoded,
       };
     } catch (authErr: any) {
-      console.warn(`[Vercel API] Token verification failed for "${fnName}":`, authErr.message);
+      console.error(`[Vercel API] Token verification failed for "${fnName}":`, authErr.message);
+      res.statusCode = 401;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        error: {
+          message: `Authentication verification failed: ${authErr.message}. Ensure FIREBASE_SERVICE_ACCOUNT_KEY is configured in Vercel.`,
+          status: 'unauthenticated',
+        }
+      }));
+      return;
     }
   }
 
