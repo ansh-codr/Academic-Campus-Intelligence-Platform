@@ -4,6 +4,7 @@ import { HttpsError } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import admin from 'firebase-admin';
 import { GoogleGenAI } from '@google/genai';
+import { generateGeminiContentWithFallback } from './geminiHelper.js';
 import {
   AskStudyMateRequest,
   AskStudyMateResponse,
@@ -357,32 +358,12 @@ export const askStudyMateAi = campusCallable(
           parts: [{ text: `<student_query>\n${trimmedPrompt}\n</student_query>` }],
         });
 
-        let availableModels: string[] = [];
-        try {
-          const listRes = await ai.models.list();
-          for await (const m of listRes) {
-            if (m.name) {
-              availableModels.push(m.name.replace(/^models\//, ''));
-            }
-          }
-        } catch (listErr: any) {
-          console.warn('Failed to list models:', listErr.message);
-        }
-
-        const chosenModel = availableModels.find(m => m === 'gemini-3.8-flash') || availableModels.find(m => m.includes('flash')) || 'gemini-3.8-flash';
-        console.log('Available models:', availableModels, 'Selected:', chosenModel);
-
-        const response = await ai.models.generateContent({
-          model: chosenModel,
+        aiReplyText = await generateGeminiContentWithFallback(ai, {
           contents,
-          config: {
-            systemInstruction,
-            maxOutputTokens: 1024,
-            temperature: 0.35,
-          },
+          systemInstruction,
+          maxOutputTokens: 1024,
+          temperature: 0.35,
         });
-
-        aiReplyText = response.text || 'I could not generate an answer for this topic. Please try rephrasing your question.';
       } catch (err: any) {
         console.error('Gemini Provider Error:', err);
         throw new HttpsError('internal', `Gemini Provider Error: ${err.message || 'Unknown error'}`);

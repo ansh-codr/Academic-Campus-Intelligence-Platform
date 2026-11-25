@@ -4,6 +4,7 @@ import { defineSecret } from 'firebase-functions/params';
 import admin from 'firebase-admin';
 import crypto from 'crypto';
 import { GoogleGenAI } from '@google/genai';
+import { generateGeminiContentWithFallback } from './geminiHelper.js';
 import {
   AskCampusCareRequest,
   AskCampusCareResponse,
@@ -501,25 +502,28 @@ export const askCampusCareAi = campusCallable(
 
     let relevantTickets: RelevantTicketSnippet[] = [];
     if (isTicketLookup) {
-      const ticketsSnap = await db.collection('complaints')
-        .where('submittedById', '==', uid)
-        .orderBy('submittedAt', 'desc')
-        .limit(5)
-        .get();
+      try {
+        const ticketsSnap = await db.collection('complaints')
+          .where('submittedById', '==', uid)
+          .limit(10)
+          .get();
 
-      relevantTickets = ticketsSnap.docs.map((docSnap) => {
-        const d = docSnap.data();
-        return {
-          id: docSnap.id,
-          referenceNumber: d.referenceNumber || docSnap.id,
+        const docs = ticketsSnap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() as any) }));
+        docs.sort((a, b) => (b.submittedAt || '').localeCompare(a.submittedAt || ''));
+
+        relevantTickets = docs.slice(0, 5).map((d) => ({
+          id: d.id,
+          referenceNumber: d.referenceNumber || d.id,
           title: d.title,
           status: d.status,
           category: d.category,
           assignedDepartment: d.assignedDepartment,
           submittedAt: d.submittedAt,
           updatedAt: d.updatedAt,
-        };
-      });
+        }));
+      } catch (ticketErr: any) {
+        console.warn('Could not fetch student tickets for grounding:', ticketErr.message);
+      }
     }
 
     // 5. Intelligent Action & Complaint Drafting Heuristic
@@ -605,31 +609,12 @@ CURRENT STUDENT CONTEXT:
           parts: [{ text: `<student_query>\n${trimmedPrompt}\n</student_query>` }],
         });
 
-        let availableModels: string[] = [];
-        try {
-          const listRes = await ai.models.list();
-          for await (const m of listRes) {
-            if (m.name) {
-              availableModels.push(m.name.replace(/^models\//, ''));
-            }
-          }
-        } catch (listErr: any) {
-          console.warn('Failed to list models:', listErr.message);
-        }
-
-        const chosenModel = availableModels.find(m => m === 'gemini-3.8-flash') || availableModels.find(m => m.includes('flash')) || 'gemini-3.8-flash';
-
-        const response = await ai.models.generateContent({
-          model: chosenModel,
+        replyText = await generateGeminiContentWithFallback(ai, {
           contents,
-          config: {
-            systemInstruction,
-            maxOutputTokens: 1024,
-            temperature: 0.35,
-          },
+          systemInstruction,
+          maxOutputTokens: 1024,
+          temperature: 0.35,
         });
-
-        replyText = response.text || 'I am ready to help you with campus maintenance and support questions.';
       } catch (err: any) {
         console.error('Gemini Campus Care Provider Error:', err);
         throw new HttpsError('internal', `Campus Care Gemini Error: ${err.message || 'Unknown error'}`);
@@ -810,17 +795,13 @@ Return JSON strictly matching this schema:
 }`;
 
         const prompt = `Student Input: "${rawInput}". Location: Building: ${data.building || 'Not specified'}, Floor: ${data.floor || 'Not specified'}, Room: ${data.room || 'Not specified'}`;
-        const response = await ai.models.generateContent({
-          model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+        const text = await generateGeminiContentWithFallback(ai, {
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          config: {
-            systemInstruction,
-            maxOutputTokens: 600,
-            temperature: 0.2,
-          },
+          systemInstruction,
+          maxOutputTokens: 600,
+          temperature: 0.2,
         });
 
-        const text = response.text || '';
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0]);

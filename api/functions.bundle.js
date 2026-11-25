@@ -214,6 +214,43 @@ import admin3 from "firebase-admin";
 import crypto from "crypto";
 import { GoogleGenAI as GoogleGenAI2 } from "@google/genai";
 
+// functions/src/geminiHelper.ts
+async function generateGeminiContentWithFallback(ai, params) {
+  const candidateModels = [
+    process.env.GEMINI_MODEL,
+    "gemini-3.8-flash",
+    "gemini-2.0-flash",
+    "gemini-2.5-flash",
+    "gemini-1.5-flash"
+  ].filter(Boolean);
+  let lastError = null;
+  for (const model of candidateModels) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: params.contents,
+        config: {
+          systemInstruction: params.systemInstruction,
+          maxOutputTokens: params.maxOutputTokens || 1024,
+          temperature: params.temperature ?? 0.35
+        }
+      });
+      if (response && response.text) {
+        return response.text;
+      }
+    } catch (err) {
+      lastError = err;
+      const errMsg = String(err?.message || "");
+      console.warn(`[Gemini] Model ${model} generation attempt failed: ${errMsg}`);
+      if (errMsg.includes("404") || errMsg.includes("503") || errMsg.includes("high demand") || errMsg.includes("not found") || errMsg.includes("no longer available") || errMsg.includes("UNAVAILABLE") || errMsg.includes("is not found")) {
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError || new Error("All Gemini candidate models failed.");
+}
+
 // functions/src/studymate.ts
 import { z as z6 } from "zod";
 import { HttpsError as HttpsError2 } from "firebase-functions/v2/https";
@@ -452,29 +489,12 @@ var askStudyMateAi = campusCallable(
 ${trimmedPrompt}
 </student_query>` }]
         });
-        let availableModels = [];
-        try {
-          const listRes = await ai.models.list();
-          for await (const m of listRes) {
-            if (m.name) {
-              availableModels.push(m.name.replace(/^models\//, ""));
-            }
-          }
-        } catch (listErr) {
-          console.warn("Failed to list models:", listErr.message);
-        }
-        const chosenModel = availableModels.find((m) => m === "gemini-3.8-flash") || availableModels.find((m) => m.includes("flash")) || "gemini-3.8-flash";
-        console.log("Available models:", availableModels, "Selected:", chosenModel);
-        const response = await ai.models.generateContent({
-          model: chosenModel,
+        aiReplyText = await generateGeminiContentWithFallback(ai, {
           contents,
-          config: {
-            systemInstruction,
-            maxOutputTokens: 1024,
-            temperature: 0.35
-          }
+          systemInstruction,
+          maxOutputTokens: 1024,
+          temperature: 0.35
         });
-        aiReplyText = response.text || "I could not generate an answer for this topic. Please try rephrasing your question.";
       } catch (err) {
         console.error("Gemini Provider Error:", err);
         throw new HttpsError2("internal", `Gemini Provider Error: ${err.message || "Unknown error"}`);
@@ -897,20 +917,23 @@ var askCampusCareAi = campusCallable(
     const isTicketLookup = lowerPrompt.includes("ticket") || lowerPrompt.includes("complaint") || lowerPrompt.includes("status") || lowerPrompt.includes("ss-2026") || lowerPrompt.includes("my request");
     let relevantTickets = [];
     if (isTicketLookup) {
-      const ticketsSnap = await db.collection("complaints").where("submittedById", "==", uid).orderBy("submittedAt", "desc").limit(5).get();
-      relevantTickets = ticketsSnap.docs.map((docSnap) => {
-        const d = docSnap.data();
-        return {
-          id: docSnap.id,
-          referenceNumber: d.referenceNumber || docSnap.id,
+      try {
+        const ticketsSnap = await db.collection("complaints").where("submittedById", "==", uid).limit(10).get();
+        const docs = ticketsSnap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+        docs.sort((a, b) => (b.submittedAt || "").localeCompare(a.submittedAt || ""));
+        relevantTickets = docs.slice(0, 5).map((d) => ({
+          id: d.id,
+          referenceNumber: d.referenceNumber || d.id,
           title: d.title,
           status: d.status,
           category: d.category,
           assignedDepartment: d.assignedDepartment,
           submittedAt: d.submittedAt,
           updatedAt: d.updatedAt
-        };
-      });
+        }));
+      } catch (ticketErr) {
+        console.warn("Could not fetch student tickets for grounding:", ticketErr.message);
+      }
     }
     const isDraftRequest = lowerPrompt.includes("report") || lowerPrompt.includes("broken") || lowerPrompt.includes("leak") || lowerPrompt.includes("not working") || lowerPrompt.includes("draft") || lowerPrompt.includes("file a complaint");
     let draftSuggestion;
@@ -980,28 +1003,12 @@ CURRENT STUDENT CONTEXT:
 ${trimmedPrompt}
 </student_query>` }]
         });
-        let availableModels = [];
-        try {
-          const listRes = await ai.models.list();
-          for await (const m of listRes) {
-            if (m.name) {
-              availableModels.push(m.name.replace(/^models\//, ""));
-            }
-          }
-        } catch (listErr) {
-          console.warn("Failed to list models:", listErr.message);
-        }
-        const chosenModel = availableModels.find((m) => m === "gemini-3.8-flash") || availableModels.find((m) => m.includes("flash")) || "gemini-3.8-flash";
-        const response = await ai.models.generateContent({
-          model: chosenModel,
+        replyText = await generateGeminiContentWithFallback(ai, {
           contents,
-          config: {
-            systemInstruction,
-            maxOutputTokens: 1024,
-            temperature: 0.35
-          }
+          systemInstruction,
+          maxOutputTokens: 1024,
+          temperature: 0.35
         });
-        replyText = response.text || "I am ready to help you with campus maintenance and support questions.";
       } catch (err) {
         console.error("Gemini Campus Care Provider Error:", err);
         throw new HttpsError3("internal", `Campus Care Gemini Error: ${err.message || "Unknown error"}`);
@@ -1156,16 +1163,12 @@ Return JSON strictly matching this schema:
   "missingInfo": string[]
 }`;
         const prompt = `Student Input: "${rawInput}". Location: Building: ${data.building || "Not specified"}, Floor: ${data.floor || "Not specified"}, Room: ${data.room || "Not specified"}`;
-        const response = await ai.models.generateContent({
-          model: process.env.GEMINI_MODEL || "gemini-3.8-flash",
+        const text = await generateGeminiContentWithFallback(ai, {
           contents: [{ role: "user", parts: [{ text: prompt }] }],
-          config: {
-            systemInstruction,
-            maxOutputTokens: 600,
-            temperature: 0.2
-          }
+          systemInstruction,
+          maxOutputTokens: 600,
+          temperature: 0.2
         });
-        const text = response.text || "";
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0]);
