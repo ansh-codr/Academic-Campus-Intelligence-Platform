@@ -369,7 +369,7 @@ export const askStudyMateAi = campusCallable(
           console.warn('Failed to list models:', listErr.message);
         }
 
-        const chosenModel = availableModels.find(m => m.includes('flash')) || availableModels[0] || process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+        const chosenModel = availableModels.find(m => m === 'gemini-3.8-flash') || availableModels.find(m => m.includes('flash')) || 'gemini-3.8-flash';
         console.log('Available models:', availableModels, 'Selected:', chosenModel);
 
         const response = await ai.models.generateContent({

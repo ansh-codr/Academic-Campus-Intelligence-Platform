@@ -617,7 +617,7 @@ CURRENT STUDENT CONTEXT:
           console.warn('Failed to list models:', listErr.message);
         }
 
-        const chosenModel = availableModels.find(m => m.includes('flash')) || availableModels[0] || process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+        const chosenModel = availableModels.find(m => m === 'gemini-3.8-flash') || availableModels.find(m => m.includes('flash')) || 'gemini-3.8-flash';
 
         const response = await ai.models.generateContent({
           model: chosenModel,
@@ -811,7 +811,7 @@ Return JSON strictly matching this schema:
 
         const prompt = `Student Input: "${rawInput}". Location: Building: ${data.building || 'Not specified'}, Floor: ${data.floor || 'Not specified'}, Room: ${data.room || 'Not specified'}`;
         const response = await ai.models.generateContent({
-          model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+          model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           config: {
             systemInstruction,
