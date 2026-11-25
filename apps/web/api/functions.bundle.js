@@ -218,41 +218,32 @@ import { GoogleGenAI as GoogleGenAI2 } from "@google/genai";
 async function generateGeminiContentWithFallback(ai, params) {
   const candidateModels = [
     process.env.GEMINI_MODEL,
-    "gemini-3.8-flash",
-    "gemini-2.5-flash",
-    "gemini-2.0-flash"
+    "gemini-3.5-flash-lite",
+    "gemini-3.8-flash"
   ].filter(Boolean);
-  const errorLog = [];
+  let lastError = null;
   for (const model of candidateModels) {
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        const response = await ai.models.generateContent({
-          model,
-          contents: params.contents,
-          config: {
-            systemInstruction: params.systemInstruction,
-            maxOutputTokens: params.maxOutputTokens || 1024,
-            temperature: params.temperature ?? 0.35
-          }
-        });
-        if (response && response.text) {
-          return response.text;
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: params.contents,
+        config: {
+          systemInstruction: params.systemInstruction,
+          maxOutputTokens: params.maxOutputTokens || 1024,
+          temperature: params.temperature ?? 0.35
         }
-      } catch (err) {
-        const errMsg = String(err?.message || err);
-        console.warn(`[Gemini] Model ${model} attempt ${attempt} failed: ${errMsg}`);
-        errorLog.push(`${model} (attempt ${attempt}): ${errMsg}`);
-        if (errMsg.includes("503") || errMsg.includes("high demand") || errMsg.includes("UNAVAILABLE")) {
-          if (attempt === 1) {
-            await new Promise((resolve) => setTimeout(resolve, 1200));
-            continue;
-          }
-        }
-        break;
+      });
+      if (response && response.text) {
+        return response.text;
       }
+    } catch (err) {
+      lastError = err;
+      const errMsg = String(err?.message || err);
+      console.warn(`[Gemini] Model ${model} generation attempt failed: ${errMsg}`);
+      continue;
     }
   }
-  throw new Error(`Gemini Provider Generation Failed: ${errorLog.join(" | ")}`);
+  throw lastError || new Error("All Gemini candidate models failed.");
 }
 
 // functions/src/studymate.ts

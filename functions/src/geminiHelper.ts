@@ -1,8 +1,8 @@
 import { GoogleGenAI } from '@google/genai';
 
 /**
- * Resiliently generates content using Gemini, gracefully falling back across compatible models
- * and retrying if a model encounters temporary high demand (HTTP 503).
+ * Resiliently generates content using Gemini, prioritizing ultra-fast gemini-3.5-flash-lite
+ * with seamless fallback to gemini-3.8-flash if needed.
  */
 export async function generateGeminiContentWithFallback(
   ai: GoogleGenAI,
@@ -15,44 +15,35 @@ export async function generateGeminiContentWithFallback(
 ): Promise<string> {
   const candidateModels = [
     process.env.GEMINI_MODEL,
+    'gemini-3.5-flash-lite',
     'gemini-3.8-flash',
-    'gemini-2.5-flash',
-    'gemini-2.0-flash',
   ].filter(Boolean) as string[];
 
-  const errorLog: string[] = [];
+  let lastError: any = null;
 
   for (const model of candidateModels) {
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        const response = await ai.models.generateContent({
-          model,
-          contents: params.contents,
-          config: {
-            systemInstruction: params.systemInstruction,
-            maxOutputTokens: params.maxOutputTokens || 1024,
-            temperature: params.temperature ?? 0.35,
-          },
-        });
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: params.contents,
+        config: {
+          systemInstruction: params.systemInstruction,
+          maxOutputTokens: params.maxOutputTokens || 1024,
+          temperature: params.temperature ?? 0.35,
+        },
+      });
 
-        if (response && response.text) {
-          return response.text;
-        }
-      } catch (err: any) {
-        const errMsg = String(err?.message || err);
-        console.warn(`[Gemini] Model ${model} attempt ${attempt} failed: ${errMsg}`);
-        errorLog.push(`${model} (attempt ${attempt}): ${errMsg}`);
-
-        if (errMsg.includes('503') || errMsg.includes('high demand') || errMsg.includes('UNAVAILABLE')) {
-          if (attempt === 1) {
-            await new Promise((resolve) => setTimeout(resolve, 1200));
-            continue;
-          }
-        }
-        break;
+      if (response && response.text) {
+        return response.text;
       }
+    } catch (err: any) {
+      lastError = err;
+      const errMsg = String(err?.message || err);
+      console.warn(`[Gemini] Model ${model} generation attempt failed: ${errMsg}`);
+      // Continue to next model if 404/503/high demand
+      continue;
     }
   }
 
-  throw new Error(`Gemini Provider Generation Failed: ${errorLog.join(' | ')}`);
+  throw lastError || new Error('All Gemini candidate models failed.');
 }

@@ -100,8 +100,7 @@ export default async function handler(req: VercelApiRequest, res: VercelApiRespo
     }
     const { GoogleGenAI } = await import('@google/genai');
     const ai = new GoogleGenAI({ apiKey: key, apiVersion: 'v1beta', httpOptions: { apiVersion: 'v1beta' } });
-
-    const modelToTest = (typeof req.query?.model === 'string' && req.query.model) ? req.query.model : 'gemini-2.5-flash';
+    const modelToTest = (typeof req.query?.model === 'string' && req.query.model) ? req.query.model : 'gemini-3.5-flash-lite';
 
     try {
       const testRes = await ai.models.generateContent({
