@@ -153,13 +153,39 @@ export default async function handler(req: VercelApiRequest, res: VercelApiRespo
   } catch (error: any) {
     console.error(`[Vercel API] Error executing "${fnName}":`, error);
 
-    const httpCode = error.httpErrorCode?.status || (error.code === 'unauthenticated' ? 401 : error.code === 'permission-denied' ? 403 : 500);
-    res.statusCode = typeof httpCode === 'number' && httpCode >= 400 && httpCode < 600 ? httpCode : 500;
+    const rawCode = String(error.code || 'internal').toLowerCase();
+    const STATUS_MAP: Record<string, { http: number; canonical: string }> = {
+      'ok': { http: 200, canonical: 'OK' },
+      'cancelled': { http: 499, canonical: 'CANCELLED' },
+      'unknown': { http: 500, canonical: 'UNKNOWN' },
+      'invalid-argument': { http: 400, canonical: 'INVALID_ARGUMENT' },
+      'deadline-exceeded': { http: 504, canonical: 'DEADLINE_EXCEEDED' },
+      'not-found': { http: 404, canonical: 'NOT_FOUND' },
+      'already-exists': { http: 409, canonical: 'ALREADY_EXISTS' },
+      'permission-denied': { http: 403, canonical: 'PERMISSION_DENIED' },
+      'resource-exhausted': { http: 429, canonical: 'RESOURCE_EXHAUSTED' },
+      'failed-precondition': { http: 400, canonical: 'FAILED_PRECONDITION' },
+      'aborted': { http: 409, canonical: 'ABORTED' },
+      'out-of-range': { http: 400, canonical: 'OUT_OF_RANGE' },
+      'unimplemented': { http: 501, canonical: 'UNIMPLEMENTED' },
+      'internal': { http: 500, canonical: 'INTERNAL' },
+      'unavailable': { http: 503, canonical: 'UNAVAILABLE' },
+      'data-loss': { http: 500, canonical: 'DATA_LOSS' },
+      'unauthenticated': { http: 401, canonical: 'UNAUTHENTICATED' },
+    };
+
+    const mapped = STATUS_MAP[rawCode] || {
+      http: typeof error.httpErrorCode?.status === 'number' ? error.httpErrorCode.status : 500,
+      canonical: rawCode.toUpperCase().replace(/-/g, '_'),
+    };
+
+    res.statusCode = mapped.http;
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({
       error: {
         message: error.message || 'Internal server error occurred.',
-        status: error.code || 'INTERNAL',
+        status: mapped.canonical,
+        details: error.details,
       }
     }));
   }

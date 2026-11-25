@@ -154,7 +154,7 @@ export const StudyMateAiPage: React.FC = () => {
         prompt: text,
         subjectId: effectiveSubjectId,
         mode,
-        conversationId: currentConversationId || undefined,
+        conversationId: currentConversationId?.trim() ? currentConversationId.trim() : undefined,
         conversationHistory: history,
       });
 

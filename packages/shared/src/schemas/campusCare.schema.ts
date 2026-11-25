@@ -8,10 +8,12 @@ export const AskCampusCareSchema = z.object({
     .min(1, 'Prompt cannot be empty.')
     .max(1500, 'Prompt exceeds 1500 characters.'),
   conversationId: z
-    .string()
-    .trim()
-    .regex(/^[a-zA-Z0-9_-]+$/, 'Invalid conversation identifier format.')
-    .optional(),
+    .union([
+      z.string().trim().regex(/^[a-zA-Z0-9_-]+$/, 'Invalid conversation identifier format.'),
+      z.literal(''),
+    ])
+    .nullish()
+    .transform((val) => (val && val.trim() ? val.trim() : undefined)),
   conversationHistory: z
     .array(
       z.object({

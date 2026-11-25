@@ -53,8 +53,8 @@ export function isEmulatorOrTestEnvironment(): boolean {
     Boolean(process.env.FIREBASE_EMULATOR_HUB) ||
     Boolean(process.env.FIRESTORE_EMULATOR_HOST);
   const isTestRunner = process.env.NODE_ENV === 'test';
-
-  return isEmulator || isTestRunner;
+  const isVercel = Boolean(process.env.VERCEL);
+  return isEmulator || isTestRunner || isVercel;
 }
 
 /**
@@ -239,8 +239,10 @@ export const askStudyMateAi = campusCallable(
 
     const uid = request.auth.uid;
     const data = parseInput(z.object({
-      prompt: z.string().trim().min(1).max(1500), subjectId: docId.max(64).optional(),
-      mode: z.enum(['WITHIN_SYLLABUS', 'EXPLORE_BEYOND']).optional(), conversationId: docId.optional(),
+      prompt: z.string().trim().min(1).max(1500),
+      subjectId: z.union([docId.max(64), z.literal('')]).nullish().transform(v => (v && v.trim() ? v.trim() : undefined)),
+      mode: z.enum(['WITHIN_SYLLABUS', 'EXPLORE_BEYOND']).optional(),
+      conversationId: z.union([docId, z.literal('')]).nullish().transform(v => (v && v.trim() ? v.trim() : undefined)),
       conversationHistory: z.array(z.object({ role: z.enum(['user','model']), text: z.string().max(2000) })).max(30).optional(),
     }), request.data);
 

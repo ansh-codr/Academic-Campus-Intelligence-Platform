@@ -123,7 +123,7 @@ export const CampusCareAiPage: React.FC = () => {
 
       const response = await CampusCareService.askCampusCare({
         prompt: text,
-        conversationId: currentConversationId || undefined,
+        conversationId: currentConversationId?.trim() ? currentConversationId.trim() : undefined,
         conversationHistory,
       });
 
