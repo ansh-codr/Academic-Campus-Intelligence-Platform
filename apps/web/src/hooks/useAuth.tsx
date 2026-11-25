@@ -249,7 +249,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             : (data.enrollmentStatus === 'VERIFIED' ? 'VERIFIED' : (currentEnrollment !== 'INCOMPLETE' ? currentEnrollment : data.enrollmentStatus || 'INCOMPLETE')),
         } as UserProfile);
       } else {
-        setUser((prev) => (prev ? { ...prev, emailVerified: refreshed.emailVerified, role: customRole } : null));
+        setUser((prev: UserProfile | null) => (prev ? { ...prev, emailVerified: refreshed.emailVerified, role: customRole } : null));
       }
     } catch (err: any) {
       console.warn('Failed to reload Firebase user:', err);
@@ -572,7 +572,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, { merge: true });
     await batch.commit();
 
-    setUser((prev) =>
+    setUser((prev: UserProfile | null) =>
       prev
         ? {
             ...prev,
@@ -635,7 +635,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     await updateDoc(userDocRef, updatesWithTimestamp);
-    setUser((prev) => (prev ? { ...prev, ...updatesWithTimestamp } : null));
+    setUser((prev: UserProfile | null) => (prev ? { ...prev, ...updatesWithTimestamp } : null));
   };
 
   return (
