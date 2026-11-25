@@ -90,6 +90,34 @@ export default async function handler(req: VercelApiRequest, res: VercelApiRespo
     return;
   }
 
+  if (fnName === 'geminiStatus') {
+    const key = process.env.GEMINI_API_KEY?.trim();
+    if (!key) {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ status: 'NO_KEY', message: 'GEMINI_API_KEY is not set in environment.' }));
+      return;
+    }
+    try {
+      const { GoogleGenAI } = await import('@google/genai');
+      const ai = new GoogleGenAI({ apiKey: key, apiVersion: 'v1beta', httpOptions: { apiVersion: 'v1beta' } });
+      const testRes = await ai.models.generateContent({
+        model: 'gemini-3.8-flash',
+        contents: [{ role: 'user', parts: [{ text: 'Respond with: OK' }] }],
+        config: { maxOutputTokens: 10 },
+      });
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ status: 'SUCCESS', model: 'gemini-3.8-flash', text: testRes.text }));
+      return;
+    } catch (e: any) {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ status: 'GENAI_ERROR', error: e.message, code: e.status }));
+      return;
+    }
+  }
+
   const targetFn = (functionsBundle as Record<string, any>)[fnName];
   if (!targetFn || typeof targetFn.run !== 'function') {
     res.statusCode = 404;
