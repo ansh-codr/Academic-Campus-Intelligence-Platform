@@ -331,7 +331,11 @@ export const askStudyMateAi = campusCallable(
 
     if (apiKey) {
       try {
-        const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
+        const ai = new GoogleGenAI({
+          apiKey,
+          apiVersion: 'v1beta',
+          httpOptions: { apiVersion: 'v1beta' },
+        });
 
         // Build conversation contents with server-side validation of conversation history
         const contents: any[] = [];
@@ -353,15 +357,30 @@ export const askStudyMateAi = campusCallable(
           parts: [{ text: `<student_query>\n${trimmedPrompt}\n</student_query>` }],
         });
 
-        const response = await ai.models.generateContent({
-          model: modelName,
-          contents,
-          config: {
-            systemInstruction,
-            maxOutputTokens: 1024,
-            temperature: 0.35,
-          },
-        });
+        let response: any;
+        try {
+          response = await ai.models.generateContent({
+            model: modelName,
+            contents,
+            config: {
+              systemInstruction,
+              maxOutputTokens: 1024,
+              temperature: 0.35,
+            },
+          });
+        } catch (mErr: any) {
+          console.warn(`Primary Gemini model "${modelName}" failed, trying fallback:`, mErr.message);
+          const fallbackModel = modelName === 'gemini-1.5-flash' ? 'gemini-2.0-flash' : 'gemini-1.5-flash';
+          response = await ai.models.generateContent({
+            model: fallbackModel,
+            contents,
+            config: {
+              systemInstruction,
+              maxOutputTokens: 1024,
+              temperature: 0.35,
+            },
+          });
+        }
 
         aiReplyText = response.text || 'I could not generate an answer for this topic. Please try rephrasing your question.';
       } catch (err: any) {

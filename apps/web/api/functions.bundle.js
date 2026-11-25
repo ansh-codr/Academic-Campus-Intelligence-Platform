@@ -428,7 +428,11 @@ var askStudyMateAi = campusCallable(
     let isMock = false;
     if (apiKey) {
       try {
-        const ai = new GoogleGenAI({ apiKey, apiVersion: "v1beta" });
+        const ai = new GoogleGenAI({
+          apiKey,
+          apiVersion: "v1beta",
+          httpOptions: { apiVersion: "v1beta" }
+        });
         const contents = [];
         if (Array.isArray(data.conversationHistory) && data.conversationHistory.length > 0) {
           const recentHistory = data.conversationHistory.slice(-6);
@@ -448,15 +452,30 @@ var askStudyMateAi = campusCallable(
 ${trimmedPrompt}
 </student_query>` }]
         });
-        const response = await ai.models.generateContent({
-          model: modelName,
-          contents,
-          config: {
-            systemInstruction,
-            maxOutputTokens: 1024,
-            temperature: 0.35
-          }
-        });
+        let response;
+        try {
+          response = await ai.models.generateContent({
+            model: modelName,
+            contents,
+            config: {
+              systemInstruction,
+              maxOutputTokens: 1024,
+              temperature: 0.35
+            }
+          });
+        } catch (mErr) {
+          console.warn(`Primary Gemini model "${modelName}" failed, trying fallback:`, mErr.message);
+          const fallbackModel = modelName === "gemini-1.5-flash" ? "gemini-2.0-flash" : "gemini-1.5-flash";
+          response = await ai.models.generateContent({
+            model: fallbackModel,
+            contents,
+            config: {
+              systemInstruction,
+              maxOutputTokens: 1024,
+              temperature: 0.35
+            }
+          });
+        }
         aiReplyText = response.text || "I could not generate an answer for this topic. Please try rephrasing your question.";
       } catch (err) {
         console.error("Gemini Provider Error:", err);
@@ -920,7 +939,11 @@ var askCampusCareAi = campusCallable(
     let isMock = false;
     if (apiKey) {
       try {
-        const ai = new GoogleGenAI2({ apiKey, apiVersion: "v1beta" });
+        const ai = new GoogleGenAI2({
+          apiKey,
+          apiVersion: "v1beta",
+          httpOptions: { apiVersion: "v1beta" }
+        });
         const systemInstruction = `You are Campus Care AI, the intelligent campus maintenance and student support assistant for SolveSphere AI.
 Tagline: "Your Problems. Our Smart Solutions."
 
@@ -1099,7 +1122,11 @@ var aiAssistComplaint = campusCallable(
     const apiKey = resolveGeminiApiKey2();
     if (apiKey) {
       try {
-        const ai = new GoogleGenAI2({ apiKey, apiVersion: "v1beta" });
+        const ai = new GoogleGenAI2({
+          apiKey,
+          apiVersion: "v1beta",
+          httpOptions: { apiVersion: "v1beta" }
+        });
         const systemInstruction = `You are the SolveSphere Complaint Enhancement AI.
 Your role: take a student's brief issue description and generate:
 1. A concise, professional title (max 80 chars).

@@ -562,7 +562,11 @@ export const askCampusCareAi = campusCallable(
 
     if (apiKey) {
       try {
-        const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
+        const ai = new GoogleGenAI({
+          apiKey,
+          apiVersion: 'v1beta',
+          httpOptions: { apiVersion: 'v1beta' },
+        });
         const systemInstruction = `You are Campus Care AI, the intelligent campus maintenance and student support assistant for SolveSphere AI.
 Tagline: "Your Problems. Our Smart Solutions."
 
@@ -767,7 +771,11 @@ export const aiAssistComplaint = campusCallable(
 
     if (apiKey) {
       try {
-        const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
+        const ai = new GoogleGenAI({
+          apiKey,
+          apiVersion: 'v1beta',
+          httpOptions: { apiVersion: 'v1beta' },
+        });
         const systemInstruction = `You are the SolveSphere Complaint Enhancement AI.
 Your role: take a student's brief issue description and generate:
 1. A concise, professional title (max 80 chars).
