@@ -452,30 +452,28 @@ var askStudyMateAi = campusCallable(
 ${trimmedPrompt}
 </student_query>` }]
         });
-        let response;
+        let availableModels = [];
         try {
-          response = await ai.models.generateContent({
-            model: modelName,
-            contents,
-            config: {
-              systemInstruction,
-              maxOutputTokens: 1024,
-              temperature: 0.35
+          const listRes = await ai.models.list();
+          for await (const m of listRes) {
+            if (m.name) {
+              availableModels.push(m.name.replace(/^models\//, ""));
             }
-          });
-        } catch (mErr) {
-          console.warn(`Primary Gemini model "${modelName}" failed, trying fallback:`, mErr.message);
-          const fallbackModel = modelName === "gemini-1.5-flash" ? "gemini-2.0-flash" : "gemini-1.5-flash";
-          response = await ai.models.generateContent({
-            model: fallbackModel,
-            contents,
-            config: {
-              systemInstruction,
-              maxOutputTokens: 1024,
-              temperature: 0.35
-            }
-          });
+          }
+        } catch (listErr) {
+          console.warn("Failed to list models:", listErr.message);
         }
+        const chosenModel = availableModels.find((m) => m.includes("flash")) || availableModels[0] || process.env.GEMINI_MODEL || "gemini-2.5-flash";
+        console.log("Available models:", availableModels, "Selected:", chosenModel);
+        const response = await ai.models.generateContent({
+          model: chosenModel,
+          contents,
+          config: {
+            systemInstruction,
+            maxOutputTokens: 1024,
+            temperature: 0.35
+          }
+        });
         aiReplyText = response.text || "I could not generate an answer for this topic. Please try rephrasing your question.";
       } catch (err) {
         console.error("Gemini Provider Error:", err);
@@ -982,8 +980,20 @@ CURRENT STUDENT CONTEXT:
 ${trimmedPrompt}
 </student_query>` }]
         });
+        let availableModels = [];
+        try {
+          const listRes = await ai.models.list();
+          for await (const m of listRes) {
+            if (m.name) {
+              availableModels.push(m.name.replace(/^models\//, ""));
+            }
+          }
+        } catch (listErr) {
+          console.warn("Failed to list models:", listErr.message);
+        }
+        const chosenModel = availableModels.find((m) => m.includes("flash")) || availableModels[0] || process.env.GEMINI_MODEL || "gemini-2.5-flash";
         const response = await ai.models.generateContent({
-          model: process.env.GEMINI_MODEL || "gemini-1.5-flash",
+          model: chosenModel,
           contents,
           config: {
             systemInstruction,

@@ -605,8 +605,22 @@ CURRENT STUDENT CONTEXT:
           parts: [{ text: `<student_query>\n${trimmedPrompt}\n</student_query>` }],
         });
 
+        let availableModels: string[] = [];
+        try {
+          const listRes = await ai.models.list();
+          for await (const m of listRes) {
+            if (m.name) {
+              availableModels.push(m.name.replace(/^models\//, ''));
+            }
+          }
+        } catch (listErr: any) {
+          console.warn('Failed to list models:', listErr.message);
+        }
+
+        const chosenModel = availableModels.find(m => m.includes('flash')) || availableModels[0] || process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+
         const response = await ai.models.generateContent({
-          model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+          model: chosenModel,
           contents,
           config: {
             systemInstruction,
