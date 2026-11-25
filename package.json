@@ -11,7 +11,7 @@
   "scripts": {
     "dev": "npm run dev:web",
     "dev:web": "npm run dev --workspace=@solvesphere/web",
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build --workspace=@solvesphere/shared && npm run build --workspace=@solvesphere/functions && npm run build --workspace=@solvesphere/web",
     "build:web": "npm run build --workspace=@solvesphere/web",
     "build:functions": "npm run build --workspace=@solvesphere/functions",
     "typecheck": "npm run build --workspace=@solvesphere/shared && npm run typecheck --workspaces --if-present",
@@ -24,6 +24,9 @@
     "test:unit": "node --import tsx --test tests/seed-safety.test.js tests/smoke-ai-parser.test.js tests/bootstrap-admin.test.js tests/ui-structure.test.js tests/real-data-contract.test.js tests/inventory-safety.test.js tests/audit.test.js",
     "test": "npm run test:unit && npm run test:smoke-ai",
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules functions/node_modules apps/*/dist functions/lib"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.5",

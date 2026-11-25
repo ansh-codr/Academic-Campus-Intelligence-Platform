@@ -36,7 +36,16 @@ if (siteKey && import.meta.env.VITE_USE_FIREBASE_EMULATOR !== 'true') {
 }
 export const auth = getAuth(app);
 export const db = getFirestore(app);
-export const functions = getFunctions(app);
+
+const isEmulator = import.meta.env.VITE_USE_FIREBASE_EMULATOR === 'true';
+const useFirebaseCloudFunctions = import.meta.env.VITE_USE_FIREBASE_FUNCTIONS === 'true';
+const customFunctionsDomain = isEmulator || useFirebaseCloudFunctions
+  ? undefined
+  : (import.meta.env.VITE_FUNCTIONS_CUSTOM_DOMAIN || (typeof window !== 'undefined' ? `${window.location.origin}/api` : undefined));
+
+export const functions = customFunctionsDomain
+  ? getFunctions(app, customFunctionsDomain)
+  : getFunctions(app);
 export const storage = getStorage(app);
 
 if (import.meta.env.VITE_USE_FIREBASE_EMULATOR === 'true') {
