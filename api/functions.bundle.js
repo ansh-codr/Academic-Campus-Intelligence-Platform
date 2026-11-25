@@ -2868,7 +2868,7 @@ var toggleStudentTopicProgress = campusCallable(callableOptions, async (request)
 });
 
 // functions/src/index.ts
-if (!admin7.apps.length) {
+if (!admin7.apps.length && (process.env.K_SERVICE || process.env.FUNCTION_NAME || process.env.FUNCTIONS_EMULATOR)) {
   admin7.initializeApp();
 }
 export {

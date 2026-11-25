@@ -25,8 +25,8 @@ import {
 import { askStudyMateAi } from './studymate.js';
 import { askCampusCareAi, aiAssistComplaint } from './campusCare.js';
 
-// Initialize Admin SDK once
-if (!admin.apps.length) {
+// Initialize Admin SDK once if running in Firebase Cloud Functions / Emulator environment
+if (!admin.apps.length && (process.env.K_SERVICE || process.env.FUNCTION_NAME || process.env.FUNCTIONS_EMULATOR)) {
   admin.initializeApp();
 }
 

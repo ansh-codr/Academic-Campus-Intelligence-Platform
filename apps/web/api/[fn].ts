@@ -15,8 +15,6 @@ interface VercelApiResponse extends ServerResponse {
 
 // Singleton initialization for Firebase Admin SDK
 function initFirebaseAdmin() {
-  if (admin.apps.length > 0) return;
-
   const projectId = process.env.FIREBASE_PROJECT_ID || process.env.GCLOUD_PROJECT || 'solvesphere-ai-dev-2026';
 
   let certObject: any = null;
@@ -37,6 +35,18 @@ function initFirebaseAdmin() {
     };
   }
 
+  // If already initialized with valid credentials, preserve it
+  if (admin.apps.length > 0) {
+    const existing = admin.app();
+    if (existing.options && existing.options.credential && (existing.options.credential as any).certificate) {
+      return;
+    }
+    // Delete uncredentialed app
+    try {
+      existing.delete();
+    } catch {}
+  }
+
   if (certObject && certObject.private_key) {
     admin.initializeApp({
       credential: admin.credential.cert(certObject),
@@ -45,7 +55,9 @@ function initFirebaseAdmin() {
     return;
   }
 
-  admin.initializeApp({ projectId });
+  if (!admin.apps.length) {
+    admin.initializeApp({ projectId });
+  }
 }
 
 initFirebaseAdmin();
