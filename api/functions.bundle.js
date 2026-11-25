@@ -428,7 +428,7 @@ var askStudyMateAi = campusCallable(
     let isMock = false;
     if (apiKey) {
       try {
-        const ai = new GoogleGenAI({ apiKey });
+        const ai = new GoogleGenAI({ apiKey, apiVersion: "v1beta" });
         const contents = [];
         if (Array.isArray(data.conversationHistory) && data.conversationHistory.length > 0) {
           const recentHistory = data.conversationHistory.slice(-6);
@@ -920,7 +920,7 @@ var askCampusCareAi = campusCallable(
     let isMock = false;
     if (apiKey) {
       try {
-        const ai = new GoogleGenAI2({ apiKey });
+        const ai = new GoogleGenAI2({ apiKey, apiVersion: "v1beta" });
         const systemInstruction = `You are Campus Care AI, the intelligent campus maintenance and student support assistant for SolveSphere AI.
 Tagline: "Your Problems. Our Smart Solutions."
 
@@ -1099,7 +1099,7 @@ var aiAssistComplaint = campusCallable(
     const apiKey = resolveGeminiApiKey2();
     if (apiKey) {
       try {
-        const ai = new GoogleGenAI2({ apiKey });
+        const ai = new GoogleGenAI2({ apiKey, apiVersion: "v1beta" });
         const systemInstruction = `You are the SolveSphere Complaint Enhancement AI.
 Your role: take a student's brief issue description and generate:
 1. A concise, professional title (max 80 chars).

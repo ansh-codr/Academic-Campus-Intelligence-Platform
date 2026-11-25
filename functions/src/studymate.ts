@@ -331,7 +331,7 @@ export const askStudyMateAi = campusCallable(
 
     if (apiKey) {
       try {
-        const ai = new GoogleGenAI({ apiKey });
+        const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
 
         // Build conversation contents with server-side validation of conversation history
         const contents: any[] = [];
